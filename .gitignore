@@ -1,0 +1,59 @@
+# --- Dependencies ---
+node_modules/
+.pnp
+.pnp.js
+
+# --- Testing ---
+coverage/
+
+# --- Production/Build ---
+/frontend/dist
+/backend/dist
+.vite/
+*.tsbuildinfo
+.eslintcache
+*.pyc
+__pycache__/
+
+# --- Environment Variables (CRITICAL) ---
+.env
+.env.*
+!.env.prod.example
+*.env
+
+# --- OS / IDE ---
+.DS_Store
+.AppleDouble
+.LSOverride
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+
+# --- Logs ---
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Docker & DB ---
+/data/
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# --- Python venv / RAG cache ---
+backend/.venv/
+backend/.chroma/
+
+# --- Hosting ---
+.vercel/
+
+
+# vibe tools
+.trae/
+.claude/
+
+# 需忽略目录/文件
+docs/
