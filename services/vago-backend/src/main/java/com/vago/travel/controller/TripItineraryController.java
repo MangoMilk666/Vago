@@ -32,7 +32,7 @@ public class TripItineraryController {
 
     @Operation(summary = "获取行程的全部每日规划（懒初始化）")
     @GetMapping
-    public Result<List<ItineraryDayVO>> getDays(@PathVariable String tripUuid) {
+    public Result<List<ItineraryDayVO>> getDays(@PathVariable("tripUuid") String tripUuid) {
         checkOwner(tripUuid);
         return Result.success(
                 itineraryService.getDays(tripUuid, ItineraryDay.REF_TYPE_TRIP));
@@ -40,8 +40,8 @@ public class TripItineraryController {
 
     @Operation(summary = "更新第 N 天的行程（含景点全量替换）")
     @PutMapping("/{dayIndex}")
-    public Result<ItineraryDayVO> updateDay(@PathVariable String tripUuid,
-                                             @PathVariable int dayIndex,
+    public Result<ItineraryDayVO> updateDay(@PathVariable("tripUuid") String tripUuid,
+                                             @PathVariable("dayIndex") int dayIndex,
                                              @Valid @RequestBody ItineraryDayUpdateDTO dto) {
         checkOwner(tripUuid);
         return Result.success(

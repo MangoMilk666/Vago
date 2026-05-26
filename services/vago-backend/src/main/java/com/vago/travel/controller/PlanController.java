@@ -41,27 +41,27 @@ public class PlanController {
 
     @Operation(summary = "查询计划详情")
     @GetMapping("/{uuid}")
-    public Result<PlanVO> getDetail(@PathVariable String uuid) {
+    public Result<PlanVO> getDetail(@PathVariable("uuid") String uuid) {
         return Result.success(planService.getDetail(BaseContext.getCurrentUuid(), uuid));
     }
 
     @Operation(summary = "更新计划")
     @PutMapping("/{uuid}")
-    public Result<PlanVO> update(@PathVariable String uuid,
+    public Result<PlanVO> update(@PathVariable("uuid") String uuid,
                                  @Valid @RequestBody PlanUpdateDTO dto) {
         return Result.success(planService.update(BaseContext.getCurrentUuid(), uuid, dto));
     }
 
     @Operation(summary = "删除计划")
     @DeleteMapping("/{uuid}")
-    public Result delete(@PathVariable String uuid) {
+    public Result delete(@PathVariable("uuid") String uuid) {
         planService.delete(BaseContext.getCurrentUuid(), uuid);
         return Result.success();
     }
 
     @Operation(summary = "将计划转为正式行程")
     @PostMapping("/{uuid}/convert")
-    public Result<TripVO> convertToTrip(@PathVariable String uuid) {
+    public Result<TripVO> convertToTrip(@PathVariable("uuid") String uuid) {
         return Result.success(planService.convertToTrip(BaseContext.getCurrentUuid(), uuid));
     }
 }

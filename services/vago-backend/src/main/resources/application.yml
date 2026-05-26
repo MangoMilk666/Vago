@@ -21,6 +21,10 @@ logging:
           mapper: debug
           service: info
           controller: info
+        travel:
+          mapper: debug
+          service: debug
+          controller: info
 
 # SpringDoc / Swagger UI
 springdoc:

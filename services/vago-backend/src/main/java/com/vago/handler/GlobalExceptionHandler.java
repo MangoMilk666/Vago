@@ -40,11 +40,13 @@ public class GlobalExceptionHandler {
 
     /**
      * 未预期的运行时异常（打堆栈，便于排查）
+     * 异常信息透传到响应体，方便开发阶段定位问题
      */
     @ExceptionHandler(RuntimeException.class)
     public Result<Void> handleRuntimeException(RuntimeException ex) {
-        log.error("服务器内部错误", ex);
-        return Result.fail(ResultCode.INTERNAL_ERROR);
+        log.error("服务器内部错误: {}", ex.getMessage(), ex);
+        String detail = ex.getClass().getSimpleName() + ": " + ex.getMessage();
+        return Result.fail(ResultCode.INTERNAL_ERROR.getCode(), detail);
     }
 
     /**
@@ -52,7 +54,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public Result<Void> handleException(Exception ex) {
-        log.error("未知异常", ex);
-        return Result.fail(ResultCode.INTERNAL_ERROR);
+        log.error("未知异常: {}", ex.getMessage(), ex);
+        String detail = ex.getClass().getSimpleName() + ": " + ex.getMessage();
+        return Result.fail(ResultCode.INTERNAL_ERROR.getCode(), detail);
     }
 }

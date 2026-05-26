@@ -36,7 +36,7 @@ public interface GuideMapper {
     @Select("SELECT COUNT(*) FROM guides WHERE status = 1 AND deleted_at IS NULL")
     long countPublished();
 
-    /** 我的攻略（含草稿） */
+    /** 我本人的攻略（含草稿） */
     @Select("""
             SELECT * FROM guides
             WHERE user_uuid = #{userUuid} AND deleted_at IS NULL

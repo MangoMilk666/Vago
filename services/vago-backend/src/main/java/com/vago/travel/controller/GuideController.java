@@ -34,8 +34,8 @@ public class GuideController {
     @Operation(summary = "公开攻略列表（分页，无需登录）")
     @GetMapping("/discover")
     public Result<PageVO<GuideVO>> listPublished(
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
         return Result.success(guideService.listPublished(page, size));
     }
 
@@ -47,7 +47,7 @@ public class GuideController {
 
     @Operation(summary = "查看攻略详情")
     @GetMapping("/{uuid}")
-    public Result<GuideVO> getDetail(@PathVariable String uuid) {
+    public Result<GuideVO> getDetail(@PathVariable("uuid") String uuid) {
         return Result.success(guideService.getDetail(BaseContext.getCurrentUuid(), uuid));
     }
 
@@ -59,21 +59,21 @@ public class GuideController {
 
     @Operation(summary = "更新攻略")
     @PutMapping("/{uuid}")
-    public Result<GuideVO> update(@PathVariable String uuid,
+    public Result<GuideVO> update(@PathVariable("uuid") String uuid,
                                   @Valid @RequestBody GuideUpdateDTO dto) {
         return Result.success(guideService.update(BaseContext.getCurrentUuid(), uuid, dto));
     }
 
     @Operation(summary = "删除攻略")
     @DeleteMapping("/{uuid}")
-    public Result<String> delete(@PathVariable String uuid) {
+    public Result<String> delete(@PathVariable("uuid") String uuid) {
         guideService.delete(BaseContext.getCurrentUuid(), uuid);
         return Result.success();
     }
 
     @Operation(summary = "点赞攻略")
     @PostMapping("/{uuid}/like")
-    public Result like(@PathVariable String uuid) {
+    public Result like(@PathVariable("uuid") String uuid) {
         guideService.like(uuid);
         return Result.success();
     }

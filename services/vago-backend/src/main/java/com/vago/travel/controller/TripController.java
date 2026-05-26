@@ -46,20 +46,21 @@ public class TripController {
 
     @Operation(summary = "查询行程详情")
     @GetMapping("/{uuid}")
-    public Result<TripVO> getDetail(@PathVariable String uuid) {
+    public Result<TripVO> getDetail(@PathVariable("uuid") String uuid) {
         return Result.success(tripService.getDetail(BaseContext.getCurrentUuid(), uuid));
     }
 
     @Operation(summary = "更新行程")
     @PutMapping("/{uuid}")
-    public Result<TripVO> update(@PathVariable String uuid,
+    public Result<TripVO> update(@PathVariable("uuid") String uuid,
                                  @Valid @RequestBody TripUpdateDTO dto) {
         return Result.success(tripService.update(BaseContext.getCurrentUuid(), uuid, dto));
     }
 
+    // 显式指定路径变量名为 "uuid"
     @Operation(summary = "删除行程")
     @DeleteMapping("/{uuid}")
-    public Result delete(@PathVariable String uuid) {
+    public Result delete(@PathVariable("uuid") String uuid) {
         tripService.delete(BaseContext.getCurrentUuid(), uuid);
         return Result.success();
     }

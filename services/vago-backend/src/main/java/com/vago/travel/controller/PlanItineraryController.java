@@ -32,7 +32,7 @@ public class PlanItineraryController {
 
     @Operation(summary = "获取计划的全部每日规划（懒初始化）")
     @GetMapping
-    public Result<List<ItineraryDayVO>> getDays(@PathVariable String planUuid) {
+    public Result<List<ItineraryDayVO>> getDays(@PathVariable("planUuid") String planUuid) {
         checkOwner(planUuid);
         return Result.success(
                 itineraryService.getDays(planUuid, ItineraryDay.REF_TYPE_PLAN));
@@ -40,8 +40,8 @@ public class PlanItineraryController {
 
     @Operation(summary = "更新第 N 天的计划（含景点全量替换）")
     @PutMapping("/{dayIndex}")
-    public Result<ItineraryDayVO> updateDay(@PathVariable String planUuid,
-                                             @PathVariable int dayIndex,
+    public Result<ItineraryDayVO> updateDay(@PathVariable("planUuid") String planUuid,
+                                             @PathVariable("dayIndex") int dayIndex,
                                              @Valid @RequestBody ItineraryDayUpdateDTO dto) {
         checkOwner(planUuid);
         return Result.success(

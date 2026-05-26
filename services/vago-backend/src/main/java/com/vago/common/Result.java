@@ -47,7 +47,7 @@ public class Result<T> implements Serializable {
     public static <T> Result<T> fail(ResultCode resultCode) {
         Result<T> result = new Result<>();
         result.code = resultCode.getCode();
-        result.message = result.getMessage();
+        result.message = resultCode.getMessage();
         return result;
     }
 }
