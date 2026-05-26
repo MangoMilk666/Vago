@@ -1,73 +1,64 @@
 """
-AI 功能路由
-- POST /api/v1/ai/plan     行程规划（LLM 生成）
-- POST /api/v1/ai/search   攻略 RAG 检索
+AI 行程规划路由（AI Router）。
+
+提供基于 LLM 的行程生成接口。
+当前为 Stub 实现（返回占位文本），待 RAG 检索链路完成后接入：
+  - 调用 articles.search 检索用户私有攻略库（Top-K RAG 召回）
+  - 将检索结果注入 Prompt，调用 OpenAI Chat Completion
+  - 解析结构化 JSON 行程草稿并返回
+
+TODO: 接入 LangChain RAG Chain + OpenAI GPT-4o
 """
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-from typing import Optional
+
+from fastapi import APIRouter
+
+from app.models.schemas import PlanRequest, PlanResponse
 
 router = APIRouter()
 
 
-# ─── 请求 / 响应模型 ──────────────────────────────────────────────────────────
-
-class PlanRequest(BaseModel):
-    destination: str = Field(..., description="目的地，如 '日本京都'")
-    days: int = Field(..., ge=1, le=30, description="行程天数")
-    style: Optional[str] = Field(None, description="旅行风格：culture / food / nature / city")
-    budget: Optional[str] = Field(None, description="预算级别：budget / mid / luxury")
-    user_uuid: Optional[str] = Field(None, description="用户 UUID，用于个性化推荐")
-
-
-class PlanResponse(BaseModel):
-    plan: str = Field(..., description="生成的行程文本（Markdown 格式）")
-    tips: list[str] = Field(default_factory=list, description="旅行小贴士")
-
-
-class SearchRequest(BaseModel):
-    query: str = Field(..., description="搜索关键词，如 '京都三日游推荐'")
-    top_k: int = Field(5, ge=1, le=20, description="返回结果数量")
-
-
-class SearchResult(BaseModel):
-    article_id: str
-    title: str
-    summary: str
-    score: float
-
-
-class SearchResponse(BaseModel):
-    results: list[SearchResult]
-
-
-# ─── 路由处理 ─────────────────────────────────────────────────────────────────
-
-@router.post("/plan", response_model=PlanResponse, summary="AI 行程规划")
-async def plan_itinerary(req: PlanRequest):
+@router.post(
+    "/plan",
+    response_model=PlanResponse,
+    summary="AI 行程规划（RAG + LLM）",
+    description=(
+        "根据目的地、天数、风格、预算生成个性化行程计划。\n"
+        "优先检索 user_uuid 对应的个人攻略库（RAG），\n"
+        "库内内容不足时 fallback 到模型通用知识。\n\n"
+        "**当前状态**：Stub 占位，完整 LLM 链路开发中。"
+    ),
+)
+async def plan_itinerary(req: PlanRequest) -> PlanResponse:
     """
-    根据目的地、天数、风格生成个性化行程计划。
-    TODO: 接入 LangChain + OpenAI，当前返回占位响应。
+    AI 行程规划接口（占位实现）。
+
+    接收用户的自然语言规划需求，返回结构化行程草稿。
+    完整实现流程：
+      1. embed_query(req 转换为问题文本)
+      2. search_by_user(user_uuid, query_embedding, top_k=8)
+      3. 构建 RAG Prompt（检索结果 + 用户偏好 + 系统约束）
+      4. 调用 OpenAI Chat Completion（GPT-4o）
+      5. 解析 JSON 行程 → 返回 PlanResponse
+
+    参数:
+        req: PlanRequest，包含 destination、days、style、budget、user_uuid。
+
+    返回:
+        PlanResponse，包含 Markdown 行程文本和贴士列表。
     """
-    # Placeholder — 实际接入 LLM 时替换此处
+    # Placeholder — 接入 LangChain RAG Chain 时替换此处
     mock_plan = (
         f"## {req.destination} {req.days} 日行程\n\n"
-        f"**Day 1**：抵达 → 酒店入住 → 周边探索\n\n"
-        f"**Day 2**：核心景点打卡\n\n"
-        f"**Day 3**：深度体验 + 返程\n\n"
-        f"> AI 规划功能开发中，敬请期待 🚧"
+        f"**Day 1**：抵达 {req.destination} → 酒店入住 → 周边漫步\n\n"
+        f"**Day 2**：核心景点打卡 → 当地美食体验\n\n"
+        f"**Day 3**：深度体验 → 购物 → 返程\n\n"
+        f"> AI 规划功能正在接入 RAG 链路，敬请期待。"
     )
     return PlanResponse(
         plan=mock_plan,
-        tips=["提前预订热门景点门票", "建议购买当地交通通票"],
+        tips=[
+            "提前预订热门景点门票，避免排队",
+            "建议购买当地交通通票节省费用",
+            "导入更多目的地攻略可获得更个性化的推荐",
+        ],
     )
-
-
-@router.post("/search", response_model=SearchResponse, summary="攻略 RAG 检索")
-async def search_articles(req: SearchRequest):
-    """
-    基于向量相似度检索攻略库，返回最相关的 top_k 篇文章摘要。
-    TODO: 接入 Milvus/Qdrant 向量数据库，当前返回空结果。
-    """
-    # Placeholder — 接入向量 DB 时替换
-    return SearchResponse(results=[])

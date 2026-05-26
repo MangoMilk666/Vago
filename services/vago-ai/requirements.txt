@@ -9,10 +9,14 @@ openai==1.35.3
 langchain==0.2.5
 langchain-openai==0.1.8
 langchain-community==0.2.5
+tiktoken>=0.7.0
 
-# Vector DB（按需启用）
-# pymilvus==2.4.3
-# qdrant-client==1.9.1
+# Text processing
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
 
-# Redis（速率限制、缓存）
+# Vector DB
+qdrant-client==1.9.1
+
+# Redis (rate limiting, cache)
 redis==5.0.7
