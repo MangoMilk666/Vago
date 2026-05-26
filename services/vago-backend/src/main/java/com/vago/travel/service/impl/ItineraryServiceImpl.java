@@ -49,29 +49,34 @@ public class ItineraryServiceImpl implements ItineraryService {
             return Collections.emptyList();
         }
 
-        // 2. 查询已有 day 记录（Map<dayDate, ItineraryDay>）
+        // 2. 查询已有 day 记录，按 dayDate 分组
+        //    同一日期现在允许多条（已移除 uk_day_ref_date 唯一约束）记录，
+        //    因此使用 groupingBy 代替 toMap，避免 IllegalStateException
         List<ItineraryDay> existingDays = dayMapper.listByRef(refUuid, refType);
-        Map<LocalDate, ItineraryDay> dayMap = existingDays.stream()
-                .collect(Collectors.toMap(ItineraryDay::getDayDate, d -> d));
+        Map<LocalDate, List<ItineraryDay>> daysByDate = existingDays.stream()
+                .collect(Collectors.groupingBy(ItineraryDay::getDayDate));
 
-        // 3. 懒初始化：遍历日期区间，对缺失的 day 创建空记录
+        // 3. 懒初始化：遍历日期区间，对完全缺失的日期创建一条空记录；
+        //    已有记录的日期（含多条）全部保留，并修正 dayIndex
         List<LocalDate> dates = range.toDateList();
-        List<ItineraryDay> allDays = new ArrayList<>(dates.size());
+        List<ItineraryDay> allDays = new ArrayList<>();
         for (int i = 0; i < dates.size(); i++) {
-            LocalDate date = dates.get(i);
-            ItineraryDay day = dayMap.get(date);
-            if (day == null) {
-                day = createEmptyDay(refUuid, refType, date, i + 1);
-                dayMap.put(date, day);
-            }
-            allDays.add(day);
-        }
-        // dayIndex 与位置保持一致（日期调整后修复 index）
-        for (int i = 0; i < allDays.size(); i++) {
-            ItineraryDay d = allDays.get(i);
-            if (!Objects.equals(d.getDayIndex(), i + 1)) {
-                d.setDayIndex(i + 1);
-                dayMapper.update(d);
+            LocalDate date   = dates.get(i);
+            int expectedIndex = i + 1;
+            List<ItineraryDay> daysForDate = daysByDate.getOrDefault(date, Collections.emptyList());
+
+            if (daysForDate.isEmpty()) {
+                // 该日期无任何记录，懒初始化一条空记录
+                allDays.add(createEmptyDay(refUuid, refType, date, expectedIndex));
+            } else {
+                // 同步 dayIndex（日期区间调整后修正）
+                for (ItineraryDay d : daysForDate) {
+                    if (!Objects.equals(d.getDayIndex(), expectedIndex)) {
+                        d.setDayIndex(expectedIndex);
+                        dayMapper.update(d);
+                    }
+                }
+                allDays.addAll(daysForDate);
             }
         }
 
