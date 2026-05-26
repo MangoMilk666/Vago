@@ -1,0 +1,41 @@
+server:
+  port: 8080
+
+spring:
+  profiles:
+    active: dev
+  application:
+    name: vago-backend
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.vago.user.model.entity
+  configuration:
+    map-underscore-to-camel-case: true
+
+logging:
+  level:
+    com:
+      vago:
+        user:
+          mapper: debug
+          service: info
+          controller: info
+
+# SpringDoc / Swagger UI
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+vago:
+  jwt:
+    secret-key: ${vago.jwt.secret-key}
+    access-token-ttl: ${vago.jwt.access-token-ttl}
+    refresh-token-ttl: ${vago.jwt.refresh-token-ttl}
+    token-name: ${vago.jwt.token-name}
+
+  # AI 服务地址（Java 后端调用 Python 时使用）
+  ai:
+    base-url: ${vago.ai.base-url:http://localhost:8000}

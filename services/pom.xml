@@ -11,7 +11,11 @@
 
     <!-- 统领子模块，后续每建一个服务，IDEA 会自动在这里追加 -->
     <modules>
-        <module>vago-service-user</module>
+        <!-- 混合单体：Java CRUD 后端（用户、行程、足迹等所有域） -->
+        <module>vago-backend</module>
+        <!-- 已废弃的微服务模块（保留目录供参考，不再参与构建） -->
+        <!-- <module>vago-gateway</module>      -->
+        <!-- <module>vago-service-user</module> -->
     </modules>
 
     <properties>

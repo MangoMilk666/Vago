@@ -1,0 +1,26 @@
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/vago?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: "20030402"
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password:
+      database: 0
+
+vago:
+  jwt:
+    secret-key: vago_dev_secret_key_please_change_in_prod_32chars
+    # Access Token 有效期：2 小时（毫秒）
+    access-token-ttl: 7200000
+    # Refresh Token 有效期：30 天（毫秒）
+    refresh-token-ttl: 2592000000
+    # 请求头字段名
+    token-name: authorization
+
+  ai:
+    base-url: http://localhost:8000

@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-gray-50 text-gray-900;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+      'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  }
+}
+
+@layer components {
+  /* 通用输入框 */
+  .input-base {
+    @apply w-full px-4 py-3 rounded-xl border border-gray-200 bg-white
+           text-gray-900 placeholder-gray-400 text-sm
+           focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent
+           transition-all duration-200;
+  }
+
+  /* 主按钮 */
+  .btn-primary {
+    @apply w-full py-3.5 rounded-xl font-semibold text-white text-sm
+           bg-gradient-to-r from-indigo-500 to-purple-600
+           hover:from-indigo-600 hover:to-purple-700
+           active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed
+           transition-all duration-200 shadow-md hover:shadow-lg;
+  }
+
+  /* 次要按钮 */
+  .btn-secondary {
+    @apply px-4 py-2.5 rounded-lg font-medium text-sm text-indigo-600 bg-indigo-50
+           hover:bg-indigo-100 active:scale-[0.98] disabled:opacity-50
+           transition-all duration-150;
+  }
+}
