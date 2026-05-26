@@ -14,9 +14,15 @@ http.interceptors.request.use((config) => {
   return config
 })
 
-// 响应拦截器：统一处理 401
+// 响应拦截器：统一处理 401 及业务错误码
 http.interceptors.response.use(
-  (response) => response.data,
+  (response) => {
+    const data = response.data
+    if (data.code !== 200) {
+      return Promise.reject(new Error(data.message || '请求失败'))
+    }
+    return data
+  },
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('accessToken')

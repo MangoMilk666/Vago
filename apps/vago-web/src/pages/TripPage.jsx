@@ -215,7 +215,7 @@ export default function TripPage() {
       const res = tab === 'history'
         ? await tripApi.history()
         : await tripApi.list()
-      if (res.code === 200) setTrips(res.data ?? [])
+      setTrips(res.data ?? [])
     } finally {
       setLoading(false)
     }

@@ -243,7 +243,7 @@ export default function PlanPage() {
     setLoading(true)
     try {
       const res = await planApi.list()
-      if (res.code === 200) setPlans(res.data ?? [])
+      setPlans(res.data ?? [])
     } finally {
       setLoading(false)
     }

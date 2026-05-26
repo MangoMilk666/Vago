@@ -24,18 +24,27 @@ function GuideCard({ guide, isMine, onEdit, onDelete, onLike }) {
     'from-amber-300 to-orange-400',
   ]
   const colorIdx = guide.uuid.charCodeAt(0) % colors.length
+  const isDraft = guide.status === 0
 
   return (
     <div className="break-inside-avoid mb-3 bg-white rounded-2xl overflow-hidden
                     shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
       {/* 封面图 */}
       <div className={`w-full bg-gradient-to-br ${colors[colorIdx]}
-                       flex items-end justify-start p-3`}
+                       flex items-end justify-between p-3`}
            style={{ minHeight: 120 + (guide.uuid.charCodeAt(2) % 3) * 40 }}>
-        {guide.destination && (
+        {guide.destination ? (
           <span className="bg-white/80 backdrop-blur-sm text-xs text-gray-700
                            px-2 py-0.5 rounded-full font-medium">
             {guide.destination}
+          </span>
+        ) : <span />}
+
+        {/* 草稿标识 */}
+        {isDraft && (
+          <span className="bg-amber-400/90 backdrop-blur-sm text-xs text-white
+                           px-2 py-0.5 rounded-full font-medium tracking-wide">
+            草稿
           </span>
         )}
       </div>
@@ -216,6 +225,7 @@ export default function GuidePage() {
   const [tab,      setTab]      = useState('discover') // 'discover' | 'mine'
   const [guides,   setGuides]   = useState([])
   const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState('')
   const [page,     setPage]     = useState(1)
   const [total,    setTotal]    = useState(0)
   const [modal,    setModal]    = useState(null)
@@ -224,14 +234,15 @@ export default function GuidePage() {
 
   const loadDiscover = useCallback(async (p = 1) => {
     setLoading(true)
+    setError('')
     try {
       const res = await guideApi.listPublished(p, PAGE_SIZE)
-      if (res.code === 200) {
-        const { records, total: t } = res.data
-        setGuides(p === 1 ? (records ?? []) : (prev) => [...prev, ...(records ?? [])])
-        setTotal(t ?? 0)
-        setPage(p)
-      }
+      const { records, total: t } = res.data
+      setGuides(p === 1 ? (records ?? []) : (prev) => [...prev, ...(records ?? [])])
+      setTotal(t ?? 0)
+      setPage(p)
+    } catch (err) {
+      setError(err.message || '加载失败，请稍后重试')
     } finally {
       setLoading(false)
     }
@@ -239,9 +250,12 @@ export default function GuidePage() {
 
   const loadMine = async () => {
     setLoading(true)
+    setError('')
     try {
       const res = await guideApi.listMine()
-      if (res.code === 200) { setGuides(res.data ?? []) }
+      setGuides(res.data ?? [])
+    } catch (err) {
+      setError(err.message || '加载失败，请稍后重试')
     } finally {
       setLoading(false)
     }
@@ -291,6 +305,18 @@ export default function GuidePage() {
             </button>
           ))}
         </div>
+
+        {/* 错误提示 */}
+        {error && (
+          <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl
+                          text-sm text-red-600 flex items-center gap-2">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            {error}
+          </div>
+        )}
 
         {/* 加载中 */}
         {loading && guides.length === 0 ? (
