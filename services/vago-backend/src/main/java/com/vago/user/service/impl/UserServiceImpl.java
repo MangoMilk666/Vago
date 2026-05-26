@@ -157,6 +157,7 @@ public class UserServiceImpl implements UserService {
     // ══════════════════════════════════════════════════════════════════════════
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public LoginVO loginByPhone(UserLoginPhoneDTO dto) {
         String phone = dto.getPhone();
 
@@ -165,11 +166,29 @@ public class UserServiceImpl implements UserService {
 
         // 2. 查询用户
         User user = userMapper.getByPhone(phone);
+
+        // 3. 新手机号：自动注册（无需额外 /register 步骤）
         if (user == null) {
-            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND);
+            LocalDateTime now = LocalDateTime.now();
+            String defaultNickname = "旅行者" + phone.substring(phone.length() - 4);
+            user = User.builder()
+                    .uuid(IdUtil.fastSimpleUUID())
+                    .phone(phone)
+                    .nickname(defaultNickname)
+                    .planType(DEFAULT_PLAN_TYPE)
+                    .articleQuota(DEFAULT_ARTICLE_QUOTA)
+                    .aiCallsToday(0)
+                    .status(1)
+                    .createdAt(now)
+                    .updatedAt(now)
+                    .build();
+            userMapper.insert(user);
+            createDefaultSettings(user.getId());
+            log.info("手机号自动注册新用户: uuid={}, phone={}", user.getUuid(), phone);
+            return buildLoginVO(user, true);
         }
 
-        // 3. 校验账号状态
+        // 4. 校验账号状态
         checkUserStatus(user);
 
         log.info("手机号登录成功: uuid={}", user.getUuid());

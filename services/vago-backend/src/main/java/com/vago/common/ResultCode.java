@@ -23,6 +23,13 @@ public enum ResultCode {
     CANCEL_REVOKE_EXPIRED(4095, "注销撤销期已过"),
     SMS_RATE_LIMIT(4291, "发送频率超限，请稍后再试"),
 
+    // travel 域业务错误
+    FORBIDDEN(4033, "无操作权限"),
+    TRIP_NOT_FOUND(4042, "行程不存在"),
+    PLAN_NOT_FOUND(4043, "计划不存在"),
+    GUIDE_NOT_FOUND(4044, "攻略不存在"),
+    PLAN_ALREADY_CONVERTED(4045, "该计划已转为正式行程，不可再次转换"),
+
     // 5xx 服务端错误
     SMS_SERVICE_ERROR(5001, "短信服务暂不可用"),
     OAUTH_SERVICE_ERROR(5002, "第三方登录服务异常"),

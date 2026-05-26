@@ -43,8 +43,10 @@ public class WebMvcConfiguration extends WebMvcConfigurationSupport {
                         "/api/v1/user/register",
                         "/api/v1/user/login/phone",
                         "/api/v1/user/login/oauth",
-                        "/api/v1/user/token/refresh"
-                        // 未来新增域的开放端点追加在此
+                        "/api/v1/user/token/refresh",
+                        // travel 域公开端点
+                        // /discover 独立路径，避免与同 base-path 的 POST（创建攻略）冲突
+                        "/api/v1/travel/guides/discover"
                 );
     }
 

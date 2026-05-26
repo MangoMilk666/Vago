@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { getProfile, logout } from '../api/user'
 import { clearAuth, getAuth } from '../stores/auth'
 
@@ -90,30 +90,38 @@ export default function DashboardPage() {
         {/* 功能卡片网格 */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[
-            { emoji: '🗺️', title: '足迹地图',   desc: '查看你走过的每一个地方' },
-            { emoji: '✈️', title: 'AI 行程规划', desc: '智能生成专属旅行计划' },
-            { emoji: '📖', title: '攻略库',     desc: '浏览和分享旅行攻略' },
-            { emoji: '🌫️', title: '迷雾探索',   desc: '解锁未曾踏足的区域' },
-            { emoji: '📊', title: '统计报告',   desc: '看看你的旅行数据' },
-            { emoji: '⚙️', title: '账号设置',   desc: '管理个人信息和偏好' },
-          ].map((card) => (
-            <div key={card.title}
-              className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm
-                         hover:shadow-md hover:-translate-y-0.5 transition-all duration-200
-                         cursor-pointer group">
-              <div className="text-3xl mb-3">{card.emoji}</div>
-              <h3 className="font-semibold text-gray-900 mb-1 group-hover:text-indigo-600
-                             transition-colors">
-                {card.title}
-              </h3>
-              <p className="text-sm text-gray-500">{card.desc}</p>
-            </div>
-          ))}
+            { emoji: '✈️', title: '我的行程', desc: '查看、创建和管理旅行行程', to: '/trips' },
+            { emoji: '📋', title: '旅行计划', desc: '草稿计划，一键转为正式行程', to: '/plans' },
+            { emoji: '📖', title: '攻略广场', desc: '浏览和分享旅游攻略帖', to: '/guides' },
+            { emoji: '🗺️', title: '足迹地图', desc: '查看你走过的每一个地方', to: null },
+            { emoji: '🤖', title: 'AI 行程规划', desc: '智能生成专属旅行计划', to: null },
+            { emoji: '🌫️', title: '迷雾探索', desc: '解锁未曾踏足的区域', to: null },
+          ].map((card) => {
+            const inner = (
+              <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm
+                              hover:shadow-md hover:-translate-y-0.5 transition-all duration-200
+                              cursor-pointer group relative">
+                {!card.to && (
+                  <span className="absolute top-3 right-3 text-xs text-gray-300 font-medium">
+                    即将上线
+                  </span>
+                )}
+                <div className="text-3xl mb-3">{card.emoji}</div>
+                <h3 className="font-semibold text-gray-900 mb-1 group-hover:text-indigo-600
+                               transition-colors">
+                  {card.title}
+                </h3>
+                <p className="text-sm text-gray-500">{card.desc}</p>
+              </div>
+            )
+            return card.to
+              ? <Link key={card.title} to={card.to}>{inner}</Link>
+              : <div key={card.title}>{inner}</div>
+          })}
         </div>
 
-        {/* 占位提示 */}
         <div className="mt-8 text-center text-sm text-gray-400">
-          🚧 更多功能正在开发中，敬请期待
+          足迹地图 · AI 规划 · 迷雾探索 正在开发中，敬请期待
         </div>
       </main>
     </div>

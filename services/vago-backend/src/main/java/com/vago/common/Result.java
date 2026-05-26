@@ -14,25 +14,40 @@ public class Result<T> implements Serializable {
     private String message;
     private T data;
 
-    private Result(Integer code, String message, T data) {
-        this.code = code;
-        this.message = message;
-        this.data = data;
+
+    public static <T> Result<T> success() {
+        Result<T> result = new Result<T>();
+        result.code = 200;
+        return result;
     }
 
     public static <T> Result<T> success(T data) {
-        return new Result<>(200, "success", data);
+        Result<T> result = new Result<>();
+        result.code = 200;
+        result.message = "success";
+        result.data = data;
+        return result;
     }
 
     public static <T> Result<T> success(String message, T data) {
-        return new Result<>(200, message, data);
+        Result<T> result = new Result<>();
+        result.code = 200;
+        result.message = message;
+        result.data = data;
+        return result;
     }
 
     public static <T> Result<T> fail(Integer code, String message) {
-        return new Result<>(code, message, null);
+        Result<T> result = new Result<>();
+        result.code = code;
+        result.message = message;
+        return result;
     }
 
     public static <T> Result<T> fail(ResultCode resultCode) {
-        return new Result<>(resultCode.getCode(), resultCode.getMessage(), null);
+        Result<T> result = new Result<>();
+        result.code = resultCode.getCode();
+        result.message = result.getMessage();
+        return result;
     }
 }
