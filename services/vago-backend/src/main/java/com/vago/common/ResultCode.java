@@ -33,6 +33,7 @@ public enum ResultCode {
     // 5xx 服务端错误
     SMS_SERVICE_ERROR(5001, "短信服务暂不可用"),
     OAUTH_SERVICE_ERROR(5002, "第三方登录服务异常"),
+    AI_SERVICE_UNAVAILABLE(5031, "AI 服务暂时不可用，请稍后重试"),
     INTERNAL_ERROR(5000, "服务器内部错误");
 
     private final Integer code;
