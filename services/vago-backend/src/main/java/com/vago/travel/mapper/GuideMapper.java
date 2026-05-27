@@ -15,10 +15,10 @@ public interface GuideMapper {
     @Insert("""
             INSERT INTO guides
               (uuid, user_uuid, title, destination, cover_image_key, image_keys,
-               content, tags, view_count, like_count, status, created_at, updated_at)
+               content, tags, view_count, like_count, status, ai_status, created_at, updated_at)
             VALUES
               (#{uuid}, #{userUuid}, #{title}, #{destination}, #{coverImageKey}, #{imageKeys},
-               #{content}, #{tags}, 0, 0, #{status}, #{createdAt}, #{updatedAt})
+               #{content}, #{tags}, 0, 0, #{status}, #{aiStatus}, #{createdAt}, #{updatedAt})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(Guide guide);
@@ -86,4 +86,11 @@ public interface GuideMapper {
      */
     @Update("UPDATE guides SET deleted_at = NOW(3), updated_at = NOW(3) WHERE uuid = #{uuid}")
     int softDelete(String uuid);
+
+    /**
+     * 单独更新 AI 向量化状态（由 AiServiceImpl 异步回写）。
+     * aiStatus 为 null 时将数据库字段置为 NULL（用于草稿降级场景）。
+     */
+    @Update("UPDATE guides SET ai_status = #{aiStatus}, updated_at = NOW(3) WHERE uuid = #{uuid}")
+    int updateAiStatus(@Param("uuid") String uuid, @Param("aiStatus") Integer aiStatus);
 }

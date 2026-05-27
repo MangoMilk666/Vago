@@ -106,3 +106,4 @@ docker-compose.override.yaml
 # 需忽略目录/文件
 docs/.log/
 .log/
+**/test.txt

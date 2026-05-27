@@ -20,10 +20,19 @@
     </properties>
 
     <dependencies>
-        <!-- Spring Web（MVC） -->
+        <!-- Spring Web（MVC，Tomcat 服务器） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!--
+            Spring WebFlux：仅引入 WebClient 用于调用 vago-ai HTTP 接口（含 SSE 流）。
+            因 spring-boot-starter-web 优先级更高，服务器仍使用 Tomcat，不会切换至 Netty。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
 
         <!-- 参数校验 -->

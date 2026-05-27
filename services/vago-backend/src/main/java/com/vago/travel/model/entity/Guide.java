@@ -61,7 +61,8 @@ public class Guide implements Serializable {
      * </ul>
      */
     private Integer status;
-
+    /** 向量化状态：0-PENDING / 1-INDEXING / 2-INDEXED / 3-FAILED */
+    private Integer aiStatus;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
