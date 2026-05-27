@@ -16,7 +16,7 @@ Thumbs.db
 # --- AI Vibe Tools ---
 .trae/
 .claude/
-CLAUDE.md
+vago-skill.md
 
 # --- Java / Spring Boot / Maven / Gradle ---
 **/target/

@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import ai, articles
+from app.routers import ai, articles, chat
 from app.services.vector_store import init_collection
 
 logging.basicConfig(
@@ -57,9 +57,9 @@ app = FastAPI(
         "叠迹 AI 服务：\n"
         "- **攻略 RAG 管道**：文本清洗 → 语义分块 → Embedding → Qdrant 向量存储\n"
         "- **向量检索**：用户私有攻略库语义检索，供行程规划链路调用\n"
-        "- **AI 行程规划**：RAG + LLM 生成定制化行程草稿（开发中）"
+        "- **AI 对话**：RAG Agent 对话，支持流式（SSE）和非流式两种模式"
     ),
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -77,6 +77,7 @@ app.add_middleware(
 # ── 路由注册 ──────────────────────────────────────────────────────────────────
 app.include_router(ai.router,       prefix="/api/v1/ai",       tags=["AI 行程规划"])
 app.include_router(articles.router, prefix="/api/v1/articles", tags=["攻略库 RAG"])
+app.include_router(chat.router,     prefix="/api/v1/chat",     tags=["AI 对话"])
 
 
 @app.get("/health", tags=["健康检查"])
@@ -87,4 +88,4 @@ async def health():
     返回:
         服务名称和状态字段。
     """
-    return {"status": "ok", "service": "vago-ai", "version": "0.2.0"}
+    return {"status": "ok", "service": "vago-ai", "version": "0.3.0"}

@@ -12,23 +12,31 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 
-# 模块级单例，避免每次调用重复初始化 HTTP 连接池
+# 模块级单例，避免每次调用重复初始化 HTTP 连接池。
+# 注意：base_url 或 api_key 变更时需重启服务使新配置生效。
 _openai_client: AsyncOpenAI | None = None
 
 
 def _get_client() -> AsyncOpenAI:
     """
-    懒加载并返回 AsyncOpenAI 客户端单例。
+    懒加载并返回 AsyncOpenAI Embedding 客户端单例。
 
-    延迟初始化确保 settings.openai_api_key 在运行时读取，
-    而非模块导入时读取，方便测试时替换环境变量。
+    优先使用 settings.embed_api_key / embed_base_url，
+    回退顺序为：embed_api_key → openai_api_key → llm_api_key，
+    支持 Embedding 与 LLM 使用不同 Provider（如 Embedding 用 OpenAI、LLM 用阿里云百炼）。
+
+    base_url 为 None 时指向 OpenAI 官方端点；
+    指向 DashScope 示例：https://dashscope.aliyuncs.com/compatible-mode/v1
 
     返回:
-        已配置 API Key 的 AsyncOpenAI 客户端实例。
+        配置好 API Key 和 base_url 的 AsyncOpenAI 实例。
     """
     global _openai_client
     if _openai_client is None:
-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        _openai_client = AsyncOpenAI(
+            api_key=settings.get_embed_api_key(),
+            base_url=settings.get_embed_base_url(),
+        )
     return _openai_client
 
 

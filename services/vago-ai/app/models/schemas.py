@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -134,3 +134,60 @@ class PlanResponse(BaseModel):
 
     plan: str = Field(description="生成的行程文本（Markdown 格式）")
     tips: list[str] = Field(default_factory=list, description="旅行小贴士列表")
+
+
+# ─── AI 对话（Chat）──────────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    """单条对话消息，兼容 OpenAI Chat Completions 消息格式。"""
+
+    role: Literal["user", "assistant", "system"] = Field(
+        description="消息角色：user=用户输入，assistant=模型回复，system=系统提示"
+    )
+    content: str = Field(..., description="消息正文")
+
+
+class ChatRequest(BaseModel):
+    """AI 对话请求体，由 Java vago-backend 或前端直接发送。"""
+
+    user_uuid: str = Field(..., description="当前用户 UUID，用于 RAG 检索隔离")
+    messages: list[ChatMessage] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "完整对话历史（含本轮用户消息）。"
+            "列表最后一条必须为 role=user 的消息。"
+            "Java 侧负责维护历史记录并完整传入，服务端无状态。"
+        ),
+    )
+    use_rag: bool = Field(
+        True,
+        description="是否启用 RAG 私有攻略库检索。False 时直接调用 LLM 通用知识。",
+    )
+    top_k: int = Field(6, ge=1, le=20, description="RAG 检索返回的最大文本块数")
+    score_threshold: float = Field(
+        0.55,
+        ge=0.0,
+        le=1.0,
+        description="RAG 检索相似度阈值，低于此值的结果被过滤",
+    )
+
+
+class SourceCitation(BaseModel):
+    """RAG 检索命中的攻略来源，随回答一同返回，供前端展示引用来源。"""
+
+    article_id: str
+    title: str = Field(description="攻略标题")
+    chunk_text: str = Field(description="命中的文本块摘要（前 300 字）")
+    score: float = Field(description="相似度得分，范围 [0, 1]")
+
+
+class ChatResponse(BaseModel):
+    """AI 对话非流式响应体。"""
+
+    answer: str = Field(description="模型生成的回答文本")
+    sources: list[SourceCitation] = Field(
+        default_factory=list,
+        description="本次回答引用的攻略来源列表，为空时表示基于通用知识作答",
+    )
+    model: str = Field(description="实际使用的模型名称")
