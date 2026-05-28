@@ -94,7 +94,7 @@ export default function DashboardPage() {
             { emoji: '📋', title: '旅行计划', desc: '草稿计划，一键转为正式行程', to: '/plans' },
             { emoji: '📖', title: '攻略广场', desc: '浏览和分享旅游攻略帖', to: '/guides' },
             { emoji: '🗺️', title: '足迹地图', desc: '查看你走过的每一个地方', to: null },
-            { emoji: '🤖', title: 'AI 行程规划', desc: '智能生成专属旅行计划', to: null },
+            { emoji: '🤖', title: 'AI 行程规划', desc: '基于攻略库智能生成专属旅行计划', to: '/ai' },
             { emoji: '🌫️', title: '迷雾探索', desc: '解锁未曾踏足的区域', to: null },
           ].map((card) => {
             const inner = (
@@ -121,7 +121,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="mt-8 text-center text-sm text-gray-400">
-          足迹地图 · AI 规划 · 迷雾探索 正在开发中，敬请期待
+          足迹地图 · 迷雾探索 正在开发中，敬请期待
         </div>
       </main>
     </div>
