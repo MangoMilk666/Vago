@@ -6,6 +6,7 @@ import TripPage       from './pages/TripPage'
 import PlanPage       from './pages/PlanPage'
 import GuidePage      from './pages/GuidePage'
 import ItineraryPage  from './pages/ItineraryPage'
+import AiPlanPage     from './pages/AiPlanPage'
 import { isLoggedIn } from './stores/auth'
 
 // 受保护路由：未登录跳转到 /login
@@ -29,6 +30,9 @@ export default function App() {
       } />
       <Route path="/guides" element={
         <ProtectedRoute><GuidePage /></ProtectedRoute>
+      } />
+      <Route path="/ai" element={
+        <ProtectedRoute><AiPlanPage /></ProtectedRoute>
       } />
       {/* 每日行程规划：/trips/:uuid/itinerary?type=trip&title=xxx */}
       <Route path="/trips/:uuid/itinerary" element={

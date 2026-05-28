@@ -6,14 +6,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // CRUD 请求 → Java 单体后端
+      // 所有 /api/v1/** 请求均路由到 Java 单体后端（含 /api/v1/ai/**）。
+      // AI 端点由 Java AiController 处理 JWT 鉴权后再转发给 Python vago-ai，
+      // 前端不直连 Python，保证安全性。
       '/api/v1': {
         target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-      // AI 请求 → Python FastAPI（如直接从前端调用）
-      '/api/v1/ai': {
-        target: 'http://localhost:8000',
         changeOrigin: true,
       },
     },
