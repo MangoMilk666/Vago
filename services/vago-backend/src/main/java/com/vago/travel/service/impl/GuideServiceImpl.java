@@ -184,6 +184,31 @@ public class GuideServiceImpl implements GuideService {
         guideMapper.incrementLikeCount(guideUuid);
     }
 
+    /**
+     * 手动触发向量化：将攻略重新加入（或首次加入）AI 知识库。
+     *
+     * <p>适用于旧数据补索引（aiStatus=null）和索引失败重试（aiStatus=3）。
+     * 草稿不可索引，调用时抛出 PARAM_INVALID。
+     */
+    @Override
+    public GuideVO triggerIndex(String userUuid, String guideUuid) {
+        Guide guide = getGuideOrThrow(guideUuid);
+        checkOwner(guide, userUuid);
+
+        if (guide.getStatus() != 1) {
+            throw new BusinessException(ResultCode.PARAM_INVALID);
+        }
+
+        // 重置为 PENDING，异步触发向量化
+        guideMapper.updateAiStatus(guideUuid, AI_STATUS_PENDING);
+        guide.setAiStatus(AI_STATUS_PENDING);
+        aiService.indexGuideAsync(guide);
+
+        log.info("手动触发向量化: uuid={} userUuid={}", guideUuid, userUuid);
+        Guide updated = guideMapper.getByUuid(guideUuid);
+        return toVO(updated, fetchAuthor(userUuid));
+    }
+
     // ── 私有工具 ─────────────────────────────────────────────────────────────
 
     private Guide getGuideOrThrow(String uuid) {

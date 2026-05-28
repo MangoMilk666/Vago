@@ -77,4 +77,16 @@ public class GuideController {
         guideService.like(uuid);
         return Result.success();
     }
+
+    @Operation(
+        summary = "手动触发攻略向量化（加入 AI 知识库）",
+        description = "将已发布攻略重新提交向量化管道。\n\n"
+            + "适用于旧数据补索引（aiStatus=null）和索引失败重试（aiStatus=3）。\n"
+            + "调用后 aiStatus 立即重置为 PENDING(0)，后台异步执行向量化。\n"
+            + "草稿调用时返回 PARAM_INVALID(4001)。"
+    )
+    @PostMapping("/{uuid}/index")
+    public Result<GuideVO> triggerIndex(@PathVariable("uuid") String uuid) {
+        return Result.success(guideService.triggerIndex(BaseContext.getCurrentUuid(), uuid));
+    }
 }

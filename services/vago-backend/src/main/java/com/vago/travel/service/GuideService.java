@@ -29,4 +29,20 @@ public interface GuideService {
 
     /** 点赞攻略 */
     void like(String guideUuid);
+
+    /**
+     * 手动触发攻略向量化（加入 AI 知识库）。
+     *
+     * <p>适用场景：
+     * <ul>
+     *   <li>旧数据（已发布但 aiStatus 为 null）</li>
+     *   <li>之前索引失败（aiStatus = 3）需要重试</li>
+     * </ul>
+     * 仅已发布（status=1）的攻略可触发索引，草稿调用时抛出 PARAM_INVALID。
+     *
+     * @param userUuid  当前用户 UUID（权限校验）
+     * @param guideUuid 目标攻略 UUID
+     * @return 更新后的攻略 VO（aiStatus 已重置为 PENDING）
+     */
+    GuideVO triggerIndex(String userUuid, String guideUuid);
 }
