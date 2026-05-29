@@ -107,3 +107,4 @@ docker-compose.override.yaml
 docs/.log/
 .log/
 **/test.txt
+bug-records.md
