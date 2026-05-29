@@ -868,7 +868,9 @@ export default function AiPlanPage() {
 
   // ── Fix #3: 仅在"有待处理攻略"这一布尔值变化时才重建轮询 interval ──────────
   // 使用派生的布尔值作为 dep，而非整个 guides 数组（避免每次 loadGuides 返回就重建计时器）
-  const hasPendingGuides = guides.some((g) => g.aiStatus === 0 || g.aiStatus === 1)
+  // 只有已发布（status=1）且 AI 尚未完成（PENDING/INDEXING）的攻略才需要轮询。
+  // 草稿（status=0）的 aiStatus 可能因 MyBatis null 写入问题残留为 0，不应触发轮询。
+  const hasPendingGuides = guides.some((g) => g.status === 1 && (g.aiStatus === 0 || g.aiStatus === 1))
 
   useEffect(() => {
     if (!hasPendingGuides) return

@@ -9,7 +9,7 @@ import java.util.List;
 public interface GuideMapper {
     /**
      * 新增攻略
-     * @param guide
+     * @param guide, ai_status允许为NULL
      * @return
      */
     @Insert("""
@@ -18,7 +18,7 @@ public interface GuideMapper {
                content, tags, view_count, like_count, status, ai_status, created_at, updated_at)
             VALUES
               (#{uuid}, #{userUuid}, #{title}, #{destination}, #{coverImageKey}, #{imageKeys},
-               #{content}, #{tags}, 0, 0, #{status}, #{aiStatus}, #{createdAt}, #{updatedAt})
+               #{content}, #{tags}, 0, 0, #{status}, #{aiStatus,jdbcType=TINYINT}, #{createdAt}, #{updatedAt})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(Guide guide);
@@ -91,6 +91,6 @@ public interface GuideMapper {
      * 单独更新 AI 向量化状态（由 AiServiceImpl 异步回写）。
      * aiStatus 为 null 时将数据库字段置为 NULL（用于草稿降级场景）。
      */
-    @Update("UPDATE guides SET ai_status = #{aiStatus}, updated_at = NOW(3) WHERE uuid = #{uuid}")
+    @Update("UPDATE guides SET ai_status = #{aiStatus,jdbcType=TINYINT}, updated_at = NOW(3) WHERE uuid = #{uuid}")
     int updateAiStatus(@Param("uuid") String uuid, @Param("aiStatus") Integer aiStatus);
 }
