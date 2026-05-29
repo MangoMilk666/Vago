@@ -16,10 +16,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 
-import java.io.IOException;
 import java.util.List;
 
 /**
@@ -84,52 +82,24 @@ public class AiController {
             + "流结束时收到 `data: [DONE]`，前端据此关闭连接。"
     )
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chatStream(@Valid @RequestBody AiChatRequestDTO dto) {
+    public Flux<ServerSentEvent<String>> chatStream(@Valid @RequestBody AiChatRequestDTO dto) {
         String userUuid = BaseContext.getCurrentUuid();
         validateLastMessageIsUser(dto);
 
         log.info("[AiController] 流式对话 user={} messages={}", userUuid, dto.getMessages().size());
 
-        // 5 分钟超时（大模型生成可能较慢，留足裕量）
-        SseEmitter emitter = new SseEmitter(300_000L);
-        // 返回Flux，异步流式数据的响应管道
-        Flux<ServerSentEvent<String>> flux = aiService.chatStream(dto, userUuid);
-        /**
-         * 调用 .subscribe() 的瞬间，对系统下达了三个核心指令：
-         *     1.正式向远端 Python AI 服务发起 HTTP POST 请求，建立长连接。
-         *     2.在 Java 的内存里安插好三个监听回调，分别监听“数据流过”、“流发生报错”、“流顺利结束”。
-         *     3.彻底释放当前 Tomcat 线程：这段 .subscribe() 代码执行只需 1毫秒。执行完后，主线程立刻带着创建好的 SseEmitter 对象返回给前端。
-         *     此时，Tomcat 线程被安全回收，而数据转发的逻辑全部托管给了后台的异步线程。
-         */
-        flux.subscribe(
-                // 1. onNext 监听器（只要有新字吐出来，就执行这里）
-            event -> {
-                // Python 端 SSE data 字段为 JSON 字符串，直接透传给前端
-                String data = event.data() != null ? event.data() : "";
-                try {
-                    emitter.send(SseEmitter.event().data(data));
-                } catch (IOException e) {
-                    log.warn("[AiController] SSE send 失败 user={}: {}", userUuid, e.getMessage());
-                    emitter.completeWithError(e);
-                }
-            },
-                // 2. onError 监听器（只要中途断网或AI报错，就执行这里）
-            error -> {
+        // 直接返回 Flux，由 Spring 的响应式 SSE 写入器（ServerSentEventHttpMessageWriter）托管。
+        // 与原 SseEmitter + flux.subscribe() 方案相比：
+        //   1. 编码正确：ServerSentEventHttpMessageWriter 默认 UTF-8，彻底消除 StringHttpMessageConverter
+        //      默认 ISO-8859-1 导致中文变 '?' 的问题；
+        //   2. 代码简洁：Spring 自动处理背压、onComplete、连接关闭，无需手动 subscribe；
+        //   3. 错误透明：onErrorResume 将异常转为一条 error 事件推送给前端，不丢失错误信息。
+        return aiService.chatStream(dto, userUuid)
+            .onErrorResume(error -> {
                 log.error("[AiController] 流式生成异常 user={} error={}", userUuid, error.getMessage(), error);
-                try {
-                    // 向前端推送错误事件再关闭流，避免前端收到空流
-                    String errPayload = "{\"type\":\"error\",\"message\":\"AI 服务暂时不可用，请稍后重试\"}";
-                    emitter.send(SseEmitter.event().data(errPayload));
-                } catch (IOException ignored) {
-                    // 推送错误事件失败时直接终止
-                }
-                emitter.completeWithError(error);
-            },
-            // 3. onComplete 监听器（Python 吐完，结束）
-            emitter::complete
-        );
-
-        return emitter;
+                String errPayload = "{\"type\":\"error\",\"message\":\"AI 服务暂时不可用，请稍后重试\"}";
+                return Flux.just(ServerSentEvent.<String>builder().data(errPayload).build());
+            });
     }
 
     // ── 私有工具 ───────────────────────────────────────────────────────────────
