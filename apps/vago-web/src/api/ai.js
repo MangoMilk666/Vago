@@ -49,9 +49,10 @@ export const aiApi = {
    *   [DONE]                                   — 流结束信号
    *
    * @param {Array<{role: string, content: string}>} messages 完整消息历史
+   * @param {AbortSignal} [signal] 可选：用于超时/取消的 AbortSignal
    * @returns {Promise<Response>} fetch Response，body 为 SSE 流
    */
-  chatStream: (messages) => {
+  chatStream: (messages, signal) => {
     const token = getAuth()?.accessToken
     return fetch('/api/v1/ai/chat/stream', {
       method: 'POST',
@@ -60,6 +61,7 @@ export const aiApi = {
         ...(token ? { authorization: token } : {}),
       },
       body: JSON.stringify({ messages }),
+      ...(signal ? { signal } : {}),
     })
   },
 }

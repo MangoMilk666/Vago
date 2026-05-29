@@ -86,4 +86,6 @@ export const guideApi = {
   update:    (uuid, data) => http.put(`/guides/${uuid}`, data),
   delete:    (uuid)       => http.delete(`/guides/${uuid}`),
   like:      (uuid)       => http.post(`/guides/${uuid}/like`),
+  /** 手动触发向量化（加入 / 重试加入 AI 知识库） */
+  index:     (uuid)       => http.post(`/guides/${uuid}/index`),
 }

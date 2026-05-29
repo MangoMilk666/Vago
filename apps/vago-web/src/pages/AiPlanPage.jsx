@@ -21,10 +21,20 @@ function AiStatusBadge({ status, draft }) {
     )
   }
   const map = {
-    0: { label: '待索引', dot: 'bg-amber-400',  cls: 'bg-amber-50 text-amber-600' },
-    1: { label: '索引中', dot: 'bg-blue-400 animate-pulse', cls: 'bg-blue-50 text-blue-600' },
-    2: { label: '已索引', dot: 'bg-green-400',  cls: 'bg-green-50 text-green-600' },
-    3: { label: '失败',   dot: 'bg-red-400',    cls: 'bg-red-50 text-red-500' },
+    0: { label: '待索引', dot: 'bg-amber-400',                    cls: 'bg-amber-50 text-amber-600' },
+    1: { label: '索引中', dot: 'bg-blue-400 animate-pulse',       cls: 'bg-blue-50 text-blue-600' },
+    2: { label: '已索引', dot: 'bg-green-400',                    cls: 'bg-green-50 text-green-600' },
+    3: { label: '索引失败', dot: 'bg-red-400',                    cls: 'bg-red-50 text-red-500' },
+  }
+  // null / undefined — 旧数据未索引
+  if (status == null) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full
+                       font-medium bg-gray-50 text-gray-400">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-gray-300" />
+        未加入知识库
+      </span>
+    )
   }
   const info = map[status] ?? { label: '未知', dot: 'bg-gray-300', cls: 'bg-gray-50 text-gray-400' }
   return (
@@ -68,7 +78,6 @@ function GuideFormModal({ guide, onClose, onSaved }) {
     }
   }
 
-  // ESC 关闭
   useEffect(() => {
     const h = (e) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', h)
@@ -146,9 +155,11 @@ function GuideFormModal({ guide, onClose, onSaved }) {
 }
 
 // ── 攻略详情 Modal ─────────────────────────────────────────────────────────────
-function GuideDetailModal({ guide, onClose, onEdit, onDelete }) {
-  const [detail,   setDetail]   = useState(guide)
-  const [fetching, setFetching] = useState(true)
+function GuideDetailModal({ guide, onClose, onEdit, onDelete, onIndexed }) {
+  const [detail,      setDetail]      = useState(guide)
+  const [fetching,    setFetching]    = useState(true)
+  const [indexing,    setIndexing]    = useState(false)
+  const [indexError,  setIndexError]  = useState('')
 
   useEffect(() => {
     let alive = true
@@ -164,6 +175,32 @@ function GuideDetailModal({ guide, onClose, onEdit, onDelete }) {
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
+
+  // 需要索引的条件：已发布 且满足以下任一：
+  //   null — 旧数据从未索引
+  //   0    — PENDING 卡死（Python 未启动或服务重启导致异步任务丢失）
+  //   3    — 上次向量化失败
+  const needsIndex = detail.status === 1 &&
+    (detail.aiStatus == null || detail.aiStatus === 0 || detail.aiStatus === 3)
+  const indexLabel = detail.aiStatus === 3
+    ? '重试加入知识库'
+    : detail.aiStatus === 0
+      ? '重新触发索引'
+      : '加入 AI 知识库'
+
+  const handleIndex = async () => {
+    setIndexing(true)
+    setIndexError('')
+    try {
+      const res = await guideApi.index(detail.uuid)
+      setDetail(res.data)          // aiStatus 已更新为 PENDING(0)
+      onIndexed?.()                // 通知父组件刷新列表
+    } catch (err) {
+      setIndexError(err.message || '操作失败，请稍后重试')
+    } finally {
+      setIndexing(false)
+    }
+  }
 
   const colors = [
     'from-rose-300 to-pink-400',
@@ -216,6 +253,38 @@ function GuideDetailModal({ guide, onClose, onEdit, onDelete }) {
             </div>
           )}
 
+          {/* 加入知识库 / 重试按钮 */}
+          {needsIndex && (
+            <div className="flex flex-col gap-1.5">
+              <button
+                onClick={handleIndex}
+                disabled={indexing}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl
+                           bg-indigo-600 text-white text-sm font-medium
+                           hover:bg-indigo-700 disabled:opacity-60 transition-colors">
+                {indexing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/50 border-t-white rounded-full animate-spin"/>
+                    提交中…
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2
+                           M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                    {indexLabel}
+                  </>
+                )}
+              </button>
+              {indexError && <p className="text-xs text-red-500 text-center">{indexError}</p>}
+              {detail.aiStatus === 3 && !indexError && (
+                <p className="text-xs text-gray-400 text-center">上次向量化失败，点击重新加入知识库</p>
+              )}
+            </div>
+          )}
+
           <hr className="border-gray-100"/>
 
           {fetching ? (
@@ -258,10 +327,7 @@ function GuideSidebar({ guides, loading, onRefresh, onView, onEdit, onAdd }) {
           <p className="text-xs text-gray-400 mt-0.5">发布的攻略会自动加入 AI 知识库</p>
         </div>
         <div className="flex items-center gap-1">
-          {/* 刷新按钮 */}
-          <button
-            onClick={onRefresh}
-            title="刷新状态"
+          <button onClick={onRefresh} title="刷新状态"
             className="w-7 h-7 flex items-center justify-center rounded-lg
                        text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 transition-colors">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -270,10 +336,7 @@ function GuideSidebar({ guides, loading, onRefresh, onView, onEdit, onAdd }) {
                    a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
             </svg>
           </button>
-          {/* 添加按钮 */}
-          <button
-            onClick={onAdd}
-            title="添加攻略"
+          <button onClick={onAdd} title="添加攻略"
             className="w-7 h-7 flex items-center justify-center rounded-lg
                        bg-indigo-600 text-white hover:bg-indigo-700 transition-colors">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -301,12 +364,7 @@ function GuideSidebar({ guides, loading, onRefresh, onView, onEdit, onAdd }) {
           </div>
         ) : (
           guides.map((guide) => (
-            <GuideSidebarCard
-              key={guide.uuid}
-              guide={guide}
-              onView={onView}
-              onEdit={onEdit}
-            />
+            <GuideSidebarCard key={guide.uuid} guide={guide} onView={onView} onEdit={onEdit} />
           ))
         )}
       </div>
@@ -316,9 +374,10 @@ function GuideSidebar({ guides, loading, onRefresh, onView, onEdit, onAdd }) {
         <div className="px-4 py-3 border-t border-gray-100 shrink-0">
           <div className="flex flex-wrap gap-x-3 gap-y-1">
             {[
-              { dot: 'bg-green-400', label: '已加入 AI 知识库' },
-              { dot: 'bg-blue-400 animate-pulse', label: '索引中' },
-              { dot: 'bg-amber-400', label: '待索引' },
+              { dot: 'bg-green-400',                    label: '已加入知识库' },
+              { dot: 'bg-blue-400 animate-pulse',       label: '索引中' },
+              { dot: 'bg-amber-400',                    label: '待索引' },
+              { dot: 'bg-red-400',                      label: '点击详情重试' },
             ].map(({ dot, label }) => (
               <span key={label} className="flex items-center gap-1 text-xs text-gray-400">
                 <span className={`w-1.5 h-1.5 rounded-full ${dot}`}/>
@@ -350,10 +409,7 @@ function GuideSidebarCard({ guide, onView, onEdit }) {
       className="group flex items-start gap-3 p-3 rounded-xl bg-white border border-gray-100
                  hover:border-indigo-200 hover:shadow-sm cursor-pointer transition-all"
     >
-      {/* 颜色块 */}
       <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${colors[colorIdx]} shrink-0 mt-0.5`}/>
-
-      {/* 内容 */}
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-gray-900 line-clamp-1 group-hover:text-indigo-600 transition-colors">
           {guide.title}
@@ -365,7 +421,8 @@ function GuideSidebarCard({ guide, onView, onEdit }) {
           <AiStatusBadge status={guide.aiStatus} draft={isDraft} />
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(guide) }}
-            className="text-xs text-gray-300 hover:text-indigo-500 transition-colors opacity-0 group-hover:opacity-100">
+            className="text-xs text-gray-300 hover:text-indigo-500 transition-colors
+                       opacity-0 group-hover:opacity-100">
             编辑
           </button>
         </div>
@@ -423,11 +480,9 @@ function ChatMessage({ msg }) {
     )
   }
 
-  // assistant 消息
   return (
     <div className="flex justify-start">
       <div className="flex items-start gap-2.5 max-w-[90%]">
-        {/* AI 头像 */}
         <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600
                         flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5">
           AI
@@ -445,7 +500,6 @@ function ChatMessage({ msg }) {
               )}
             </div>
           ) : msg.streaming ? (
-            // 正在生成中占位
             <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white border border-gray-100 shadow-sm">
               <div className="flex gap-1 items-center">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }}/>
@@ -491,27 +545,60 @@ function SearchingIndicator({ query }) {
   )
 }
 
-/** 对话面板 */
+/** ─── 对话面板 ──────────────────────────────────────────────────────────────── */
 function ChatPanel() {
-  const [messages,       setMessages]       = useState([])          // {role, content, sources?, streaming?, error?}
+  const [messages,       setMessages]       = useState([])
   const [input,          setInput]          = useState('')
   const [streaming,      setStreaming]      = useState(false)
   const [searchingQuery, setSearchingQuery] = useState(null)
-  const bottomRef = useRef(null)
-  const inputRef  = useRef(null)
+  const bottomRef  = useRef(null)
+  const inputRef   = useRef(null)
+  const abortRef   = useRef(null)   // AbortController 引用，用于超时取消
 
-  // 自动滚到底部
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, searchingQuery])
 
+  // ── SSE 解析工具 ──────────────────────────────────────────────────────────
+
+  /**
+   * 从 SSE 一行 data 字段中解析出事件对象。
+   *
+   * Java Spring Boot 3 中 SseEmitter.event().data(String) 如未指定 MediaType，
+   * 可能使用 Jackson 将字符串再次 JSON 编码为 "\"...\"" 格式。
+   * 本函数同时处理正常格式（对象）和双重编码格式（字符串外套引号）。
+   */
+  const parseEventData = (raw) => {
+    try {
+      const parsed = JSON.parse(raw)
+      // 正常情况：{ type: 'text', content: '...' }
+      if (parsed && typeof parsed === 'object') return parsed
+      // 双重编码兜底：parsed 是一个 JSON 字符串，需再解一次
+      if (typeof parsed === 'string') {
+        const inner = JSON.parse(parsed)
+        if (inner && typeof inner === 'object') return inner
+      }
+    } catch (_) {
+      // 解析失败，忽略该事件
+    }
+    return null
+  }
+
+  // ── 发送消息 ──────────────────────────────────────────────────────────────
   const sendMessage = async () => {
     const text = input.trim()
     if (!text || streaming) return
 
-    // 追加用户消息
-    const historyForApi = [...messages.map((m) => ({ role: m.role, content: m.content })),
-                           { role: 'user', content: text }]
+    // 过滤掉 content 为空或标记了 error 的历史消息，再拼入本轮用户消息。
+    // 必要性：前一轮流式失败时 assistant 消息可能 content=''，若原样带入
+    // 会触发 Java @NotBlank 校验报 4001；error 消息是前端提示文案，不属于对话语义。
+    const historyForApi = [
+      ...messages
+        .filter((m) => !m.error && m.content && m.content.trim().length > 0)
+        .map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user', content: text },
+    ]
+
     setMessages((prev) => [
       ...prev,
       { role: 'user',      content: text },
@@ -521,73 +608,104 @@ function ChatPanel() {
     setStreaming(true)
     setSearchingQuery(null)
 
+    // 30 秒超时：Python 端未启动或网络问题时给用户明确提示
+    const controller = new AbortController()
+    abortRef.current  = controller
+    const timeoutId   = setTimeout(() => controller.abort(), 30000)
+
     try {
-      const response = await aiApi.chatStream(historyForApi)
+      const response = await aiApi.chatStream(historyForApi, controller.signal)
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
+        throw new Error(`服务响应异常（HTTP ${response.status}）`)
       }
 
       const reader  = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
 
-      // 逐块读取 SSE
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
+        // SSE 以 \n\n 分隔事件，按行处理
         const lines = buffer.split('\n')
+        // 最后一段可能不完整，保留到下一个 chunk
         buffer = lines.pop() ?? ''
 
         for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const raw = line.slice(6).trim()
+          // SSE spec allows optional space after "data:" colon.
+          // Spring SseEmitter writes "data:" (no space); Python writes "data: " (with space).
+          // Accept both: check for "data:" (5 chars), then trim any leading whitespace from the value.
+          if (!line.startsWith('data:')) continue
+          const raw = line.slice(5).trim()
+
+          // 流结束标记
           if (raw === '[DONE]') break
 
-          try {
-            const event = JSON.parse(raw)
+          const event = parseEventData(raw)
+          if (!event) continue
 
-            if (event.type === 'text') {
+          if (event.type === 'text') {
+            // 逐 token 追加内容
+            const textChunk = typeof event.content === 'string'
+              ? event.content
+              : Array.isArray(event.content)
+                ? event.content.map((c) => (typeof c === 'string' ? c : c?.text ?? '')).join('')
+                : ''
+            if (textChunk) {
               setMessages((prev) => {
                 const copy = [...prev]
                 const last = { ...copy[copy.length - 1] }
-                last.content = (last.content ?? '') + (event.content ?? '')
+                last.content = (last.content ?? '') + textChunk
                 copy[copy.length - 1] = last
                 return copy
               })
-            } else if (event.type === 'searching') {
-              setSearchingQuery(event.query ?? '')
-            } else if (event.type === 'sources') {
-              setSearchingQuery(null)
-              setMessages((prev) => {
-                const copy = [...prev]
-                const last = { ...copy[copy.length - 1] }
-                last.sources = event.sources ?? []
-                copy[copy.length - 1] = last
-                return copy
-              })
-            } else if (event.type === 'error') {
-              throw new Error(event.message || 'AI 服务错误')
             }
-          } catch (parseErr) {
-            // 跳过格式错误的事件
+          } else if (event.type === 'searching') {
+            setSearchingQuery(event.query ?? '')
+          } else if (event.type === 'sources') {
+            setSearchingQuery(null)
+            setMessages((prev) => {
+              const copy = [...prev]
+              const last = { ...copy[copy.length - 1] }
+              last.sources = event.sources ?? []
+              copy[copy.length - 1] = last
+              return copy
+            })
+          } else if (event.type === 'error') {
+            // 将 Python 端错误作为错误消息展示，不中断流（流中还会跟随 [DONE]）
+            setMessages((prev) => {
+              const copy = [...prev]
+              const last = { ...copy[copy.length - 1] }
+              last.content = event.message || 'AI 生成失败'
+              last.error   = true
+              copy[copy.length - 1] = last
+              return copy
+            })
           }
         }
       }
     } catch (err) {
+      const isTimeout = err.name === 'AbortError'
+      const errMsg    = isTimeout
+        ? '系统繁忙，请稍后再试（请确认 AI 服务已启动）'
+        : `连接失败：${err.message}`
+
       setMessages((prev) => {
         const copy = [...prev]
         const last = { ...copy[copy.length - 1] }
-        last.content  = last.content || '抱歉，AI 服务暂时不可用，请稍后重试。'
+        last.content  = last.content || errMsg
         last.error    = true
         last.streaming = false
         copy[copy.length - 1] = last
         return copy
       })
     } finally {
-      // 去掉最后一条消息的 streaming 标志
+      clearTimeout(timeoutId)
+      abortRef.current = null
+      // 去掉流式光标
       setMessages((prev) => {
         const copy = [...prev]
         const last = { ...copy[copy.length - 1] }
@@ -630,8 +748,8 @@ function ChatPanel() {
         </div>
         {messages.length > 0 && (
           <button onClick={clearChat} disabled={streaming}
-            className="text-xs text-gray-400 hover:text-red-400 disabled:opacity-40 transition-colors
-                       flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-red-50">
+            className="text-xs text-gray-400 hover:text-red-400 disabled:opacity-40
+                       transition-colors flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-red-50">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5
@@ -664,8 +782,7 @@ function ChatPanel() {
                 '推荐清迈有哪些值得去的地方',
                 '冬天去北海道需要注意什么',
               ].map((q) => (
-                <button
-                  key={q}
+                <button key={q}
                   onClick={() => { setInput(q); inputRef.current?.focus() }}
                   className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600
                              text-left hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50
@@ -678,9 +795,7 @@ function ChatPanel() {
         )}
 
         {messages.map((msg, i) => <ChatMessage key={i} msg={msg} />)}
-
         {searchingQuery !== null && <SearchingIndicator query={searchingQuery} />}
-
         <div ref={bottomRef} />
       </div>
 
@@ -700,7 +815,6 @@ function ChatPanel() {
             className="flex-1 text-sm text-gray-800 placeholder-gray-400 resize-none
                        focus:outline-none bg-transparent leading-relaxed py-1 min-h-[36px]
                        max-h-[120px] disabled:opacity-50"
-            style={{ height: 'auto' }}
             onInput={(e) => {
               e.target.style.height = 'auto'
               e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
@@ -716,8 +830,7 @@ function ChatPanel() {
               <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"/>
             ) : (
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
-                  d="M5 12h14M12 5l7 7-7 7"/>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7"/>
               </svg>
             )}
           </button>
@@ -732,11 +845,11 @@ function ChatPanel() {
 
 // ── 主页面 ────────────────────────────────────────────────────────────────────
 export default function AiPlanPage() {
-  const [guides,   setGuides]   = useState([])
-  const [loading,  setLoading]  = useState(true)
-  const [modal,    setModal]    = useState(null)      // null | 'create' | guide obj (edit)
-  const [viewGuide, setViewGuide] = useState(null)   // guide obj — 详情弹窗
-  const [deleting,  setDeleting]  = useState(null)   // guide obj — 删除确认
+  const [guides,    setGuides]    = useState([])
+  const [loading,   setLoading]   = useState(true)
+  const [modal,     setModal]     = useState(null)    // null | 'create' | guide obj
+  const [viewGuide, setViewGuide] = useState(null)
+  const [deleting,  setDeleting]  = useState(null)
 
   const loadGuides = useCallback(async () => {
     setLoading(true)
@@ -744,21 +857,26 @@ export default function AiPlanPage() {
       const res = await guideApi.listMine()
       setGuides(res.data ?? [])
     } catch (_) {
-      // 静默失败，保持现有列表
+      // 静默失败
     } finally {
       setLoading(false)
     }
   }, [])
 
+  // 初始加载
   useEffect(() => { loadGuides() }, [loadGuides])
 
-  // 自动轮询：有 PENDING(0) 或 INDEXING(1) 的攻略时，每 3 秒刷新一次状态
+  // ── Fix #3: 仅在"有待处理攻略"这一布尔值变化时才重建轮询 interval ──────────
+  // 使用派生的布尔值作为 dep，而非整个 guides 数组（避免每次 loadGuides 返回就重建计时器）
+  const hasPendingGuides = guides.some((g) => g.aiStatus === 0 || g.aiStatus === 1)
+
   useEffect(() => {
-    const hasPending = guides.some((g) => g.aiStatus === 0 || g.aiStatus === 1)
-    if (!hasPending) return
-    const timer = setInterval(loadGuides, 3000)
+    if (!hasPendingGuides) return
+    // 有 PENDING(0) 或 INDEXING(1) 的攻略时，每 5 秒刷新一次状态
+    const timer = setInterval(loadGuides, 5000)
     return () => clearInterval(timer)
-  }, [guides, loadGuides])
+  }, [hasPendingGuides, loadGuides])
+  // ── Fix #3 end ───────────────────────────────────────────────────────────────
 
   const handleDelete = async (guide) => {
     try {
@@ -774,7 +892,6 @@ export default function AiPlanPage() {
     <div className="min-h-screen bg-gray-50">
       <Navbar />
 
-      {/* 页面主体：左右分栏 */}
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
         <div className="flex gap-4 h-[calc(100vh-7.5rem)]">
 
@@ -804,8 +921,9 @@ export default function AiPlanPage() {
         <GuideDetailModal
           guide={viewGuide}
           onClose={() => setViewGuide(null)}
-          onEdit={(g) => { setViewGuide(null); setModal(g) }}
+          onEdit={(g)   => { setViewGuide(null); setModal(g) }}
           onDelete={(g) => { setViewGuide(null); setDeleting(g) }}
+          onIndexed={loadGuides}   // 触发后刷新侧边栏状态
         />
       )}
 
@@ -827,7 +945,7 @@ export default function AiPlanPage() {
               确定要删除攻略「{deleting.title}」吗？
             </p>
             {deleting.aiStatus === 2 && (
-              <p className="text-xs text-amber-500 mb-4">
+              <p className="text-xs text-amber-500 mb-2">
                 此攻略已加入 AI 知识库，删除后将同步从知识库中移除。
               </p>
             )}
