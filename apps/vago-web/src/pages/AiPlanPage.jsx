@@ -443,7 +443,7 @@ function SourceCard({ source }) {
         className="w-full flex items-center justify-between px-3 py-2
                    text-left bg-gray-50 hover:bg-gray-100 transition-colors">
         <span className="text-gray-600 font-medium truncate flex-1 mr-2">
-          📄 {source.title || source.articleId}
+          📄 {source.title || source.article_id || source.articleId}
         </span>
         {source.score != null && (
           <span className="text-gray-400 shrink-0 mr-1">
@@ -458,7 +458,8 @@ function SourceCard({ source }) {
       </button>
       {expanded && (
         <div className="px-3 py-2 text-gray-500 leading-relaxed bg-white">
-          {source.chunkText || '（无摘要）'}
+          {/* SSE 流式路径：Python model_dump() 输出 snake_case；非流式路径经 Java 映射为 camelCase；兼容两者 */}
+          {source.chunk_text || source.chunkText || '（无摘要）'}
         </div>
       )}
     </div>
