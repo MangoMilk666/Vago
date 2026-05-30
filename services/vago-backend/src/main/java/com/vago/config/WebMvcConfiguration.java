@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
@@ -67,6 +69,25 @@ public class WebMvcConfiguration extends WebMvcConfigurationSupport {
         MappingJackson2HttpMessageConverter converter = new MappingJackson2HttpMessageConverter();
         converter.setObjectMapper(new JacksonObjectMapper());
         converters.add(0, converter);
+    }
+
+    /**
+     * 配置 MVC 异步支持：
+     * 1. 替换默认 SimpleAsyncTaskExecutor（无池化，高并发下线程耗尽）为 ThreadPoolTaskExecutor。
+     * 2. 关闭异步请求超时（-1），防止 Tomcat 默认 10s 超时强制中断 SSE 长连接。
+     *    SSE 流式 AI 响应可能持续数十秒，必须禁用超时或设置足够大的值。
+     */
+    @Override
+    protected void configureAsyncSupport(AsyncSupportConfigurer configurer) {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(8);
+        executor.setMaxPoolSize(32);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("mvc-async-");
+        executor.initialize();
+        configurer.setTaskExecutor(executor);
+        // -1 表示不超时；SSE 连接由客户端断开或 Flux 完成来终止
+        configurer.setDefaultTimeout(-1);
     }
 
     /** CORS（联调阶段允许本地前端跨域） */
