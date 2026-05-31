@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     llm_base_url: str = ""              # 空 = 使用 OpenAI 官方端点
     llm_model: str = "gpt-4o-mini"     # 可替换为 qwen-plus / deepseek-chat 等
     llm_temperature: float = 0.7
-    llm_max_tokens: int = 2048
+    llm_max_tokens: int = 4096   # 旅行规划类长文回答需要更大的输出空间；可通过 LLM_MAX_TOKENS 环境变量覆盖
 
     # ── Qdrant 向量数据库 ──────────────────────────────────────────────────────
     qdrant_host: str = "localhost"
