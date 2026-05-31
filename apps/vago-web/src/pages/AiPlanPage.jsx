@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import Navbar from '../components/Navbar'
+import GuideViewModal from '../components/GuideDetailModal'
 import { guideApi } from '../api/travel'
 import { aiApi } from '../api/ai'
 
@@ -433,32 +434,58 @@ function GuideSidebarCard({ guide, onView, onEdit }) {
 
 // ── 右侧：AI 聊天面板 ──────────────────────────────────────────────────────────
 
-/** 单条来源引用卡片（可折叠） */
-function SourceCard({ source }) {
+/**
+ * 单条来源引用卡片（可折叠 + 点击标题查看原帖）
+ * onOpenGuide(articleId) — 由父组件处理弹窗逻辑
+ */
+function SourceCard({ source, onOpenGuide }) {
   const [expanded, setExpanded] = useState(false)
+  const articleId = source.article_id || source.articleId
+  const title     = source.title || articleId
+
   return (
     <div className="rounded-lg border border-gray-100 overflow-hidden text-xs">
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-2
-                   text-left bg-gray-50 hover:bg-gray-100 transition-colors">
-        <span className="text-gray-600 font-medium truncate flex-1 mr-2">
-          📄 {source.title || source.article_id || source.articleId}
-        </span>
+      <div className="flex items-center bg-gray-50 hover:bg-gray-100 transition-colors">
+        {/* 标题：点击查看原帖 */}
+        <button
+          onClick={() => onOpenGuide?.(articleId)}
+          className="flex-1 flex items-center gap-1.5 px-3 py-2 text-left min-w-0"
+          title="点击查看原帖"
+        >
+          <svg className="w-3 h-3 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0
+                 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <span className="text-gray-600 font-medium truncate hover:text-indigo-600 transition-colors">
+            {title}
+          </span>
+        </button>
+
+        {/* 相似度 */}
         {source.score != null && (
-          <span className="text-gray-400 shrink-0 mr-1">
+          <span className="text-gray-400 shrink-0 px-1">
             {Math.round(source.score * 100)}%
           </span>
         )}
-        <svg
-          className={`w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
-          fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
-        </svg>
-      </button>
+
+        {/* 展开/折叠摘要 */}
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="px-2 py-2 text-gray-400 hover:text-gray-600 shrink-0"
+          title={expanded ? '收起摘要' : '展开摘要'}
+        >
+          <svg
+            className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+            fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+      </div>
+
       {expanded && (
-        <div className="px-3 py-2 text-gray-500 leading-relaxed bg-white">
-          {/* SSE 流式路径：Python model_dump() 输出 snake_case；非流式路径经 Java 映射为 camelCase；兼容两者 */}
+        <div className="px-3 py-2 text-gray-500 leading-relaxed bg-white border-t border-gray-100">
+          {/* SSE 流式路径：Python model_dump() 输出 snake_case；非流式经 Java 映射为 camelCase */}
           {source.chunk_text || source.chunkText || '（无摘要）'}
         </div>
       )}
@@ -467,7 +494,7 @@ function SourceCard({ source }) {
 }
 
 /** 单条消息气泡 */
-function ChatMessage({ msg }) {
+function ChatMessage({ msg, onOpenGuide }) {
   const isUser = msg.role === 'user'
 
   if (isUser) {
@@ -514,7 +541,9 @@ function ChatMessage({ msg }) {
           {msg.sources?.length > 0 && (
             <div className="space-y-1">
               <p className="text-xs text-gray-400 px-1">参考攻略：</p>
-              {msg.sources.map((s, i) => <SourceCard key={i} source={s} />)}
+              {msg.sources.map((s, i) => (
+                <SourceCard key={i} source={s} onOpenGuide={onOpenGuide} />
+              ))}
             </div>
           )}
         </div>
@@ -552,9 +581,17 @@ function ChatPanel() {
   const [input,          setInput]          = useState('')
   const [streaming,      setStreaming]      = useState(false)
   const [searchingQuery, setSearchingQuery] = useState(null)
+  // 点击引用来源卡片时展示对应攻略详情
+  const [sourceGuide,    setSourceGuide]    = useState(null)
   const bottomRef  = useRef(null)
   const inputRef   = useRef(null)
   const abortRef   = useRef(null)   // AbortController 引用，用于超时取消
+
+  // 通过 articleId（即 guide UUID）拉取攻略详情并弹窗展示
+  const handleOpenGuide = useCallback((articleId) => {
+    if (!articleId) return
+    setSourceGuide({ uuid: articleId })
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -609,10 +646,10 @@ function ChatPanel() {
     setStreaming(true)
     setSearchingQuery(null)
 
-    // 30 秒超时：Python 端未启动或网络问题时给用户明确提示
+    // 120 秒超时：旅行规划类长文回答生成时间可能超过 30 秒，适当延长防止误中断
     const controller = new AbortController()
     abortRef.current  = controller
-    const timeoutId   = setTimeout(() => controller.abort(), 30000)
+    const timeoutId   = setTimeout(() => controller.abort(), 120000)
 
     try {
       const response = await aiApi.chatStream(historyForApi, controller.signal)
@@ -623,9 +660,10 @@ function ChatPanel() {
 
       const reader  = response.body.getReader()
       const decoder = new TextDecoder()
-      let buffer = ''
+      let buffer    = ''
+      let streamEnd = false   // [DONE] 收到后跳出外层 while
 
-      while (true) {
+      while (!streamEnd) {
         const { done, value } = await reader.read()
         if (done) break
 
@@ -642,8 +680,8 @@ function ChatPanel() {
           if (!line.startsWith('data:')) continue
           const raw = line.slice(5).trim()
 
-          // 流结束标记
-          if (raw === '[DONE]') break
+          // 流结束标记：同时退出内外层循环
+          if (raw === '[DONE]') { streamEnd = true; break }
 
           const event = parseEventData(raw)
           if (!event) continue
@@ -795,7 +833,9 @@ function ChatPanel() {
           </div>
         )}
 
-        {messages.map((msg, i) => <ChatMessage key={i} msg={msg} />)}
+        {messages.map((msg, i) => (
+          <ChatMessage key={i} msg={msg} onOpenGuide={handleOpenGuide} />
+        ))}
         {searchingQuery !== null && <SearchingIndicator query={searchingQuery} />}
         <div ref={bottomRef} />
       </div>
@@ -840,6 +880,15 @@ function ChatPanel() {
           AI 生成内容仅供参考，具体行程以实际情况为准
         </p>
       </div>
+
+      {/* 点击引用来源时弹出攻略详情（只读，不展示编辑/删除） */}
+      {sourceGuide && (
+        <GuideViewModal
+          guide={sourceGuide}
+          isMine={false}
+          onClose={() => setSourceGuide(null)}
+        />
+      )}
     </section>
   )
 }
