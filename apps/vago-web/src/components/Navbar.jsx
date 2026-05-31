@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { logout } from '../api/user'
 import { clearAuth, getAuth } from '../stores/auth'
@@ -14,7 +14,14 @@ const NAV_LINKS = [
 export default function Navbar() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
-  const user = getAuth()?.user
+
+  // 监听 auth 变化（用户在 ProfilePage 保存后触发 vago:auth-changed），实时刷新 Navbar 头像/昵称
+  const [user, setUser] = useState(() => getAuth()?.user)
+  useEffect(() => {
+    const refresh = () => setUser(getAuth()?.user)
+    window.addEventListener('vago:auth-changed', refresh)
+    return () => window.removeEventListener('vago:auth-changed', refresh)
+  }, [])
 
   const handleLogout = async () => {
     try { await logout() } catch (_) {}
@@ -58,13 +65,24 @@ export default function Navbar() {
 
         {/* 用户区 */}
         <div className="flex items-center gap-2 shrink-0">
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500
-                          flex items-center justify-center text-white text-xs font-semibold">
-            {user?.nickname?.[0] ?? '?'}
-          </div>
-          <span className="hidden md:block text-sm text-gray-600 font-medium max-w-24 truncate">
-            {user?.nickname ?? '旅行者'}
-          </span>
+          {/* 点击头像 / 昵称跳转个人资料页 */}
+          <Link to="/profile" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+            {user?.avatarUrl ? (
+              <img
+                src={user.avatarUrl}
+                alt="avatar"
+                className="w-7 h-7 rounded-full object-cover"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500
+                              flex items-center justify-center text-white text-xs font-semibold">
+                {user?.nickname?.[0] ?? '?'}
+              </div>
+            )}
+            <span className="hidden md:block text-sm text-gray-600 font-medium max-w-24 truncate">
+              {user?.nickname ?? '旅行者'}
+            </span>
+          </Link>
           <button
             onClick={handleLogout}
             className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1"

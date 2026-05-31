@@ -53,13 +53,21 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500
-                            flex items-center justify-center text-white text-sm font-semibold">
-              {user?.nickname?.[0] ?? '?'}
-            </div>
-            <span className="hidden sm:block text-sm text-gray-700 font-medium">
-              {user?.nickname ?? '旅行者'}
-            </span>
+            {/* 点击头像 / 昵称跳转个人资料页 */}
+            <Link to="/profile" className="flex items-center gap-2 hover:opacity-75 transition-opacity">
+              {user?.avatarUrl ? (
+                <img src={user.avatarUrl} alt="avatar"
+                     className="w-8 h-8 rounded-full object-cover" />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500
+                                flex items-center justify-center text-white text-sm font-semibold">
+                  {user?.nickname?.[0] ?? '?'}
+                </div>
+              )}
+              <span className="hidden sm:block text-sm text-gray-700 font-medium">
+                {user?.nickname ?? '旅行者'}
+              </span>
+            </Link>
             <button
               onClick={handleLogout}
               className="text-sm text-gray-400 hover:text-red-500 transition-colors px-2 py-1"

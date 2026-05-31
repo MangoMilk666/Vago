@@ -53,6 +53,14 @@ export function getProfile() {
   return http.get('/profile')
 }
 
+/**
+ * 更新个人资料
+ * @param {{ nickname?: string, email?: string, avatarUuid?: string }} data
+ */
+export function updateProfile(data) {
+  return http.put('/profile', data)
+}
+
 /** 退出登录 */
 export function logout() {
   const token = localStorage.getItem('accessToken')
