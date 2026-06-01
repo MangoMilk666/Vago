@@ -27,8 +27,15 @@ public interface GuideService {
     /** 删除攻略（软删除） */
     void delete(String userUuid, String guideUuid);
 
-    /** 点赞攻略 */
-    void like(String guideUuid);
+    /**
+     * 点赞攻略。
+     * 同一用户对同一攻略只能点赞一次（Redis Set 防重），计数写入 Redis，
+     * 由定时 Flush Job 异步同步到 MySQL。
+     *
+     * @param userUuid  当前用户 UUID
+     * @param guideUuid 目标攻略 UUID
+     */
+    void like(String userUuid, String guideUuid);
 
     /**
      * 手动触发攻略向量化（加入 AI 知识库）。

@@ -74,7 +74,7 @@ public class GuideController {
     @Operation(summary = "点赞攻略")
     @PostMapping("/{uuid}/like")
     public Result like(@PathVariable("uuid") String uuid) {
-        guideService.like(uuid);
+        guideService.like(BaseContext.getCurrentUuid(), uuid);
         return Result.success();
     }
 

@@ -75,9 +75,13 @@ public interface GuideMapper {
     @Update("UPDATE guides SET view_count = view_count + 1 WHERE uuid = #{uuid}")
     int incrementViewCount(String uuid);
 
-    /** 点赞 +1 */
+    /** 点赞 +1（直接写 DB，已被 Redis flush 方案替代，保留供回退） */
     @Update("UPDATE guides SET like_count = like_count + 1 WHERE uuid = #{uuid}")
     int incrementLikeCount(String uuid);
+
+    /** 将 Redis 中的点赞计数批量写回 DB（由 LikeFlushJob 调用） */
+    @Update("UPDATE guides SET like_count = #{count} WHERE uuid = #{uuid} AND deleted_at IS NULL")
+    int updateLikeCount(@Param("uuid") String uuid, @Param("count") int count);
 
     /**
      * 软删除

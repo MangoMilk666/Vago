@@ -16,8 +16,8 @@ import com.vago.travel.service.GuideService;
 import com.vago.user.mapper.UserMapper;
 import com.vago.user.model.entity.User;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -32,6 +32,14 @@ public class GuideServiceImpl implements GuideService {
     // AI 向量化状态：0=PENDING，与 AiServiceImpl 中的常量保持一致
     private static final int AI_STATUS_PENDING = 0;
 
+    // Redis key 前缀
+    // 点赞计数 key：vago:guide:like:count:{uuid}  →  String（INCR）
+    static final String LIKE_COUNT_KEY_PREFIX = "vago:guide:like:count:";
+    // 已点赞用户集合 key：vago:guide:like:users:{uuid}  →  Set<userUuid>（SADD 防重）
+    static final String LIKE_USERS_KEY_PREFIX = "vago:guide:like:users:";
+    // 浏览量前缀（预留，暂未使用 Redis 缓存）
+    private static final String GUIDE_VIEW_KEY_PREFIX = "vago:guide:view:";
+
     @Autowired
     private GuideMapper guideMapper;
 
@@ -40,6 +48,11 @@ public class GuideServiceImpl implements GuideService {
 
     @Autowired
     private AiService aiService;
+
+    // 本质上就是 RedisTemplate<String, String>
+    // key 和 value 都用 StringRedisSerializer，Redis 里存的是可读字符串
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     /** Jackson ObjectMapper：用于 imageKeys / tags 的 JSON 序列化 */
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -79,7 +92,21 @@ public class GuideServiceImpl implements GuideService {
             guide.setViewCount(guide.getViewCount() == null ? 1 : guide.getViewCount() + 1);
         }
 
-        return toVO(guide, fetchAuthor(guide.getUserUuid()));
+        // 从 Redis 读取实时点赞数（比 DB 更新，因为 flush 是异步的）
+        String countStr = stringRedisTemplate.opsForValue().get(LIKE_COUNT_KEY_PREFIX + guideUuid);
+        if (countStr != null) {
+            try {
+                guide.setLikeCount(Integer.parseInt(countStr));
+            } catch (NumberFormatException e) {
+                log.warn("like count parse error: key={} val={}", guideUuid, countStr);
+            }
+        }
+
+        // 检查当前用户是否已点赞
+        Boolean liked = stringRedisTemplate.opsForSet()
+                .isMember(LIKE_USERS_KEY_PREFIX + guideUuid, userUuid);
+
+        return toVO(guide, fetchAuthor(guide.getUserUuid()), liked);
     }
 
     /**
@@ -178,10 +205,35 @@ public class GuideServiceImpl implements GuideService {
         }
     }
 
+    /**
+     * 点赞流程：
+     * 1. 验证攻略存在
+     * 2. SADD userUuid 到 like:users set，返回 0 说明已点赞，直接返回
+     * 3. SETNX 初始化 like:count（避免 Redis 冷启动时计数从 0 开始）
+     * 4. INCR like:count（原子操作）
+     * DB 写入由 LikeFlushJob 异步批量完成，不在此处同步写入。
+     */
     @Override
-    public void like(String guideUuid) {
-        // 简单实现：直接 +1；生产可加防重点赞（Redis Set）
-        guideMapper.incrementLikeCount(guideUuid);
+    public void like(String userUuid, String guideUuid) {
+        Guide guide = getGuideOrThrow(guideUuid);
+
+        String usersKey = LIKE_USERS_KEY_PREFIX + guideUuid;
+        String countKey = LIKE_COUNT_KEY_PREFIX + guideUuid;
+
+        // SADD 返回 0 = 已经点赞过，幂等退出
+        Long added = stringRedisTemplate.opsForSet().add(usersKey, userUuid);
+        if (added == null || added == 0) {
+            log.debug("忽略重复点赞: userUuid={} guideUuid={}", userUuid, guideUuid);
+            return;
+        }
+
+        // count key 不存在时，从 DB 初始化（SETNX 保证并发安全）
+        int dbCount = guide.getLikeCount() != null ? guide.getLikeCount() : 0;
+        stringRedisTemplate.opsForValue().setIfAbsent(countKey, String.valueOf(dbCount));
+
+        // 原子自增
+        stringRedisTemplate.opsForValue().increment(countKey);
+        log.debug("点赞记录在Redis: userUuid={} guideUuid={}", userUuid, guideUuid);
     }
 
     /**
@@ -211,6 +263,9 @@ public class GuideServiceImpl implements GuideService {
 
     // ── 私有工具 ─────────────────────────────────────────────────────────────
 
+    /**
+     * 验证帖子是否存在
+     */
     private Guide getGuideOrThrow(String uuid) {
         Guide guide = guideMapper.getByUuid(uuid);
         if (guide == null) throw new BusinessException(ResultCode.GUIDE_NOT_FOUND);
@@ -230,8 +285,13 @@ public class GuideServiceImpl implements GuideService {
         return userMapper.getByUuid(userUuid);
     }
 
-    /** Guide 实体 → GuideVO（含作者信息） */
+    /** Guide 实体 → GuideVO（含作者信息，liked 为 null 时不填充） */
     private GuideVO toVO(Guide g, User author) {
+        return toVO(g, author, null);
+    }
+
+    /** Guide 实体 → GuideVO（含作者信息 + 当前用户点赞状态） */
+    private GuideVO toVO(Guide g, User author, Boolean liked) {
         GuideVO.GuideVOBuilder builder = GuideVO.builder()
                 .uuid(g.getUuid())
                 .title(g.getTitle())
@@ -242,6 +302,7 @@ public class GuideServiceImpl implements GuideService {
                 .tags(fromJson(g.getTags()))
                 .viewCount(g.getViewCount())
                 .likeCount(g.getLikeCount())
+                .liked(liked)
                 .status(g.getStatus())
                 .aiStatus(g.getAiStatus())
                 .createdAt(g.getCreatedAt())

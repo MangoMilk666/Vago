@@ -30,6 +30,9 @@ public class GuideVO {
     private Integer viewCount;
     private Integer likeCount;
 
+    /** 当前请求用户是否已点赞（仅 getDetail 填充，列表接口为 null） */
+    private Boolean liked;
+
     /** 0=草稿 1=已发布 */
     private Integer status;
 
