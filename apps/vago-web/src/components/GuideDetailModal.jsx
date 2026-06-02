@@ -31,12 +31,17 @@ export default function GuideDetailModal({ guide, isMine, onClose, onEdit, onDel
   const [likeLoading, setLikeLoading] = useState(false)
   const [fetching,    setFetching]    = useState(true)
 
-  // 拉取完整详情（同时触发后端浏览量 +1）
+  // 拉取完整详情（触发浏览量 +1，并从后端同步 liked 状态）
   useEffect(() => {
     let alive = true
     setFetching(true)
     guideApi.detail(guide.uuid)
-      .then((res) => { if (alive) setDetail(res.data) })
+      .then((res) => {
+        if (!alive) return
+        setDetail(res.data)
+        // 后端返回当前用户是否已点赞，直接初始化按钮状态
+        if (res.data?.liked === true) setLiked(true)
+      })
       .catch(() => {})
       .finally(() => { if (alive) setFetching(false) })
     return () => { alive = false }

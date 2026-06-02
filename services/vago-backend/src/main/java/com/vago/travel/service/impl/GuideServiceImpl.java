@@ -34,7 +34,7 @@ public class GuideServiceImpl implements GuideService {
 
     // Redis key 前缀
     // 点赞计数 key：vago:guide:like:count:{uuid}  →  String（INCR）
-    static final String LIKE_COUNT_KEY_PREFIX = "vago:guide:like:count:";
+    public static final String LIKE_COUNT_KEY_PREFIX = "vago:guide:like:count:";
     // 已点赞用户集合 key：vago:guide:like:users:{uuid}  →  Set<userUuid>（SADD 防重）
     static final String LIKE_USERS_KEY_PREFIX = "vago:guide:like:users:";
     // 浏览量前缀（预留，暂未使用 Redis 缓存）
