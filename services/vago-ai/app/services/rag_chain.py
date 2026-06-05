@@ -28,6 +28,7 @@ from app.models.schemas import ChatMessage, SourceCitation
 from app.services.embedder import embed_query
 from app.services.llm import get_chat_llm
 from app.services.vector_store import search_by_user
+from app.services.plan_extractor import extract_structured_plan
 
 logger = logging.getLogger(__name__)
 
@@ -302,10 +303,16 @@ async def run_agent_chat(
         "chat_history": history,
     })
 
+    answer_text = result.get("output", "")
+
+    # 结构化行程提取（仅当用户消息含规划关键词时触发）
+    structured_plan = await extract_structured_plan(answer_text, current_input)
+
     return {
-        "answer": result.get("output", ""),
+        "answer": answer_text,
         "sources": results_store,
         "model": settings.llm_model,
+        "structured_plan": structured_plan.model_dump() if structured_plan else None,
     }
 
 
@@ -347,6 +354,7 @@ async def stream_agent_chat(
     )
 
     sources_sent = False
+    full_answer_text = []   # 累积完整回答文本，用于流结束后结构化提取
 
     try:
         async for event in executor.astream_events(
@@ -359,6 +367,7 @@ async def stream_agent_chat(
             if event_type == "on_chat_model_stream":
                 chunk = event["data"].get("chunk")
                 if chunk and hasattr(chunk, "content") and chunk.content:
+                    full_answer_text.append(chunk.content)
                     yield _sse({"type": "text", "content": chunk.content})
 
             # ── 工具调用开始（通知前端正在检索攻略库）
@@ -382,6 +391,12 @@ async def stream_agent_chat(
                             "type": "sources",
                             "sources": [s.model_dump() for s in results_store],
                         })
+
+        # ── 流式文本结束后，尝试结构化提取 ──
+        complete_answer = "".join(full_answer_text)
+        structured_plan = await extract_structured_plan(complete_answer, current_input)
+        if structured_plan:
+            yield _sse({"type": "structured_plan", "data": structured_plan.model_dump()})
 
     except Exception as exc:
         logger.error("[rag_chain] 流式生成失败 user=%s error=%s", user_uuid, exc, exc_info=True)
