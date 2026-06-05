@@ -182,6 +182,43 @@ class SourceCitation(BaseModel):
     score: float = Field(description="相似度得分，范围 [0, 1]")
 
 
+# ─── AI 结构化行程计划（Structured Plan）─────────────────────────────────────
+
+class StructuredSpot(BaseModel):
+    """结构化行程中的单个景点/打卡点，对齐 itinerary_spots 表结构。"""
+    name: str = Field(..., description="景点名称")
+    address: Optional[str] = Field(None, description="详细地址")
+    category: int = Field(0, ge=0, le=5, description="0=景点, 1=餐厅, 2=购物, 3=娱乐, 4=中转, 5=其他")
+    sort_order: int = Field(0, description="排序序号（从 0 开始）")
+    duration_minutes: Optional[int] = Field(None, ge=0, description="预计停留时间（分钟）")
+    notes: Optional[str] = Field(None, description="备注")
+
+
+class StructuredDay(BaseModel):
+    """结构化行程中的单日计划，对齐 itinerary_days 表结构。"""
+    day_index: int = Field(..., ge=1, description="第几天（1-based）")
+    day_date: Optional[str] = Field(None, description="具体日期 YYYY-MM-DD，无明确日期时为 null")
+    transportation: Optional[str] = Field(None, description="当日交通方式")
+    accommodation: Optional[str] = Field(None, description="住宿信息")
+    meal_breakfast: Optional[str] = Field(None, description="早餐")
+    meal_lunch: Optional[str] = Field(None, description="午餐")
+    meal_dinner: Optional[str] = Field(None, description="晚餐")
+    budget_day: Optional[float] = Field(None, ge=0, description="当日预算")
+    notes: Optional[str] = Field(None, description="当日备注")
+    spots: list[StructuredSpot] = Field(default_factory=list, description="当日景点列表")
+
+
+class StructuredPlan(BaseModel):
+    """AI 提取的结构化旅行计划，（复用）对齐 plans/trips + itinerary_days/spots 表结构。"""
+    title: str = Field(..., description="行程标题")
+    destination: str = Field(..., description="目的地")
+    start_date: Optional[str] = Field(None, description="出发日期 YYYY-MM-DD")
+    end_date: Optional[str] = Field(None, description="返回日期 YYYY-MM-DD")
+    budget: Optional[float] = Field(None, ge=0, description="总预算")
+    budget_currency: str = Field("CNY", description="货币单位")
+    days: list[StructuredDay] = Field(..., min_length=1, description="每日行程")
+
+
 class ChatResponse(BaseModel):
     """AI 对话非流式响应体。"""
 
@@ -191,3 +228,7 @@ class ChatResponse(BaseModel):
         description="本次回答引用的攻略来源列表，为空时表示基于通用知识作答",
     )
     model: str = Field(description="实际使用的模型名称")
+    structured_plan: Optional[StructuredPlan] = Field(
+        None,
+        description="结构化行程计划（仅当回答包含行程规划时）",
+    )
