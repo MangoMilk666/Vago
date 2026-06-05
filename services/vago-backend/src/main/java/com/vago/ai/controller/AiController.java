@@ -4,6 +4,8 @@ import com.vago.ai.model.dto.AiChatMessageDTO;
 import com.vago.ai.model.dto.AiChatRequestDTO;
 import com.vago.ai.model.vo.AiChatResponseVO;
 import com.vago.ai.service.AiService;
+import com.vago.ai.model.dto.AiPlanSaveDTO;
+import com.vago.ai.model.vo.AiPlanSaveVO;
 import com.vago.common.Result;
 import com.vago.common.ResultCode;
 import com.vago.context.BaseContext;
@@ -100,6 +102,32 @@ public class AiController {
                 String errPayload = "{\"type\":\"error\",\"message\":\"AI 服务暂时不可用，请稍后重试\"}";
                 return Flux.just(ServerSentEvent.<String>builder().data(errPayload).build());
             });
+    }
+
+    // ── AI 结构化行程保存 ─────────────────────────────────────────────────────
+
+    @Operation(
+        summary = "保存 AI 行程为草稿",
+        description = "将 AI 生成的结构化行程计划保存为计划草稿（Plan），\n\n"
+            + "日期可选，保存后用户可在计划页面继续编辑。"
+    )
+    @PostMapping("/plans/save-draft")
+    public Result<AiPlanSaveVO> saveDraft(@Valid @RequestBody AiPlanSaveDTO dto) {
+        String userUuid = BaseContext.getCurrentUuid();
+        log.info("[AiController] 保存AI行程为草稿 user={}", userUuid);
+        return Result.success(aiService.saveAsDraft(dto, userUuid));
+    }
+
+    @Operation(
+        summary = "保存 AI 行程为正式行程",
+        description = "将 AI 生成的结构化行程计划保存为正式行程（Trip），\n\n"
+            + "要求出发日期和返回日期必填。"
+    )
+    @PostMapping("/plans/save-trip")
+    public Result<AiPlanSaveVO> saveTrip(@Valid @RequestBody AiPlanSaveDTO dto) {
+        String userUuid = BaseContext.getCurrentUuid();
+        log.info("[AiController] 保存AI行程为正式行程 user={}", userUuid);
+        return Result.success(aiService.saveAsTrip(dto, userUuid));
     }
 
     // ── 私有工具 ───────────────────────────────────────────────────────────────

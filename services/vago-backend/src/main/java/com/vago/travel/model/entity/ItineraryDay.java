@@ -24,7 +24,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ItineraryDay implements Serializable {
-
+    // 归属类型，1-行程，2-计划
     public static final int REF_TYPE_TRIP = 1;
     public static final int REF_TYPE_PLAN = 2;
 

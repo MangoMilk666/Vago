@@ -1,5 +1,7 @@
 package com.vago.ai.service;
 
+import com.vago.ai.model.dto.AiPlanSaveDTO;
+import com.vago.ai.model.vo.AiPlanSaveVO;
 import com.vago.ai.model.dto.AiChatRequestDTO;
 import com.vago.ai.model.vo.AiChatResponseVO;
 import com.vago.travel.model.entity.Guide;
@@ -59,4 +61,15 @@ public interface AiService {
      * @return SSE 事件流，data 字段为 Python vago-ai 原始 JSON 字符串
      */
     Flux<ServerSentEvent<String>> chatStream(AiChatRequestDTO dto, String userUuid);
+
+    /**
+     * 将 AI 生成的结构化行程保存为计划草稿。
+     */
+    AiPlanSaveVO saveAsDraft(AiPlanSaveDTO dto, String userUuid);
+
+    /**
+     * 将 AI 生成的结构化行程保存为正式行程。
+     * 要求 startDate 和 endDate 非空。
+     */
+    AiPlanSaveVO saveAsTrip(AiPlanSaveDTO dto, String userUuid);
 }
