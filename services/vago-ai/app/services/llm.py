@@ -52,7 +52,16 @@ def get_chat_llm(streaming: bool = False) -> ChatOpenAI:
         base_url or "OpenAI 默认",
         streaming,
     )
+    # OpenAI SDK 的 extra_body 设计
+    # 在官方 openai 库中，client.chat.completions.create 方法提供了一个特殊的参数 extra_body（类型为 dict）。
+    # 任何放进 extra_body 的键值对，都会被原样合并到最终发送给服务端的 JSON 请求体根节点中。
 
+    model_kwargs = {}
+    if not streaming and base_url and "aliyuncs.com" in base_url:
+        model_kwargs["extra_body"] = {"enable_thinking": False} # 最终发送给阿里云的 HTTP 请求体中
+
+    # LangChain 的 model_kwargs 传递通道
+    # LangChain 的 ChatOpenAI 构造函数中，model_kwargs 字典中包含的所有内容，都会在运行时原封不动地透传给底层的 OpenAI SDK 调用。
     return ChatOpenAI(
         api_key=api_key,
         base_url=base_url,
@@ -60,4 +69,5 @@ def get_chat_llm(streaming: bool = False) -> ChatOpenAI:
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
         streaming=streaming,
+        model_kwargs=model_kwargs,
     )
