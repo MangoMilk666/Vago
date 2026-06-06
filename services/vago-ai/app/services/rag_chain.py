@@ -394,6 +394,11 @@ async def stream_agent_chat(
 
         # ── 流式文本结束后，尝试结构化提取 ──
         complete_answer = "".join(full_answer_text)
+
+        # 通知前端即将开始结构化行程提取（Plan Extraction），
+        # 前端据此将"正在检索攻略库"切换为"正在提取规划数据"提示。
+        yield _sse({"type": "extracting_plan"})
+
         structured_plan = await extract_structured_plan(complete_answer, current_input)
         if structured_plan:
             yield _sse({"type": "structured_plan", "data": structured_plan.model_dump()})
