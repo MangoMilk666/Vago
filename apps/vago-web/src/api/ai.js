@@ -54,11 +54,13 @@ export const aiApi = {
    * 流式对话（SSE）：返回 fetch Response，调用方自行消费 ReadableStream。
    *
    * SSE 事件格式（每行 `data: <json>\n\n`）：
-   *   {"type": "text",      "content": "..."}  — 文本 token（逐字追加）
-   *   {"type": "searching", "query":   "..."}  — Agent 正在检索
-   *   {"type": "sources",   "sources": [...]}  — 引用来源列表
-   *   {"type": "error",     "message": "..."}  — 生成错误
-   *   [DONE]                                   — 流结束信号
+   *   {"type": "text",            "content": "..."}  — 文本 token（逐字追加）
+   *   {"type": "searching",       "query":   "..."}  — Agent 正在检索
+   *   {"type": "sources",         "sources": [...]}  — 引用来源列表
+   *   {"type": "extracting_plan"}                     — 文本回答完毕，正在提取结构化行程
+   *   {"type": "structured_plan", "data":    {...}}  — 结构化行程数据
+   *   {"type": "error",           "message": "..."}  — 生成错误
+   *   [DONE]                                         — 流结束信号
    *
    * @param {Array<{role: string, content: string}>} messages 完整消息历史
    * @param {AbortSignal} [signal] 可选：用于超时/取消的 AbortSignal

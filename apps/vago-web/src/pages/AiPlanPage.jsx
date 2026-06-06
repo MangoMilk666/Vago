@@ -826,12 +826,35 @@ function SearchingIndicator({ query }) {
   )
 }
 
+/** 结构化行程提取中提示 */
+function ExtractingIndicator() {
+  return (
+    <div className="flex justify-start">
+      <div className="flex items-center gap-2.5">
+        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600
+                        flex items-center justify-center shrink-0">
+          <svg className="w-3.5 h-3.5 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+            <path className="opacity-75" fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+          </svg>
+        </div>
+        <div className="px-4 py-2.5 rounded-2xl rounded-tl-sm bg-purple-50 border border-purple-100
+                        text-xs text-purple-600 flex items-center gap-1.5">
+          <span>正在提取规划数据</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** ─── 对话面板 ──────────────────────────────────────────────────────────────── */
 function ChatPanel() {
   const [messages,       setMessages]       = useState([])
   const [input,          setInput]          = useState('')
   const [streaming,      setStreaming]      = useState(false)
   const [searchingQuery, setSearchingQuery] = useState(null)
+  const [extractingPlan, setExtractingPlan] = useState(false)
   // 点击引用来源卡片时展示对应攻略详情
   const [sourceGuide,    setSourceGuide]    = useState(null)
   const bottomRef  = useRef(null)
@@ -846,7 +869,7 @@ function ChatPanel() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, searchingQuery])
+  }, [messages, searchingQuery, extractingPlan])
 
   // ── SSE 解析工具 ──────────────────────────────────────────────────────────
 
@@ -896,6 +919,7 @@ function ChatPanel() {
     setInput('')
     setStreaming(true)
     setSearchingQuery(null)
+    setExtractingPlan(false)
 
     // 120 秒超时：旅行规划类长文回答生成时间可能超过 30 秒，适当延长防止误中断
     const controller = new AbortController()
@@ -938,7 +962,9 @@ function ChatPanel() {
           if (!event) continue
 
           if (event.type === 'text') {
-            // 逐 token 追加内容
+            // 逐 token 追加内容；首个文本到达时清除检索提示（兜底：
+            // 当 RAG 无命中结果时 sources 事件不发送，searchingQuery 可能残留）
+            setSearchingQuery(null)
             const textChunk = typeof event.content === 'string'
               ? event.content
               : Array.isArray(event.content)
@@ -974,7 +1000,12 @@ function ChatPanel() {
               copy[copy.length - 1] = last
               return copy
             })
+          } else if (event.type === 'extracting_plan') {
+            // 文本回答生成完毕，即将开始结构化行程提取（Plan Extraction）
+            setSearchingQuery(null)
+            setExtractingPlan(true)
           } else if (event.type === 'structured_plan') {
+            setExtractingPlan(false)
             setMessages((prev) => {
               const copy = [...prev]
               const last = { ...copy[copy.length - 1] }
@@ -1013,6 +1044,7 @@ function ChatPanel() {
       })
       setStreaming(false)
       setSearchingQuery(null)
+      setExtractingPlan(false)
       inputRef.current?.focus()
     }
   }
@@ -1028,6 +1060,7 @@ function ChatPanel() {
     if (streaming) return
     setMessages([])
     setSearchingQuery(null)
+    setExtractingPlan(false)
   }
 
   return (
@@ -1096,6 +1129,7 @@ function ChatPanel() {
           <ChatMessage key={i} msg={msg} onOpenGuide={handleOpenGuide} />
         ))}
         {searchingQuery !== null && <SearchingIndicator query={searchingQuery} />}
+        {extractingPlan && <ExtractingIndicator />}
         <div ref={bottomRef} />
       </div>
 
