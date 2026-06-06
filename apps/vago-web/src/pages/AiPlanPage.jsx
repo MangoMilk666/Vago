@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import GuideViewModal from '../components/GuideDetailModal'
 import { guideApi } from '../api/travel'
@@ -493,6 +494,251 @@ function SourceCard({ source, onOpenGuide }) {
   )
 }
 
+// ─── 结构化计划卡片子组件 ────────────────────────────────────────────────────────
+function StructuredPlanCard({ plan }) {
+  const navigate = useNavigate()
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [savingTrip, setSavingTrip] = useState(false)
+  const [savedType, setSavedType] = useState(null) // 'draft' | 'trip' | null
+  const [saveError, setSaveError] = useState('')
+  const [expandedDays, setExpandedDays] = useState({ 0: true }) // 默认展开第一天
+
+  if (!plan) return null
+
+  const toggleDay = (idx) => {
+    setExpandedDays(prev => ({ ...prev, [idx]: !prev[idx] }))
+  }
+
+  const handleSaveDraft = async () => {
+    setSavingDraft(true)
+    setSaveError('')
+    try {
+      const res = await aiApi.saveDraft(plan)
+      setSavedType('draft')
+      const uuid = res.data?.uuid
+      setTimeout(() => {
+        navigate(`/plans/${uuid}/itinerary?type=plan&title=${encodeURIComponent(plan.title)}`)
+      }, 800)
+    } catch (err) {
+      setSaveError(err.message || '保存草稿失败')
+    } finally {
+      setSavingDraft(false)
+    }
+  }
+
+  const handleSaveTrip = async () => {
+    if (!plan.start_date || !plan.end_date) return
+    setSavingTrip(true)
+    setSaveError('')
+    try {
+      const res = await aiApi.saveTrip(plan)
+      setSavedType('trip')
+      const uuid = res.data?.uuid
+      setTimeout(() => {
+        navigate(`/trips/${uuid}/itinerary?type=trip&title=${encodeURIComponent(plan.title)}`)
+      }, 800)
+    } catch (err) {
+      setSaveError(err.message || '保存行程失败')
+    } finally {
+      setSavingTrip(false)
+    }
+  }
+
+  const hasDates = !!(plan.start_date && plan.end_date)
+
+  const getCategoryBadge = (cat) => {
+    const map = {
+      0: { label: '景点', cls: 'bg-emerald-50 text-emerald-600 border border-emerald-100' },
+      1: { label: '餐厅', cls: 'bg-amber-50 text-amber-600 border border-amber-100' },
+      2: { label: '购物', cls: 'bg-rose-50 text-rose-600 border border-rose-100' },
+      3: { label: '娱乐', cls: 'bg-violet-50 text-violet-600 border border-violet-100' },
+      4: { label: '中转', cls: 'bg-blue-50 text-blue-600 border border-blue-100' },
+      5: { label: '其他', cls: 'bg-gray-50 text-gray-600 border border-gray-100' },
+    }
+    const info = map[cat] || map[5]
+    return <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium shrink-0 ${info.cls}`}>{info.label}</span>
+  }
+
+  return (
+    <div className="mt-3 rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/20 to-white shadow-sm overflow-hidden transition-all duration-300 hover:shadow-md hover:border-indigo-200">
+      {/* 头部信息 */}
+      <div className="p-4 bg-gradient-to-r from-indigo-50/50 to-purple-50/50 border-b border-indigo-50 flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-gray-900 text-base flex items-center gap-1.5">
+              <span>🧭</span> {plan.title}
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
+              <span>📍</span> 目的地: <span className="font-medium text-gray-700">{plan.destination}</span>
+            </p>
+          </div>
+          {plan.budget && (
+            <div className="text-right shrink-0 bg-white/80 border border-indigo-50/50 px-2.5 py-1 rounded-xl">
+              <span className="text-[10px] text-gray-400 block leading-none">总预算</span>
+              <span className="text-sm font-extrabold text-indigo-600 leading-normal">
+                {plan.budget} <span className="text-[10px] font-medium text-gray-500">{plan.budget_currency || 'CNY'}</span>
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* 日期和天数 */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-500 mt-1">
+          {plan.start_date ? (
+            <span className="flex items-center gap-1">
+              📅 {plan.start_date} 至 {plan.end_date || '未定'}
+            </span>
+          ) : (
+            <span className="text-amber-500 flex items-center gap-1 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-100/50 font-medium text-[11px]">
+              ⚠️ 无具体出行日期，保存行程前需先存为草稿
+            </span>
+          )}
+          <span className="flex items-center gap-1 font-medium bg-indigo-50/80 text-indigo-600 px-2 py-0.5 rounded-lg">
+            🗺️ 共 {plan.days?.length || 0} 天行程
+          </span>
+        </div>
+      </div>
+
+      {/* 每日路线 */}
+      <div className="p-4 space-y-3 max-h-[300px] overflow-y-auto border-b border-indigo-50/50">
+        {plan.days?.map((day, idx) => {
+          const isExpanded = !!expandedDays[idx]
+          return (
+            <div key={idx} className="border border-gray-100 rounded-xl bg-white/70 overflow-hidden shadow-xs">
+              {/* 单日标题 */}
+              <button
+                onClick={() => toggleDay(idx)}
+                className="w-full px-3.5 py-2.5 flex items-center justify-between text-left hover:bg-indigo-50/20 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center justify-center w-5 h-5 rounded-lg bg-indigo-100 text-indigo-700 text-xs font-bold shrink-0">
+                    {day.day_index || idx + 1}
+                  </span>
+                  <span className="text-xs font-semibold text-gray-800">
+                    第 {day.day_index || idx + 1} 天行程 {day.day_date ? `(${day.day_date})` : ''}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {day.accommodation && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium max-w-[120px] truncate">
+                      🏨 宿: {day.accommodation}
+                    </span>
+                  )}
+                  <svg className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* 单日详情 */}
+              {isExpanded && (
+                <div className="px-3.5 pb-3 pt-1 border-t border-gray-50 bg-white/50 space-y-2">
+                  {/* 交通与餐饮 */}
+                  {(day.transportation || day.meal_breakfast || day.meal_lunch || day.meal_dinner) && (
+                    <div className="grid grid-cols-2 gap-1.5 text-[10px] text-gray-500 bg-gray-50/50 p-2 rounded-lg border border-gray-100/50">
+                      {day.transportation && (
+                        <div className="col-span-2 flex items-center gap-1">
+                          🚗 <span className="font-medium text-gray-600">交通:</span> {day.transportation}
+                        </div>
+                      )}
+                      {(day.meal_breakfast || day.meal_lunch || day.meal_dinner) && (
+                        <div className="col-span-2 flex flex-wrap gap-x-3 gap-y-1 mt-0.5 border-t border-gray-100/50 pt-1">
+                          {day.meal_breakfast && <span>🍳 早餐: {day.meal_breakfast}</span>}
+                          {day.meal_lunch && <span>🍱 午餐: {day.meal_lunch}</span>}
+                          {day.meal_dinner && <span>🍜 晚餐: {day.meal_dinner}</span>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 景点时间轴 */}
+                  {day.spots && day.spots.length > 0 ? (
+                    <div className="space-y-2 relative pl-2 border-l border-indigo-50 mt-1">
+                      {day.spots.map((spot, spotIdx) => (
+                        <div key={spotIdx} className="relative group/spot">
+                          <div className="absolute -left-[12.5px] top-[5px] w-2 h-2 rounded-full bg-indigo-400 border border-white group-hover/spot:bg-indigo-600 transition-colors"/>
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-semibold text-gray-800 leading-none">{spot.name}</span>
+                              {getCategoryBadge(spot.category)}
+                              {spot.duration_minutes && (
+                                <span className="text-[10px] text-gray-400 shrink-0">⏱️ {spot.duration_minutes}分钟</span>
+                              )}
+                            </div>
+                            {spot.address && (
+                              <span className="text-[10px] text-gray-400 leading-tight">📍 {spot.address}</span>
+                            )}
+                            {spot.notes && (
+                              <span className="text-[10px] text-gray-500 bg-indigo-50/30 px-2 py-1 rounded border border-indigo-50/10 mt-0.5 leading-normal italic">{spot.notes}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-gray-400 italic">这一天没有安排具体景点</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* 操作按钮 */}
+      <div className="p-4 bg-gray-50/70 border-t border-indigo-50/30 flex flex-col gap-2">
+        <div className="flex gap-3">
+          {/* 保存为草稿 */}
+          <button
+            onClick={handleSaveDraft}
+            disabled={savingDraft || savingTrip || savedType !== null}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all
+              ${savedType === 'draft'
+                ? 'bg-green-100 text-green-600 border border-green-200 cursor-default'
+                : 'bg-white text-gray-700 border border-gray-200 hover:border-indigo-300 hover:text-indigo-600 active:bg-gray-50 disabled:opacity-50'}`}
+          >
+            {savingDraft ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-indigo-600/50 border-t-indigo-600 rounded-full animate-spin"/>
+                保存中...
+              </>
+            ) : savedType === 'draft' ? (
+              <>💾 已保存为草稿</>
+            ) : (
+              <>💾 保存为草稿</>
+            )}
+          </button>
+
+          {/* 保存为正式行程 */}
+          <button
+            onClick={handleSaveTrip}
+            disabled={savingDraft || savingTrip || savedType !== null || !hasDates}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all
+              ${savedType === 'trip'
+                ? 'bg-green-100 text-green-600 border border-green-200 cursor-default'
+                : !hasDates
+                  ? 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed opacity-60'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 shadow-sm shadow-indigo-100'}`}
+            title={!hasDates ? "需要明确的出行日期才能保存为正式行程，请先保存为草稿" : "保存为行程"}
+          >
+            {savingTrip ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-white/50 border-t-white rounded-full animate-spin"/>
+                保存中...
+              </>
+            ) : savedType === 'trip' ? (
+              <>✈️ 已保存为行程</>
+            ) : (
+              <>✈️ 保存为行程</>
+            )}
+          </button>
+        </div>
+        {saveError && <p className="text-[10px] text-red-500 text-center">{saveError}</p>}
+      </div>
+    </div>
+  )
+}
+
 /** 单条消息气泡 */
 function ChatMessage({ msg, onOpenGuide }) {
   const isUser = msg.role === 'user'
@@ -545,6 +791,11 @@ function ChatMessage({ msg, onOpenGuide }) {
                 <SourceCard key={i} source={s} onOpenGuide={onOpenGuide} />
               ))}
             </div>
+          )}
+
+          {/* 结构化行程卡片 */}
+          {msg.structuredPlan && (
+            <StructuredPlanCard plan={msg.structuredPlan} />
           )}
         </div>
       </div>
@@ -720,6 +971,14 @@ function ChatPanel() {
               const last = { ...copy[copy.length - 1] }
               last.content = event.message || 'AI 生成失败'
               last.error   = true
+              copy[copy.length - 1] = last
+              return copy
+            })
+          } else if (event.type === 'structured_plan') {
+            setMessages((prev) => {
+              const copy = [...prev]
+              const last = { ...copy[copy.length - 1] }
+              last.structuredPlan = event.data ?? null
               copy[copy.length - 1] = last
               return copy
             })

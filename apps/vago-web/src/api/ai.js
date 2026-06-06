@@ -39,6 +39,18 @@ export const aiApi = {
   chat: (messages) => http.post('/chat', { messages }),
 
   /**
+   * 保存 AI 生成的结构化行程为草稿计划。
+   * @param {Object} planData 计划数据
+   */
+  saveDraft: (planData) => http.post('/plans/save-draft', planData),
+
+  /**
+   * 保存 AI 生成的结构化行程为正式行程。
+   * @param {Object} planData 行程数据
+   */
+  saveTrip: (planData) => http.post('/plans/save-trip', planData),
+
+  /**
    * 流式对话（SSE）：返回 fetch Response，调用方自行消费 ReadableStream。
    *
    * SSE 事件格式（每行 `data: <json>\n\n`）：
