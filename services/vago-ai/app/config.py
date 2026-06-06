@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096   # 旅行规划类长文回答需要更大的输出空间；可通过 LLM_MAX_TOKENS 环境变量覆盖
 
     # ── Qdrant 向量数据库 ──────────────────────────────────────────────────────
-    qdrant_host: str = "localhost"
+    qdrant_host: str = "127.0.0.1"
     qdrant_port: int = 6333
     qdrant_collection: str = "vago_articles"
 

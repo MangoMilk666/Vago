@@ -159,15 +159,24 @@ public class AiServiceImpl implements AiService {
     public AiPlanSaveVO saveAsDraft(AiPlanSaveDTO dto, String userUuid) {
         log.info("[AiService] 保存AI行程为草稿 user={} title={}", userUuid, dto.getTitle());
 
-        // 1. 创建 Plan
+        // 1. 解析日期，如果计划草稿未给定日期，则默认以今天为起点计算出起止日期
         LocalDateTime now = LocalDateTime.now();
+        LocalDate startDate = parseDate(dto.getStartDate());
+        LocalDate endDate = parseDate(dto.getEndDate());
+        if (startDate == null) {
+            startDate = LocalDate.now();
+        }
+        if (endDate == null) {
+            endDate = startDate.plusDays(dto.getDays().size() - 1);
+        }
+
         Plan plan = Plan.builder()
                 .uuid(IdUtil.fastSimpleUUID())
                 .userUuid(userUuid)
                 .title(dto.getTitle())
                 .destination(dto.getDestination())
-                .startDate(parseDate(dto.getStartDate()))
-                .endDate(parseDate(dto.getEndDate()))
+                .startDate(startDate)
+                .endDate(endDate)
                 .budget(dto.getBudget())
                 .budgetCurrency(dto.getBudgetCurrency() != null ? dto.getBudgetCurrency() : "CNY")
                 .status(0)  // 0-草稿，1-已转换
@@ -177,7 +186,7 @@ public class AiServiceImpl implements AiService {
         planMapper.insert(plan);
 
         // 2. 创建 ItineraryDays + Spots，类型是Plan
-        createDaysAndSpots(plan.getUuid(), ItineraryDay.REF_TYPE_PLAN, dto.getDays(), now);
+        createDaysAndSpots(plan.getUuid(), ItineraryDay.REF_TYPE_PLAN, dto.getDays(), startDate, now);
 
         log.info("[AiService] 草稿保存成功 planUuid={} days={}", plan.getUuid(), dto.getDays().size());
         return AiPlanSaveVO.builder().uuid(plan.getUuid()).type("plan").build();
@@ -216,7 +225,7 @@ public class AiServiceImpl implements AiService {
         tripMapper.insert(trip);
 
         // 2. 创建 ItineraryDays + Spots
-        createDaysAndSpots(trip.getUuid(), ItineraryDay.REF_TYPE_TRIP, dto.getDays(), now);
+        createDaysAndSpots(trip.getUuid(), ItineraryDay.REF_TYPE_TRIP, dto.getDays(), startDate, now);
 
         log.info("[AiService] 行程保存成功 tripUuid={} days={}", trip.getUuid(), dto.getDays().size());
         return AiPlanSaveVO.builder().uuid(trip.getUuid()).type("trip").build();
@@ -227,13 +236,19 @@ public class AiServiceImpl implements AiService {
      * 复用逻辑：save-draft 和 save-trip 共享。
      */
     private void createDaysAndSpots(String refUuid, int refType,
-                                     List<AiPlanSaveDTO.AiDayDTO> days, LocalDateTime now) {
+                                     List<AiPlanSaveDTO.AiDayDTO> days, LocalDate baseStartDate, LocalDateTime now) {
         for (AiPlanSaveDTO.AiDayDTO dayDto : days) {
+            // 计算 dayDate：如果 AI 没返回具体日期，以 baseStartDate 为准累加
+            LocalDate dayDate = parseDate(dayDto.getDayDate());
+            if (dayDate == null) {
+                dayDate = baseStartDate.plusDays(dayDto.getDayIndex() - 1);
+            }
+
             ItineraryDay day = ItineraryDay.builder()
                     .uuid(IdUtil.fastSimpleUUID())
                     .refUuid(refUuid)
                     .refType(refType)
-                    .dayDate(parseDate(dayDto.getDayDate()))
+                    .dayDate(dayDate)
                     .dayIndex(dayDto.getDayIndex())
                     .transportation(dayDto.getTransportation())
                     .accommodation(dayDto.getAccommodation())
