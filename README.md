@@ -1,64 +1,92 @@
 # Vago（叠迹）
 
-> 一站式旅行管理平台——攻略整合 × AI 规划 × 足迹存档
+> 一站式旅行管理平台——攻略整合 × AI 智能规划 × 行程管理
 
 ---
 
 ## 项目简介
 
-**Vago**（叠迹）是一个将旅行的「前、中、后」三个阶段完整打通的一站式旅行管理平台。
+**Vago**（叠迹）是一个面向自由行旅客的一站式旅行管理平台，将旅行的「前、中、后」三个阶段完整打通。
 
-市面上的旅行类产品高度碎片化：攻略散落在小红书、公众号；行程规划依赖携程等固定模板；足迹地图（如 Fog of World）只记录位置却无内容承载。**Vago 的核心思路是：以用户私有攻略库为资产核心，让攻略真正服务于规划，让规划真正映射到足迹。**
+市面上的旅行类产品高度碎片化：攻略散落在小红书、公众号；行程规划依赖固定模板；足迹记录与攻略脱节。Vago 的核心思路是：**以用户私有攻略库为资产核心，让攻略真正服务于规划，让规划真正映射到足迹。**
+
+项目采用 **Java Spring Boot + Python FastAPI 混合单体架构**，Java 侧负责用户系统与行程 CRUD，Python 侧负责 RAG 检索与 LLM 智能规划，前端使用 React 构建 SPA。
 
 ---
 
 ## 核心功能
 
-###  RAG 智能攻略库
+### RAG 智能攻略库
 
-将用户从各渠道收集的零散攻略（粘贴文本、URL 导入）结构化入库，经过清洗、分块、向量化后，形成可被 AI 私有检索的个人知识库。
+将用户从各渠道收集的零散攻略（粘贴文本、URL 导入）结构化入库，经过 HTML 清洗、语义分块（tiktoken + RecursiveCharacterTextSplitter）、OpenAI Embedding 向量化后，存入 Qdrant 向量数据库，形成按 `user_uuid` 隔离的个人知识库。
 
 ### AI 行程伴侣
 
-用户以自然语言描述需求（目的地、天数、预算、偏好），AI **优先基于个人攻略库**（RAG 检索）生成定制化行程草稿，支持多轮追问与局部修改，最终一键导出为「待执行行程」。
+用户以自然语言描述需求（目的地、天数、预算、偏好），AI 基于 LangChain Tool-Calling Agent **自主决策**是否检索用户攻略库（RAG），生成定制化行程草稿。支持 SSE 全链路流式输出、多轮追问与局部修改，最终一键提取结构化行程数据并保存。
 
-### 旅行足迹与迷雾地图（移动端）
+### 行程与目的地管理
 
-实时 GPS 定位解锁地图迷雾，记录移动轨迹，支持手动地标打卡。提供国家/城市探索百分比统计、个人热力图等足迹看板。
+支持创建多目的地旅行计划，按天编排景点、餐饮、交通等信息。提供仪表盘总览、行程看板编辑等管理能力。
 
-### 图文存档
+### 用户系统
 
-行程结束后，将照片（自动匹配 EXIF 位置信息）与日志绑定到打卡点，生成结构化旅行回忆。支持生成分享卡片和公开行程链接。
-
----
-
-## 平台差异化
-
-| | Web 端 | 移动端 App |
-|---|---|---|
-| **攻略管理** | 长文粘贴、批量导入、富文本编辑 | 分享链接一键导入、快速摘录 |
-| **行程规划** | 大屏看板编辑、拖拽排序 | 查看与微调当前行程 |
-| **足迹地图** | 全球热力图、大屏统计看板 | 实时 GPS 打卡、迷雾解锁、离线地图 |
-| **图文存档** | 批量上传、排版编辑 | 拍照即存、位置自动绑定 |
+手机号 + 短信验证码登录/注册，JWT 无状态鉴权，Redis Token 黑名单，个人设置管理。
 
 ---
 
 ## 技术栈
 
-| 层次 | 技术 |
-|------|------|
-| **核心业务** | Java 微服务（CRUD、行程管理、用户系统） |
-| **持久化** | MySQL（业务数据）、对象存储 OSS（照片） |
-| **缓存** | Redis（会话、状态缓存、迷雾瓦片 Bitmap） |
-| **AI / RAG** | Python 服务（Embedding、向量检索、LLM 调用） |
-| **向量数据库** | Milvus / Qdrant（用户私有命名空间隔离） |
-| **地图** | 第三方地图 SDK + CDN 瓦片 |
+| 层次 | 技术 | 版本 |
+|------|------|------|
+| **前端** | React + Vite + Tailwind CSS | 18.3 / 5.3 / 3.4 |
+| **路由** | React Router | 6.24 |
+| **HTTP** | Axios | 1.7 |
+| **后端** | Spring Boot（单体） | 3.2.5 |
+| **ORM** | MyBatis | 3.0.3 |
+| **鉴权** | JJWT | 0.12.5 |
+| **API 文档** | SpringDoc OpenAPI | 2.3.0 |
+| **工具库** | Hutool | 5.8.26 |
+| **AI 框架** | FastAPI + LangChain | 0.111 / 0.2.5 |
+| **LLM** | OpenAI SDK | 1.35.3 |
+| **向量数据库** | Qdrant | 1.9.1 |
+| **Embedding** | tiktoken + OpenAI | ≥0.7 |
+| **主数据库** | MySQL | 8.0+ |
+| **缓存** | Redis | 6.0+ |
 
 ---
 
-## 文档
+## 系统架构
 
-- [产品需求文档 (PRD)](docs/prd/PRD.md)
+```
+┌──────────────────────────────────────────────┐
+│           浏览器 (React SPA)                  │
+│           localhost:5173                      │
+└──────────────────┬───────────────────────────┘
+                   │ /api/v1/**（Vite 代理）
+                   ▼
+┌──────────────────────────────────────────────┐
+│          vago-backend  (Spring Boot :8080)    │
+│                                              │
+│  · 用户认证 / JWT     · 行程 CRUD             │
+│  · 目的地管理         · 足迹记录              │
+│  · AI 请求转发（WebClient → Python）          │
+│                                              │
+│  MySQL :3306  │  Redis :6379                 │
+└──────────────────────┬───────────────────────┘
+                       │ HTTP / SSE（WebClient）
+                       ▼
+┌──────────────────────────────────────────────┐
+│            vago-ai  (FastAPI :8000)           │
+│                                              │
+│  · RAG 攻略检索（Qdrant + Tool-Calling Agent）│
+│  · SSE 全链路流式输出                         │
+│  · 结构化行程提取                             │
+│                                              │
+│  Qdrant :6333  │  OpenAI API                 │
+└──────────────────────────────────────────────┘
+```
+
+**架构说明**：项目最初采用微服务架构（Gateway + User Service），后根据业务规模演进为混合单体——Java 承担所有 CRUD 与鉴权，Python 专注 AI/RAG 能力。前端所有请求统一由 Vite 代理转发至 Java 后端，AI 相关请求再由 Java 通过 WebClient 转发给 Python，前端不直连 Python 服务，保证安全性。
 
 ---
 
@@ -66,15 +94,103 @@
 
 ```
 Vago/
-├── backend/          # 后端服务代码
+├── apps/
+│   └── vago-web/                          # React 18 + Vite 5 前端
+│       ├── src/
+│       │   ├── api/                       # Axios 请求封装（user.js, travel.js, ai.js）
+│       │   ├── pages/                     # 页面组件
+│       │   │   ├── LoginPage.jsx          #   手机号登录/注册
+│       │   │   ├── DashboardPage.jsx      #   仪表盘
+│       │   │   ├── TripPage.jsx           #   旅行计划管理
+│       │   │   ├── ItineraryPage.jsx      #   行程详情编辑
+│       │   │   ├── AiPlanPage.jsx         #   AI 对话式行程规划
+│       │   │   ├── GuidePage.jsx          #   攻略库管理
+│       │   │   ├── PlanPage.jsx           #   行程总览
+│       │   │   └── ProfilePage.jsx        #   个人设置
+│       │   ├── stores/                    # 状态管理
+│       │   └── App.jsx                    # React Router 路由配置
+│       └── vite.config.js                 # Vite 代理 + 构建配置
+│
+├── services/
+│   ├── pom.xml                            # Maven 父 POM
+│   │
+│   ├── vago-backend/                      # Java Spring Boot 单体后端
+│   │   └── src/main/java/com/vago/
+│   │       ├── VagoApplication.java       #   启动入口
+│   │       ├── common/                    #   统一响应、错误码
+│   │       ├── config/                    #   WebMvc、Swagger、Redis 配置
+│   │       ├── constant/                  #   JWT Claims 常量
+│   │       ├── context/                   #   ThreadLocal 上下文
+│   │       ├── exception/                 #   自定义异常
+│   │       ├── handler/                   #   全局异常处理
+│   │       ├── interceptor/               #   JWT 鉴权拦截器
+│   │       ├── json/                      #   Jackson 序列化配置
+│   │       ├── properties/                #   配置属性类
+│   │       ├── utils/                     #   JWT、Hutool 工具类
+│   │       ├── user/                      #   用户域（controller/service/mapper/model）
+│   │       ├── travel/                    #   行程域（trip/itinerary CRUD）
+│   │       └── ai/                        #   AI 对接层（DTO/WebClient 桥接）
+│   │
+│   └── vago-ai/                           # Python FastAPI AI 服务
+│       ├── main.py                        #   FastAPI 入口 + CORS
+│       ├── requirements.txt
+│       └── app/
+│           ├── config.py                  #   应用配置（Settings）
+│           ├── routers/                   #   API 路由
+│           │   ├── chat.py                #     对话（流式 SSE / 非流式）
+│           │   ├── articles.py            #     攻略入库 / 检索 / 删除
+│           │   └── ai.py                  #     AI 辅助接口
+│           ├── models/                    #   Pydantic 数据模型
+│           │   └── schemas.py             #     请求/响应 Schema
+│           └── services/                  #   业务逻辑
+│               ├── rag_chain.py           #     RAG Agent（Tool-Calling）
+│               ├── plan_extractor.py      #     结构化行程提取
+│               ├── llm.py                 #     LLM 客户端工厂
+│               ├── indexer.py             #     攻略入库编排
+│               ├── chunker.py             #     语义分块
+│               ├── cleaner.py             #     文本/HTML 清洗
+│               ├── metadata_extractor.py  #     元数据提取
+│               ├── embedder.py            #     OpenAI Embedding
+│               └── vector_store.py        #     Qdrant 向量操作
+│
 ├── docs/
-│   └── prd/
-│       └── PRD.md    # 产品需求文档
-└── README.md
+│   ├── prd/PRD.md                         # 产品需求文档
+│   ├── database/                          # 数据库设计
+│   ├── API/                               # 接口文档
+│   ├── USAGE.md                           # 本地开发指南
+│   └── architecture.md                    # 架构说明
+│
+├── dev-up.sh                              # 一键启动脚本
+├── .env.example                           # 环境变量模板
+└── LICENSE
 ```
+
+---
+
+## SSE 流式通信协议
+
+AI 对话接口 `POST /api/v1/chat/stream` 使用 Server-Sent Events 实现全链路流式传输，前端通过 `fetch` + `ReadableStream` 消费。事件类型定义如下：
+
+| 事件类型 | 说明 |
+|---------|------|
+| `searching` | AI 正在检索用户攻略库 |
+| `sources` | 返回检索命中的攻略来源 |
+| `text` | LLM 逐 token 输出文本 |
+| `extracting_plan` | 开始从回答中提取结构化行程 |
+| `structured_plan` | 返回结构化行程数据（JSON） |
+| `error` | 服务端错误信息 |
+| `[DONE]` | 流结束标记 |
+
+---
+
+## 文档
+
+- [产品需求文档 (PRD)](docs/prd/PRD.md)
+- [本地开发指南](docs/USAGE.md)
+- [项目架构说明](docs/architecture.md)
 
 ---
 
 ## License
 
-[Apache License](LICENSE)
+[Apache License 2.0](LICENSE)
