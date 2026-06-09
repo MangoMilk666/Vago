@@ -188,7 +188,7 @@ public class UserServiceImpl implements UserService {
             return buildLoginVO(user, true);
         }
 
-        // 4. 校验账号状态
+        // 4. 校验账号状态，是否处于封禁/注销状态
         checkUserStatus(user);
 
         log.info("手机号登录成功: uuid={}", user.getUuid());
