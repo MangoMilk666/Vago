@@ -13,6 +13,9 @@ public interface UserOauthBindingMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(UserOauthBinding binding);
 
+    /**
+     * 查询用户-第三方登录绑定
+     */
     @Select("SELECT * FROM user_oauth_bindings WHERE provider = #{provider} AND open_id = #{openId}")
     UserOauthBinding getByProviderAndOpenId(@Param("provider") String provider,
                                             @Param("openId") String openId);

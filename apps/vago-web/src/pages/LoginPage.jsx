@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { sendSmsCode, loginByPhone } from '../api/user'
+import { sendSmsCode, loginByPhone, loginByOAuth } from '../api/user'
 import { saveAuth } from '../stores/auth'
 
 // ─── 图标 SVG ─────────────────────────────────────────────────────────────────
@@ -31,8 +31,39 @@ const IconMapPin = () => (
   </svg>
 )
 
+const IconGithub = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 .5C5.65.5.5 5.66.5 12.02c0 5.09 3.29 9.4 7.86 10.92.58.11.79-.25.79-.56v-2.16c-3.2.7-3.88-1.38-3.88-1.38-.52-1.34-1.28-1.69-1.28-1.69-1.05-.72.08-.71.08-.71 1.16.08 1.77 1.2 1.77 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.73-1.56-2.55-.29-5.23-1.28-5.23-5.67 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.48.11-3.08 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.6.23 2.79.11 3.08.74.81 1.19 1.84 1.19 3.1 0 4.4-2.68 5.38-5.24 5.67.41.36.78 1.08.78 2.18v3.22c0 .31.21.67.8.56 4.56-1.52 7.85-5.83 7.85-10.92C23.5 5.66 18.35.5 12 .5Z" />
+  </svg>
+)
+
 // ─── 步骤枚举（仅两步）────────────────────────────────────────────────────────
 const STEP = { PHONE: 'phone', CODE: 'code' }
+const GITHUB_OAUTH_STATE_KEY = 'vago:oauth:github:state'
+const GITHUB_CLIENT_ID = import.meta.env.VITE_GITHUB_CLIENT_ID
+
+function getGithubRedirectUri() {
+  return import.meta.env.VITE_GITHUB_REDIRECT_URI || `${window.location.origin}/login`
+}
+
+function generateOAuthState() {
+  return window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function buildGithubAuthorizeUrl() {
+  const redirectUri = getGithubRedirectUri()
+  const state = generateOAuthState()
+  sessionStorage.setItem(GITHUB_OAUTH_STATE_KEY, state)
+
+  const params = new URLSearchParams({
+    client_id: GITHUB_CLIENT_ID,
+    redirect_uri: redirectUri,
+    scope: 'read:user user:email',
+    state,
+  })
+
+  return `https://github.com/login/oauth/authorize?${params.toString()}`
+}
 
 // ─── 倒计时 Hook ──────────────────────────────────────────────────────────────
 function useCountdown(seconds = 60) {
@@ -62,8 +93,65 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
   const countdown = useCountdown(60)
+  const oauthCallbackKeyRef = useRef('')
 
   const isValidPhone = /^1[3-9]\d{9}$/.test(phone)
+  const githubEnabled = Boolean(GITHUB_CLIENT_ID)
+
+  const handleLoginSuccess = (res) => {
+    if (res.code !== 200) return
+    const { accessToken, refreshToken, userInfo } = res.data
+    saveAuth({ accessToken, refreshToken, user: userInfo })
+    localStorage.setItem('accessToken', accessToken)
+    localStorage.setItem('refreshToken', refreshToken)
+    navigate('/')
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const githubCode = params.get('code')
+    const githubError = params.get('error')
+    const githubState = params.get('state')
+
+    if (!githubCode && !githubError) return
+
+    const callbackKey = `${githubCode || ''}:${githubError || ''}:${githubState || ''}`
+    if (oauthCallbackKeyRef.current === callbackKey) {
+      return
+    }
+    oauthCallbackKeyRef.current = callbackKey
+
+    window.history.replaceState({}, document.title, '/login')
+
+    if (githubError) {
+      sessionStorage.removeItem(GITHUB_OAUTH_STATE_KEY)
+      setError('GitHub 授权已取消，请重试')
+      return
+    }
+
+    const storedState = sessionStorage.getItem(GITHUB_OAUTH_STATE_KEY)
+    if (!githubState || !storedState || githubState !== storedState) {
+      sessionStorage.removeItem(GITHUB_OAUTH_STATE_KEY)
+      setError('GitHub 登录状态校验失败，请重新发起登录')
+      return
+    }
+
+    const doGithubLogin = async () => {
+      setError('')
+      setLoading(true)
+      try {
+        const res = await loginByOAuth('github', githubCode, getGithubRedirectUri())
+        handleLoginSuccess(res)
+      } catch (err) {
+        setError(err.message)
+      } finally {
+        sessionStorage.removeItem(GITHUB_OAUTH_STATE_KEY)
+        setLoading(false)
+      }
+    }
+
+    doGithubLogin()
+  }, [navigate])
 
   // ── 发送验证码 ───────────────────────────────────────────────────────────────
   const handleSendCode = async () => {
@@ -86,18 +174,18 @@ export default function LoginPage() {
     setError(''); setLoading(true)
     try {
       const res = await loginByPhone(phone, code)
-      if (res.code === 200) {
-        const { accessToken, refreshToken, userInfo } = res.data
-        saveAuth({ accessToken, refreshToken, user: userInfo })
-        localStorage.setItem('accessToken', accessToken)
-        localStorage.setItem('refreshToken', refreshToken)
-        navigate('/')
-      }
+      handleLoginSuccess(res)
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleGitHubLogin = () => {
+    if (!githubEnabled || loading) return
+    setError('')
+    window.location.href = buildGithubAuthorizeUrl()
   }
 
   const goBack = () => { setError(''); setCode(''); setStep(STEP.PHONE) }
@@ -204,6 +292,26 @@ export default function LoginPage() {
                              hover:bg-indigo-700 disabled:opacity-40 transition-colors text-sm">
                   {loading ? <Spinner/> : '获取验证码'}
                 </button>
+
+                <div className="flex items-center gap-3 py-1">
+                  <div className="h-px flex-1 bg-gray-200" />
+                  <span className="text-xs text-gray-400">或</span>
+                  <div className="h-px flex-1 bg-gray-200" />
+                </div>
+
+                <button onClick={handleGitHubLogin} disabled={!githubEnabled || loading}
+                  className="w-full py-3.5 border border-gray-200 bg-white text-gray-800 font-semibold
+                             rounded-2xl hover:bg-gray-50 disabled:opacity-40 transition-colors text-sm
+                             flex items-center justify-center gap-2">
+                  <IconGithub />
+                  <span>{loading ? '登录中...' : '使用 GitHub 登录'}</span>
+                </button>
+
+                {!githubEnabled && (
+                  <p className="text-center text-xs text-amber-500">
+                    未配置 VITE_GITHUB_CLIENT_ID，GitHub 登录按钮当前不可用
+                  </p>
+                )}
 
                 <p className="text-center text-xs text-gray-400 pt-1">
                   登录即代表同意{' '}

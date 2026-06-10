@@ -43,6 +43,11 @@ export function loginByPhone(phone, code) {
   return http.post('/login/phone', { phone, smsCode: code })
 }
 
+/** OAuth 登录 */
+export function loginByOAuth(provider, authCode, redirectUri, deviceId) {
+  return http.post('/login/oauth', { provider, authCode, redirectUri, deviceId })
+}
+
 /** 手机号+验证码 注册（需要昵称）*/
 export function register(phone, code, nickname) {
   return http.post('/register', { phone, smsCode: code, nickname })

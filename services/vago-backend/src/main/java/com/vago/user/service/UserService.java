@@ -11,6 +11,9 @@ public interface UserService {
 
     LoginVO loginByPhone(UserLoginPhoneDTO dto);
 
+    /**
+     * 第三方登录
+     */
     LoginVO loginByOAuth(UserLoginOAuthDTO dto);
 
     TokenVO refreshToken(TokenRefreshDTO dto);

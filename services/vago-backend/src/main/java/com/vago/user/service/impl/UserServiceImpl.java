@@ -11,8 +11,11 @@ import com.vago.user.mapper.UserOauthBindingMapper;
 import com.vago.user.mapper.UserSettingsMapper;
 import com.vago.user.model.dto.*;
 import com.vago.user.model.entity.User;
+import com.vago.user.model.entity.UserOauthBinding;
 import com.vago.user.model.entity.UserSettings;
 import com.vago.user.model.vo.*;
+import com.vago.user.oauth.OAuthProviderClient;
+import com.vago.user.oauth.OAuthUserProfile;
 import com.vago.user.service.UserService;
 import com.vago.utils.JwtUtil;
 import io.jsonwebtoken.Claims;
@@ -27,6 +30,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -84,6 +88,7 @@ public class UserServiceImpl implements UserService {
     @Autowired private UserSettingsMapper settingsMapper;
     @Autowired private JwtProperties jwtProperties;
     @Autowired private StringRedisTemplate redisTemplate;
+    @Autowired private List<OAuthProviderClient> oauthProviderClients;
 
     // ══════════════════════════════════════════════════════════════════════════
     // 短信验证码
@@ -195,10 +200,43 @@ public class UserServiceImpl implements UserService {
         return buildLoginVO(user, false);
     }
 
+    /**
+     * 第三方登录
+     */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public LoginVO loginByOAuth(UserLoginOAuthDTO dto) {
-        // TODO: 接入微信/Apple OAuth SDK，完成 authCode → openId 换取
-        throw new BusinessException(5099, "OAuth 登录暂未开放，请使用手机号登录");
+        String provider = normalizeProvider(dto.getProvider());
+        OAuthProviderClient providerClient = getOAuthProviderClient(provider);
+        OAuthUserProfile profile = providerClient.fetchUserProfile(dto.getAuthCode(), dto.getRedirectUri());
+
+        UserOauthBinding binding = oauthBindingMapper.getByProviderAndOpenId(provider, profile.getOpenId());
+        // 已经有绑定关系记录
+        if (binding != null) {
+            updateOauthBindingToken(binding, profile);
+            User user = userMapper.getById(binding.getUserId());
+            if (user == null) {
+                throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND);
+            }
+            checkUserStatus(user);
+            syncUserProfileFromOAuth(user, profile);
+            log.info("OAuth 登录成功: provider={}, uuid={}", provider, user.getUuid());
+            return buildLoginVO(user, false);
+        }
+
+        // 如果无绑定记录
+        User user = findUserByOAuthEmail(profile);
+        boolean isNewUser = false;
+        if (user == null) {
+            user = createUserForOAuth(profile);
+            isNewUser = true;
+        } else {
+            checkUserStatus(user);
+            syncUserProfileFromOAuth(user, profile);
+        }
+        bindOAuthAccount(user, profile);
+        log.info("OAuth 登录并绑定成功: provider={}, uuid={}", provider, user.getUuid());
+        return buildLoginVO(user, isNewUser);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -439,6 +477,144 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND);
         }
         return user;
+    }
+
+    /**
+     * 获取正确的OAuthProvider 客户端
+     * @param provider
+     * @return
+     */
+    private OAuthProviderClient getOAuthProviderClient(String provider) {
+        return oauthProviderClients.stream()
+                .filter(client -> client.getProvider().equalsIgnoreCase(provider))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(
+                        ResultCode.PARAM_INVALID.getCode(),
+                        "暂不支持的 OAuth provider: " + provider));
+    }
+
+    /**
+     * 规范OAuth Provider名称
+     * @param provider
+     * @return
+     */
+    private String normalizeProvider(String provider) {
+        return provider == null ? null : provider.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * 通过OAuth邮箱信息查询用户
+     * @param profile
+     * @return
+     */
+    private User findUserByOAuthEmail(OAuthUserProfile profile) {
+        if (profile.getEmail() != null && !profile.getEmail().isBlank()) {
+            return userMapper.getByEmail(profile.getEmail());
+        }
+        return null;
+    }
+
+    /**
+     * 创建新用户并入库
+     * @param profile
+     * @return
+     */
+    private User createUserForOAuth(OAuthUserProfile profile) {
+        LocalDateTime now = LocalDateTime.now();
+        User user = User.builder()
+                .uuid(IdUtil.fastSimpleUUID())
+                .email(profile.getEmail())
+                .nickname(defaultNickname(profile))
+                .avatarOssKey(profile.getAvatarUrl())
+                .planType(DEFAULT_PLAN_TYPE)
+                .articleQuota(DEFAULT_ARTICLE_QUOTA)
+                .aiCallsToday(0)
+                .status(1)
+                .createdAt(now)
+                .updatedAt(now)
+                .build();
+        userMapper.insert(user);
+        createDefaultSettings(user.getId());
+        return user;
+    }
+
+    /**
+     * 创建用户-第三方登录绑定关系
+     * @param user
+     * @param profile
+     */
+    private void bindOAuthAccount(User user, OAuthUserProfile profile) {
+        LocalDateTime now = LocalDateTime.now();
+        UserOauthBinding binding = UserOauthBinding.builder()
+                .userId(user.getId())
+                .provider(profile.getProvider())
+                .openId(profile.getOpenId())
+                .accessToken(profile.getAccessToken())
+                .expiresAt(profile.getExpiresAt())
+                .createdAt(now)
+                .updatedAt(now)
+                .build();
+        oauthBindingMapper.insert(binding);
+    }
+
+    /**
+     * 更新accesToken和过期时间
+     * @param binding
+     * @param profile
+     */
+    private void updateOauthBindingToken(UserOauthBinding binding, OAuthUserProfile profile) {
+        binding.setAccessToken(profile.getAccessToken());
+        binding.setExpiresAt(profile.getExpiresAt());
+        oauthBindingMapper.updateToken(binding);
+    }
+
+    /**
+     * 从OAuth侧同步用户资料
+     * @param user
+     * @param profile
+     */
+    private void syncUserProfileFromOAuth(User user, OAuthUserProfile profile) {
+        boolean updated = false;
+
+        if ((user.getNickname() == null || user.getNickname().isBlank())
+                && profile.getNickname() != null && !profile.getNickname().isBlank()) {
+            user.setNickname(profile.getNickname());
+            updated = true;
+        }
+
+        if ((user.getAvatarOssKey() == null || user.getAvatarOssKey().isBlank())
+                && profile.getAvatarUrl() != null && !profile.getAvatarUrl().isBlank()) {
+            user.setAvatarOssKey(profile.getAvatarUrl());
+            updated = true;
+        }
+
+        if ((user.getEmail() == null || user.getEmail().isBlank())
+                && profile.getEmail() != null && !profile.getEmail().isBlank()) {
+            User emailOwner = userMapper.getByEmail(profile.getEmail());
+            if (emailOwner == null || emailOwner.getId().equals(user.getId())) {
+                user.setEmail(profile.getEmail());
+                updated = true;
+            }
+        }
+
+        if (updated) {
+            user.setUpdatedAt(LocalDateTime.now());
+            userMapper.update(user);
+        }
+    }
+
+    /**
+     * 返回已存在或默认用户名
+     * @param profile
+     * @return
+     */
+    private String defaultNickname(OAuthUserProfile profile) {
+        if (profile.getNickname() != null && !profile.getNickname().isBlank()) {
+            return profile.getNickname();
+        }
+        String suffix = profile.getOpenId() == null ? IdUtil.fastSimpleUUID().substring(0, 6)
+                : profile.getOpenId().substring(Math.max(0, profile.getOpenId().length() - 6));
+        return "旅行者" + suffix;
     }
 
     /**
