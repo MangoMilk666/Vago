@@ -21,7 +21,10 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * GitHub OAuth Client 实现类。
+ * GitHub OAuth provider 实现。
+ *
+ * <p>职责：将前端拿到的 authCode 换取 access_token，并拉取 GitHub 用户资料，统一映射为 {@link OAuthUserProfile}。
+ * <p>说明：GitHub 的 user 接口常常不会直接返回 email（尤其是用户把邮箱设为私有），因此这里会额外请求 /user/emails。
  */
 @Component
 @Slf4j
@@ -42,10 +45,10 @@ public class GithubOAuthProviderClient implements OAuthProviderClient {
     }
 
     /**
-     * 获得第三方用户资料对象
-     * @param authCode
-     * @param redirectUri
-     * @return
+     * 将 GitHub authCode 兑换为统一的第三方用户资料。
+     *
+     * @param authCode     GitHub 回调携带的 code
+     * @param redirectUri  本次授权使用的 redirect_uri（需与发起授权时一致）
      */
     @Override
     public OAuthUserProfile fetchUserProfile(String authCode, String redirectUri) {
@@ -70,11 +73,9 @@ public class GithubOAuthProviderClient implements OAuthProviderClient {
     }
 
     /**
-     * 从配置类写入GitHub OAuth配置变量
-     * @param authCode
-     * @param redirectUri
-     * @param github
-     * @return
+     * GitHub：authCode → access_token。
+     *
+     * <p>注意：不要在日志中输出 access_token / response body，避免泄漏敏感信息。
      */
     private GithubTokenResponse exchangeAccessToken(String authCode, String redirectUri, OAuthProperties.Github github) {
         MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
@@ -99,9 +100,14 @@ public class GithubOAuthProviderClient implements OAuthProviderClient {
                 throw new BusinessException(ResultCode.OAUTH_CODE_INVALID);
             }
             return response;
-        } catch (WebClientResponseException.BadRequest e) {
-            log.warn("GitHub OAuth 换码失败: status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString());
-            throw new BusinessException(ResultCode.OAUTH_CODE_INVALID);
+        } catch (WebClientResponseException e) {
+            int status = e.getStatusCode().value();
+            if (status == 400 || status == 401 || status == 403) {
+                log.warn("GitHub OAuth 换码失败: status={}", status);
+                throw new BusinessException(ResultCode.OAUTH_CODE_INVALID);
+            }
+            log.error("GitHub OAuth 换码异常: status={}", status, e);
+            throw new BusinessException(ResultCode.OAUTH_SERVICE_ERROR);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
@@ -111,10 +117,7 @@ public class GithubOAuthProviderClient implements OAuthProviderClient {
     }
 
     /**
-     * 获取GitHub用户信息
-     * @param accessToken
-     * @param github
-     * @return
+     * 获取 GitHub 用户信息（/user）。
      */
     private GithubUserResponse fetchUser(String accessToken, OAuthProperties.Github github) {
         try {
@@ -143,11 +146,7 @@ public class GithubOAuthProviderClient implements OAuthProviderClient {
     }
 
     /**
-     * 获取GitHub邮箱？
-     * @param userResponse
-     * @param accessToken
-     * @param github
-     * @return
+     * 解析邮箱：优先用 /user 返回的 email；为空时再请求 /user/emails。
      */
     private String resolveEmail(GithubUserResponse userResponse, String accessToken, OAuthProperties.Github github) {
         if (!isBlank(userResponse.getEmail())) {
@@ -184,9 +183,7 @@ public class GithubOAuthProviderClient implements OAuthProviderClient {
     }
 
     /**
-     * 返回已存在用户名或默认用户名
-     * @param userResponse
-     * @return
+     * 昵称策略：name > login > 默认昵称兜底。
      */
     private String resolveNickname(GithubUserResponse userResponse) {
         if (!isBlank(userResponse.getName())) {
@@ -199,18 +196,14 @@ public class GithubOAuthProviderClient implements OAuthProviderClient {
     }
 
     /**
-     * 返回过期的时间
-     * @param expiresIn
-     * @return
+     * access_token 过期时间（GitHub 可能不返回 expires_in，此时为 null）。
      */
     private LocalDateTime resolveExpiresAt(Long expiresIn) {
         return expiresIn == null ? null : LocalDateTime.now().plusSeconds(expiresIn);
     }
 
     /**
-     * value是否为null / 只含所有空白符号
-     * @param value
-     * @return
+     * 判空（null / 空串 / 全空白）。
      */
     private boolean isBlank(String value) {
         return value == null || value.isBlank();

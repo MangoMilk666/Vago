@@ -201,7 +201,18 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 第三方登录
+     * 第三方 OAuth 登录统一入口。
+     *
+     * <p>流程说明：
+     * <pre>
+     *   1) provider -> 选择对应 OAuthProviderClient
+     *   2) authCode -> 换取第三方用户资料（openId/email/nickname/avatar）
+     *   3) 优先用 (provider + openId) 查绑定表：
+     *      - 存在：更新 token 信息 -> 登录
+     *      - 不存在：尝试用 email 关联已有用户；否则创建新用户 -> 写绑定表 -> 登录
+     * </pre>
+     *
+     * <p>注意：redirectUri 来自前端（用于换码），若要更严格防护可在服务端做白名单校验。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -211,7 +222,7 @@ public class UserServiceImpl implements UserService {
         OAuthUserProfile profile = providerClient.fetchUserProfile(dto.getAuthCode(), dto.getRedirectUri());
 
         UserOauthBinding binding = oauthBindingMapper.getByProviderAndOpenId(provider, profile.getOpenId());
-        // 已经有绑定关系记录
+        // 已绑定：直接登录（并同步第三方侧的 token/资料）
         if (binding != null) {
             updateOauthBindingToken(binding, profile);
             User user = userMapper.getById(binding.getUserId());
@@ -224,7 +235,7 @@ public class UserServiceImpl implements UserService {
             return buildLoginVO(user, false);
         }
 
-        // 如果无绑定记录
+        // 未绑定：尝试用邮箱关联老用户（避免同一邮箱多账号），否则创建新用户
         User user = findUserByOAuthEmail(profile);
         boolean isNewUser = false;
         if (user == null) {
@@ -480,9 +491,9 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 获取正确的OAuthProvider 客户端
-     * @param provider
-     * @return
+     * 根据 provider 选择对应的 OAuthProviderClient 实现。
+     *
+     * <p>通过 Spring 注入的 oauthProviderClients 列表动态匹配，便于后续扩展 Google/微信等。
      */
     private OAuthProviderClient getOAuthProviderClient(String provider) {
         return oauthProviderClients.stream()
@@ -494,18 +505,16 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 规范OAuth Provider名称
-     * @param provider
-     * @return
+     * 规范 provider：去空格 + 转小写。
      */
     private String normalizeProvider(String provider) {
         return provider == null ? null : provider.trim().toLowerCase(Locale.ROOT);
     }
 
     /**
-     * 通过OAuth邮箱信息查询用户
-     * @param profile
-     * @return
+     * 使用第三方邮箱查找已有用户（若第三方不返回邮箱则返回 null）。
+     *
+     * <p>目的：当用户用同一邮箱在不同 provider 登录时，尽量合并为一个用户账号。
      */
     private User findUserByOAuthEmail(OAuthUserProfile profile) {
         if (profile.getEmail() != null && !profile.getEmail().isBlank()) {
@@ -515,9 +524,9 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 创建新用户并入库
-     * @param profile
-     * @return
+     * 创建新用户并入库（OAuth 首次登录且无法匹配到旧用户时）。
+     *
+     * <p>说明：当前把第三方 avatarUrl 暂存在 avatarOssKey 字段中，后续如接入 OSS/CDN 可再做转换。
      */
     private User createUserForOAuth(OAuthUserProfile profile) {
         LocalDateTime now = LocalDateTime.now();
@@ -539,9 +548,9 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 创建用户-第三方登录绑定关系
-     * @param user
-     * @param profile
+     * 创建用户与第三方账号绑定关系（user_oauth_bindings）。
+     *
+     * <p>绑定主键为 (provider, openId)，用于后续同平台免注册直接登录。
      */
     private void bindOAuthAccount(User user, OAuthUserProfile profile) {
         LocalDateTime now = LocalDateTime.now();
@@ -558,9 +567,9 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 更新accesToken和过期时间
-     * @param binding
-     * @param profile
+     * 更新绑定记录的 token 信息。
+     *
+     * <p>注意：当前为直存 accessToken；如有更高安全要求，建议加密存储或仅存短期 token/不落库。
      */
     private void updateOauthBindingToken(UserOauthBinding binding, OAuthUserProfile profile) {
         binding.setAccessToken(profile.getAccessToken());
@@ -569,9 +578,7 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 从OAuth侧同步用户资料
-     * @param user
-     * @param profile
+     * 从第三方资料补齐用户信息（只在本地字段为空时才写入，避免覆盖用户手动修改的资料）。
      */
     private void syncUserProfileFromOAuth(User user, OAuthUserProfile profile) {
         boolean updated = false;
