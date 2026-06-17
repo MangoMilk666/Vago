@@ -144,7 +144,11 @@ class ChatMessage(BaseModel):
     role: Literal["user", "assistant", "system"] = Field(
         description="消息角色：user=用户输入，assistant=模型回复，system=系统提示"
     )
-    content: str = Field(..., description="消息正文")
+    content: str = Field(
+        ...,
+        max_length=10000,
+        description="消息正文（最长 10000 字符，防止滥用）",
+    )
 
 
 class ChatRequest(BaseModel):
