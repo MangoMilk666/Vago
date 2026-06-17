@@ -1,8 +1,9 @@
 # Vago（叠迹）产品需求文档（PRD）
 
-**文档版本**：v0.2  
+**文档版本**：v0.3  
 **撰写日期**：2026-06-05  
-**状态**：草稿（Draft）
+**最后更新**：2026-06-17  
+**状态**：定稿（Final）
 
 ---
 
@@ -157,18 +158,18 @@
 用户提交原始内容
     │
     ▼
-【Java 服务】原始内容持久化（MySQL raw_articles 表）→ 生成 article_id，推送 MQ
+【Java 服务】攻略持久化（MySQL guides 表）→ 异步触发向量化（@Async）
     │
     ▼
-【Python AI 服务】异步消费 MQ
+【Python AI 服务】HTTP 调用（POST /api/v1/articles/ingest）
     ├─ 1. 文本清洗（去除广告词、表情符号、重复内容、HTML 标签）
     ├─ 2. 元数据提取（目的地识别、标签打标：交通/住宿/美食/景点）
     ├─ 3. 语义分块（按语义滑动窗口切块，chunk_size ≈ 512 tokens，overlap ≈ 64）
     ├─ 4. Embedding 向量化（调用 Embedding 模型）
-    └─ 5. 写入向量数据库（按 user_id 隔离的命名空间）
+    └─ 5. 写入向量数据库（按 user_uuid payload 隔离）
     │
     ▼
-【Java 服务】更新 article 状态为 indexed，通知前端（WebSocket / 轮询）
+【Java 服务】更新 guide.ai_status 为 INDEXED/FAILED（前端轮询 5s 刷新状态）
 ```
 
 #### 3.1.4 攻略卡片数据结构
@@ -328,21 +329,20 @@
 
 #### 3.2.4 前后端交互设计
 
-**Python AI 服务**
+**Python AI 服务（vago-ai）**
 
 | 接口 | 说明 |
 |------|------|
-| `POST /api/v1/chat/stream` | 继续输出 SSE 文本 token |
-| `POST /api/v1/chat` | 非流式接口，返回文本回答 + 结构化计划草稿 |
-| 建议新增：`POST /api/v1/chat/plan` | 专门用于行程规划意图，返回强约束结构化结果 |
+| `POST /api/v1/ai/chat/stream` | SSE 流式对话，实时推送文本 token |
+| `POST /api/v1/ai/chat` | 非流式接口，返回文本回答 + 结构化计划草稿 |
 
-**Java 后端**
+**Java 后端（vago-backend）**
 
 | 接口 | 说明 |
 |------|------|
-| `POST /api/v1/ai/chat/stream` | 代理 Python 流式聊天，返回文本和结构化计划事件 |
-| 建议新增：`POST /api/v1/ai/plans/save-draft` | 将 AI 结构化计划保存为 Plan 草稿 |
-| 建议新增：`POST /api/v1/ai/plans/save-trip` | 将 AI 结构化计划保存为正式 Trip |
+| `POST /api/v1/ai/plans/save-draft` | 将 AI 结构化计划保存为 Plan 草稿（已实现） |
+| `POST /api/v1/ai/plans/save-trip` | 将 AI 结构化计划保存为正式 Trip（已实现） |
+| `POST /api/v1/travel/guides/{uuid}/index` | 手动触发攻略向量化 |
 
 **前端 Web**
 
@@ -592,9 +592,9 @@ users
 
 | 功能域 | 服务 | 存储 |
 |--------|------|------|
-| 用户、行程、攻略 CRUD | Java 微服务 | MySQL |
+| 用户、行程、攻略 CRUD | Java 单体（vago-backend） | MySQL |
 | 会话 Token、攻略索引状态缓存 | Java → Redis | Redis |
-| 攻略向量化、RAG 检索、LLM 调用 | Python AI 服务 | 向量数据库（如 Milvus / Qdrant） |
+| 攻略向量化、RAG 检索、LLM 调用 | Python AI 服务（vago-ai） | Qdrant 向量数据库 |
 | GPS 轨迹点存储（高写入） | Java → 时序存储 | 时序数据库或 MySQL 分区表 |
 | 迷雾瓦片状态 | Java → Redis Bitmap | Redis |
 | 照片文件存储 | 上传后转存 | 对象存储（OSS/S3） |

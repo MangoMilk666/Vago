@@ -61,32 +61,23 @@
 ┌──────────────────────────────────────────────┐
 │           浏览器 (React SPA)                  │
 │           localhost:5173                      │
-└──────────────────┬───────────────────────────┘
-                   │ /api/v1/**（Vite 代理）
-                   ▼
-┌──────────────────────────────────────────────┐
-│          vago-backend  (Spring Boot :8080)    │
-│                                              │
-│  · 用户认证 / JWT     · 行程 CRUD             │
-│  · 目的地管理         · 足迹记录              │
-│  · AI 请求转发（WebClient → Python）          │
-│                                              │
-│  MySQL :3306  │  Redis :6379                 │
-└──────────────────────┬───────────────────────┘
-                       │ HTTP / SSE（WebClient）
-                       ▼
-┌──────────────────────────────────────────────┐
-│            vago-ai  (FastAPI :8000)           │
-│                                              │
-│  · RAG 攻略检索（Qdrant + Tool-Calling Agent）│
-│  · SSE 全链路流式输出                         │
-│  · 结构化行程提取                             │
-│                                              │
-│  Qdrant :6333  │  OpenAI API                 │
-└──────────────────────────────────────────────┘
+└──┬──────────────────────────┬────────────────┘
+   │ /api/v1/ai/chat/**       │ /api/v1/** (其它 API)
+   │（直连 Python）            │
+   ▼                          ▼
+┌─────────────────┐    ┌──────────────────────────┐
+│ vago-ai (Python)│    │ vago-backend (Spring Boot)│
+│ FastAPI :8000   │    │ :8080                     │
+│                 │    │                           │
+│ · RAG 攻略检索  │    │ · 用户认证 / JWT          │
+│ · SSE 对话流    │    │ · 攻略/行程 CRUD           │
+│ · 结构化提取    │    │ · AI 结果保存（save-*）    │
+│                 │    │                           │
+│ Qdrant :6333    │    │ MySQL :3306 / Redis :6379 │
+└─────────────────┘    └──────────────────────────┘
 ```
 
-**架构说明**：项目最初采用微服务架构（Gateway + User Service），后根据业务规模演进为混合单体——Java 承担所有 CRUD 与鉴权，Python 专注 AI/RAG 能力。前端所有请求统一由 Vite 代理转发至 Java 后端，AI 相关请求再由 Java 通过 WebClient 转发给 Python，前端不直连 Python 服务，保证安全性。
+**架构说明**：项目最初采用微服务架构（Gateway + User Service），后根据业务规模演进为混合单体。**关键设计决策**：AI 对话接口（chat / chat/stream）由前端通过 Vite 代理直接路由至 Python vago-ai，消除 Java SSE 代理链路，降低延迟。Java 后端负责所有 CRUD 与鉴权，以及攻略向量化（异步 HTTP 调用 Python）和 AI 行程保存业务逻辑。Python 端独立验证 JWT（共享 HS256 secret + Redis 黑名单），并实现 IP/用户级别请求限流。
 
 ---
 
@@ -169,7 +160,7 @@ Vago/
 
 ## SSE 流式通信协议
 
-AI 对话接口 `POST /api/v1/chat/stream` 使用 Server-Sent Events 实现全链路流式传输，前端通过 `fetch` + `ReadableStream` 消费。事件类型定义如下：
+AI 对话接口 `POST /api/v1/ai/chat/stream`（前端直连 Python vago-ai）使用 Server-Sent Events 实现流式传输，前端通过 `fetch` + `ReadableStream` 消费。事件类型定义如下：
 
 | 事件类型 | 说明 |
 |---------|------|
