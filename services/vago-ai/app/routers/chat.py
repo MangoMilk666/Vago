@@ -167,7 +167,8 @@ def _validate_messages(request: ChatRequest) -> None:
 
     规则：
       1. messages 列表不得为空；
-      2. 最后一条消息的 role 必须为 "user"（当前用户输入）。
+      2. 最后一条消息的 role 必须为 "user"（当前用户输入）；
+      3. 消息数量不得超过 50 条（防止构造超长上下文导致 LLM Token 超限）。
 
     参数:
         request: ChatRequest 实例。
@@ -181,4 +182,9 @@ def _validate_messages(request: ChatRequest) -> None:
         raise HTTPException(
             status_code=400,
             detail="messages 最后一条必须为 role='user' 的用户消息",
+        )
+    if len(request.messages) > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="messages 最多支持 50 条消息历史",
         )
