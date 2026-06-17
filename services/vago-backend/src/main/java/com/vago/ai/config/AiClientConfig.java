@@ -5,20 +5,22 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.retry.annotation.EnableRetry;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.web.reactive.function.client.WebClient;
 
 /**
  * AI 客户端配置。
  *
- * <p>注册面向 vago-ai（Python FastAPI）的 WebClient Bean，并开启 Spring @Async 支持。
+ * <p>注册面向 vago-ai（Python FastAPI）的 WebClient Bean，并开启 Spring @Async 和 @Retryable 支持。
  * 服务地址通过配置项 {@code vago.ai.base-url} 注入，默认指向本地开发环境。
  *
- * <p>{@code @EnableAsync} 放在此处，保证 AiServiceImpl 中的 @Async 方法
- * 在 Spring 容器启动后即可被代理执行。
+ * <p>{@code @EnableAsync} 和 {@code @EnableRetry} 放在此处，保证 AiServiceImpl 中的
+ * {@code @Async} 和 VagoAiClient 中的 {@code @Retryable} 在 Spring 容器启动后即可被代理执行。
  */
 @Configuration
 @EnableAsync
+@EnableRetry
 public class AiClientConfig {
 
     /** vago-ai 服务基础地址，由 application.yml 注入 */

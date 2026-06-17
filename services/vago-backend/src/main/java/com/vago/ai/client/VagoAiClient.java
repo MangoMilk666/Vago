@@ -5,8 +5,12 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Recover;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.util.List;
@@ -37,13 +41,23 @@ public class VagoAiClient {
      *
      * <p>对应 Python 接口：POST /api/v1/articles/ingest
      *
+     * <p>使用 {@link Retryable} 自动重试：网络抖动 / Python 重启等瞬时故障时，
+     * 最多重试 2 次（共 3 次尝试），每次间隔递增 1 秒。
+     * 若所有重试均失败，由 {@link Recover} 方法返回降级响应。
+     * Backoff 参数定义了重试的节奏和频率，delay - 首次重试前的固定等待时间， multiplier - 延迟倍率（指数退避）
+     *
      * @param guideUuid   攻略 UUID（用作 Qdrant article_id）
      * @param userUuid    归属用户 UUID（用于命名空间隔离）
      * @param title       攻略标题
      * @param content     攻略正文（raw_content）
      * @param destination 目的地（若非空则作为预标注传入）
-     * @return Python 返回的入库结果
+     * @return Python 返回的入库结果；全部重试失败时返回降级结果
      */
+    @Retryable(
+        retryFor = {WebClientRequestException.class, WebClientResponseException.class},
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 1000, multiplier = 1.5)
+    )
     public IngestResponse ingestGuide(String guideUuid, String userUuid,
                                       String title, String content, String destination) {
         // 组装post请求体
@@ -80,9 +94,17 @@ public class VagoAiClient {
      *
      * <p>对应 Python 接口：DELETE /api/v1/articles/{articleId}?user_uuid={userUuid}
      *
+     * <p>同样支持重试：网络瞬时故障时最多重试 2 次。
+     * 全部重试失败后，由 {@link Recover} 方法降级处理（仅日志告警）。
+     *
      * @param guideUuid 攻略 UUID
      * @param userUuid  归属用户 UUID（安全校验）
      */
+    @Retryable(
+        retryFor = {WebClientRequestException.class, WebClientResponseException.class},
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 1000, multiplier = 1.5)
+    )
     public void deleteGuide(String guideUuid, String userUuid) {
         try {
             webClient.delete()
@@ -97,6 +119,34 @@ public class VagoAiClient {
             log.error("[VagoAiClient] delete 失败 status={} guide={}", e.getStatusCode(), guideUuid);
             throw new RuntimeException("vago-ai delete 调用失败: " + e.getMessage(), e);
         }
+    }
+
+    // ── @Recover 降级方法 ──────────────────────────────────────────────────────
+
+    /**
+     * ingestGuide 全部重试失败后的降级处理。
+     * 返回一个标记为 FAILED 的 IngestResponse，避免异常传播到 @Async 调用方。
+     */
+    @Recover
+    public IngestResponse ingestGuideFallback(Exception e, String guideUuid, String userUuid,
+                                               String title, String content, String destination) {
+        log.error("[VagoAiClient] ingest 重试全部失败 guide={} error={}", guideUuid, e.getMessage());
+        IngestResponse fallback = new IngestResponse();
+        fallback.setArticleId(guideUuid);
+        fallback.setStatus("FAILED");
+        fallback.setChunkCount(0);
+        fallback.setMessage("向量化服务暂时不可用，请稍后重试：" + e.getMessage());
+        return fallback;
+    }
+
+    /**
+     * deleteGuide 全部重试失败后的降级处理。
+     * 仅记录日志告警，不抛出异常（删除失败不影响主流程）。
+     */
+    @Recover
+    public void deleteGuideFallback(Exception e, String guideUuid, String userUuid) {
+        log.error("[VagoAiClient] delete 重试全部失败 guide={} error={}，" +
+                "请手动检查 Qdrant 中是否有残留向量数据", guideUuid, e.getMessage());
     }
 
     // ── Python API 内部 Request / Response 模型（仅限本类使用）───────────────
