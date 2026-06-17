@@ -20,3 +20,6 @@ qdrant-client==1.9.1
 
 # Redis (rate limiting, cache)
 redis==5.0.7
+
+# JWT verification (Python-side auth for direct frontend requests)
+PyJWT==2.8.0

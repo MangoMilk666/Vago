@@ -148,16 +148,15 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """AI 对话请求体，由 Java vago-backend 或前端直接发送。"""
+    """AI 对话请求体（前端直接发送，user_uuid 由 JWT 中间件注入，不在请求体中传递）。"""
 
-    user_uuid: str = Field(..., description="当前用户 UUID，用于 RAG 检索隔离")
     messages: list[ChatMessage] = Field(
         ...,
         min_length=1,
         description=(
             "完整对话历史（含本轮用户消息）。"
             "列表最后一条必须为 role=user 的消息。"
-            "Java 侧负责维护历史记录并完整传入，服务端无状态。"
+            "前端负责维护历史记录并完整传入，服务端无状态。"
         ),
     )
     use_rag: bool = Field(

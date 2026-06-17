@@ -49,6 +49,17 @@ class Settings(BaseSettings):
     rag_top_k: int = 6
     rag_score_threshold: float = 0.55
 
+    # ── JWT 验证（与 Java vago-backend 共享同一 secret） ──────────────────────
+    # 环境变量名：JWT_SECRET_KEY（与 Java 侧 vago.jwt.secret-key 保持一致）
+    jwt_secret_key: str = ""
+    # 请求头字段名（与 Java 侧 vago.jwt.token-name 保持一致，默认 authorization）
+    jwt_token_name: str = "authorization"
+
+    # ── Redis（用于 JWT 黑名单校验，与 Java 侧使用同一实例）────────────────────
+    redis_host: str = "127.0.0.1"
+    redis_port: int = 6379
+    redis_db: int = 0
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     # ── 派生属性（运行时计算，非 env 字段） ────────────────────────────────────

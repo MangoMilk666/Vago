@@ -63,21 +63,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS（允许 Java vago-backend 和 Vite 开发服务器跨域调用）─────────────────
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# 重构后前端直连 Python（chat 接口），需要允许 Vite Dev Server 跨域。
+# Java vago-backend 的内部调用（articles ingest/delete）不走浏览器，不受 CORS 限制。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:8080",   # Java vago-backend
-        "http://localhost:5173",   # Vite Dev Server
+        "http://localhost:5173",   # Vite Dev Server（前端直连 chat 接口）
+        "http://localhost:8080",   # Java vago-backend（内部调用 articles 接口）
     ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ── 路由注册 ──────────────────────────────────────────────────────────────────
+# chat 路由前缀改为 /api/v1/ai/chat，与 Java 暴露的路径保持一致，
+# Nginx / Vite Proxy 可按前缀直接路由到 Python，无需路径重写。
 app.include_router(ai.router,       prefix="/api/v1/ai",       tags=["AI 行程规划"])
 app.include_router(articles.router, prefix="/api/v1/articles", tags=["攻略库 RAG"])
-app.include_router(chat.router,     prefix="/api/v1/chat",     tags=["AI 对话"])
+app.include_router(chat.router,     prefix="/api/v1/ai/chat",  tags=["AI 对话"])
 
 
 @app.get("/health", tags=["健康检查"])

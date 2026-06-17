@@ -2,13 +2,13 @@
 AI 对话路由（Chat Router）。
 
 提供面向用户的 AI 对话接口，底层由 RAG Agent 驱动：
-  - POST /api/v1/chat          非流式对话，等待完整回答后返回 JSON
-  - POST /api/v1/chat/stream   流式对话，SSE 实时推送 token
+  - POST /api/v1/ai/chat          非流式对话，等待完整回答后返回 JSON
+  - POST /api/v1/ai/chat/stream   流式对话，SSE 实时推送 token
 
-两个接口共用相同的 ChatRequest 格式，区别仅在于响应模式。
-Java vago-backend 按需选择调用方式：
-  - 非流式：适合后台批量生成、内容安全审核等场景；
-  - 流式：适合前端实时展示打字机效果。
+两个接口均需 JWT 鉴权（Bearer token 经 get_current_user_uuid 依赖验证）：
+  - 验证 HMAC-HS256 签名及过期时间（与 Java 共享 secret）
+  - 检查 Redis 黑名单（退出登录后 Java 侧写入）
+  - 从 JWT payload 提取 userUuid，无需客户端在请求体中传递
 
 SSE 事件类型说明（流式接口）：
   {"type": "text",      "content": "..."}  — 文本 token，拼接后得到完整回答
@@ -20,9 +20,10 @@ SSE 事件类型说明（流式接口）：
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from app.dependencies.auth import get_current_user_uuid
 from app.models.schemas import ChatRequest, ChatResponse, SourceCitation
 from app.services.rag_chain import run_agent_chat, stream_agent_chat
 from app.config import settings
@@ -43,7 +44,10 @@ logger = logging.getLogger(__name__)
         "消息历史由调用方维护并完整传入（`messages` 字段），服务端无状态。"
     ),
 )
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(
+    request: ChatRequest,
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ChatResponse:
     """
     非流式 AI 对话接口。
 
@@ -51,12 +55,14 @@ async def chat(request: ChatRequest) -> ChatResponse:
     返回完整的回答文本和引用的攻略来源。
 
     参数:
-        request: ChatRequest，包含 user_uuid、messages、use_rag 等字段。
+        request: ChatRequest，包含 messages、use_rag 等字段（user_uuid 由 JWT 注入）。
+        user_uuid: 从 JWT payload 提取，由 get_current_user_uuid 依赖提供。
 
     返回:
         ChatResponse，包含 answer（回答文本）、sources（攻略引用）、model（模型名称）。
 
     异常:
+        401 — JWT 缺失 / 无效 / 已过期；
         400 — 消息格式不合法（如最后一条不是 user 消息）；
         503 — LLM 或 Qdrant 服务不可用。
     """
@@ -64,16 +70,16 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     logger.info(
         "[chat] 非流式请求 user=%s messages=%d use_rag=%s",
-        request.user_uuid, len(request.messages), request.use_rag,
+        user_uuid, len(request.messages), request.use_rag,
     )
 
     try:
         result = await run_agent_chat(
-            user_uuid=request.user_uuid,
+            user_uuid=user_uuid,
             messages=request.messages,
         )
     except Exception as exc:
-        logger.error("[chat] 非流式生成失败 user=%s error=%s", request.user_uuid, exc, exc_info=True)
+        logger.error("[chat] 非流式生成失败 user=%s error=%s", user_uuid, exc, exc_info=True)
         raise HTTPException(status_code=503, detail=f"AI 服务暂时不可用：{exc}") from exc
 
     return ChatResponse(
@@ -94,7 +100,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
     ),
     response_class=StreamingResponse,
 )
-async def chat_stream(request: ChatRequest) -> StreamingResponse:
+async def chat_stream(
+    request: ChatRequest,
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> StreamingResponse:
     """
     流式 AI 对话接口（SSE）。
 
@@ -102,13 +111,15 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
     以 SSE 格式实时推送给前端，支持打字机效果。
 
     参数:
-        request: ChatRequest，字段与非流式接口完全相同。
+        request: ChatRequest，字段与非流式接口完全相同（user_uuid 由 JWT 注入）。
+        user_uuid: 从 JWT payload 提取，由 get_current_user_uuid 依赖提供。
 
     返回:
         StreamingResponse，Content-Type 为 text/event-stream。
         前端通过 SSE 协议接收，详见路由 description 中的事件格式说明。
 
     异常:
+        401 — JWT 缺失 / 无效 / 已过期；
         400 — 消息格式不合法；
         流中如有错误，以 {"type": "error", "message": "..."} 事件推送，不中断连接。
     """
@@ -116,7 +127,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 
     logger.info(
         "[chat] 流式请求 user=%s messages=%d use_rag=%s",
-        request.user_uuid, len(request.messages), request.use_rag,
+        user_uuid, len(request.messages), request.use_rag,
     )
 
     async def event_generator():
@@ -128,12 +139,12 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         """
         try:
             async for chunk in stream_agent_chat(
-                user_uuid=request.user_uuid,
+                user_uuid=user_uuid,
                 messages=request.messages,
             ):
                 yield chunk
         except Exception as exc:
-            logger.error("[chat] 事件生成器异常 user=%s error=%s", request.user_uuid, exc)
+            logger.error("[chat] 事件生成器异常 user=%s error=%s", user_uuid, exc)
             import json
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
