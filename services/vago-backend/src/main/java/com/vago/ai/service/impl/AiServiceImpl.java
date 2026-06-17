@@ -1,17 +1,13 @@
 package com.vago.ai.service.impl;
 
 import com.vago.ai.client.VagoAiClient;
-import com.vago.ai.model.dto.AiChatRequestDTO;
-import com.vago.ai.model.vo.AiChatResponseVO;
 import com.vago.ai.service.AiService;
 import com.vago.travel.mapper.GuideMapper;
 import com.vago.travel.model.entity.Guide;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Flux;
 
 import cn.hutool.core.util.IdUtil;
 import com.vago.ai.model.dto.AiPlanSaveDTO;
@@ -39,7 +35,7 @@ import com.vago.exception.BusinessException;
  * 运行在 Spring 默认异步线程池中，不阻塞 GuideService 的主线程。
  * 线程池由 @EnableAsync（定义于 AiClientConfig）激活。
  *
- * <p>chat / chatStream 为同步/响应式调用，直接委托给 VagoAiClient。
+ * <p>chat / chatStream 已重构为前端直连 Python vago-ai，Java 不再代理 SSE 流。
  */
 @Service
 @Slf4j
@@ -128,26 +124,6 @@ public class AiServiceImpl implements AiService {
         } catch (Exception e) {
             log.error("[AiService] 向量删除失败 guide={} error={}", guideUuid, e.getMessage(), e);
         }
-    }
-
-    /**
-     * 同步非流式对话，直接委托给 VagoAiClient。
-     * 若 vago-ai 不可用，VagoAiClient 内部抛出 RuntimeException，
-     * 由 GlobalExceptionHandler 统一处理为 5031 响应。
-     */
-    @Override
-    public AiChatResponseVO chat(AiChatRequestDTO dto, String userUuid) {
-        return vagoAiClient.chat(dto.getMessages(), userUuid);
-    }
-
-    /**
-     * 流式对话，返回 Flux 供 AiController 订阅代理。
-     * Flux 懒加载，此处不发起 HTTP 请求。
-     */
-    @Override
-    public Flux<ServerSentEvent<String>> chatStream(AiChatRequestDTO dto, String userUuid) {
-        // Flux：异步流式数据的响应管道
-        return vagoAiClient.chatStream(dto.getMessages(), userUuid);
     }
 
     // ── AI 结构化行程保存 ─────────────────────────────────────────────────────
