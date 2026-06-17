@@ -876,9 +876,9 @@ function ChatPanel() {
   /**
    * 从 SSE 一行 data 字段中解析出事件对象。
    *
-   * Java Spring Boot 3 中 SseEmitter.event().data(String) 如未指定 MediaType，
-   * 可能使用 Jackson 将字符串再次 JSON 编码为 "\"...\"" 格式。
-   * 本函数同时处理正常格式（对象）和双重编码格式（字符串外套引号）。
+   * Python vago-ai 通过 json.dumps(data, ensure_ascii=False) 生成 SSE 事件，
+   * 正常情况下直接解析为 JSON 对象即可。
+   * 此处保留双重编码兜底，以兼容未来可能发生的序列化格式变更。
    */
   const parseEventData = (raw) => {
     try {
