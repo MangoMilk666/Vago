@@ -7,7 +7,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // AI 对话推理接口直连 Python vago-ai（消除 SSE 代理链路）。
-      // 必须列在通用 /api/v1 规则之前，Vite 按顺序匹配，更具体的规则优先。
+      // Vite 使用前缀匹配：/api/v1/ai/chat 会自动匹配 /api/v1/ai/chat/stream 等子路径。
+      // Vite 按规则长度降序排序（长规则优先），因此本规则优先于下方的 /api/v1。
       '/api/v1/ai/chat': {
         target: 'http://localhost:8000',
         changeOrigin: true,

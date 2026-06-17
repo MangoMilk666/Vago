@@ -16,6 +16,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.dependencies.auth import close_redis_pool
+from app.dependencies.rate_limit import rate_limit_middleware, close_rate_limiter_pool
 from app.routers import ai, articles, chat
 from app.services.vector_store import init_collection
 
@@ -36,7 +38,7 @@ async def lifespan(app: FastAPI):
       - 确保向量库就绪后再开始接收请求
 
     Shutdown 阶段：
-      - 当前无需特殊清理，预留扩展点
+      - 关闭 Redis 连接池（JWT 黑名单 + 限流器）
     """
     logger.info("Vago AI 服务启动中，正在初始化 Qdrant Collection...")
     try:
@@ -48,7 +50,9 @@ async def lifespan(app: FastAPI):
             exc,
         )
     yield
-    logger.info("Vago AI 服务关闭")
+    logger.info("Vago AI 服务关闭，清理资源中...")
+    await close_redis_pool()
+    await close_rate_limiter_pool()
 
 
 app = FastAPI(
@@ -75,6 +79,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── 请求频率限制 ──────────────────────────────────────────────────────────────
+# 对所有路由启用 IP 级别和用户级别的限流，防止滥用。
+# 限流基于 Redis 固定窗口实现，Redis 不可用时自动降级放行。
+app.middleware("http")(rate_limit_middleware)
 
 # ── 路由注册 ──────────────────────────────────────────────────────────────────
 # chat 路由前缀改为 /api/v1/ai/chat，与 Java 暴露的路径保持一致，
