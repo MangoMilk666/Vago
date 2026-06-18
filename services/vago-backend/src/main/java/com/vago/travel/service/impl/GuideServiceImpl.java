@@ -21,8 +21,10 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -279,6 +281,43 @@ public class GuideServiceImpl implements GuideService {
         if (!userUuid.equals(guide.getUserUuid())) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
+    }
+
+    /**
+     * 批量查询攻略列表（供收藏夹内展示用，不触发浏览量+1）。
+     * 批量加载所有关联作者，按传入 ID 顺序返回，不存在的 ID 被跳过。
+     */
+    @Override
+    public List<GuideVO> listByIds(String userUuid, List<String> uuids) {
+        if (uuids == null || uuids.isEmpty()) {
+            return Collections.emptyList();
+        }
+        // 1. 批量查询攻略
+        List<Guide> guides = guideMapper.selectByUuids(uuids);
+        if (guides.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 2. 批量加载作者（去重）
+        List<String> authorUuids = guides.stream()
+                .map(Guide::getUserUuid)
+                .distinct()
+                .collect(Collectors.toList());
+        List<User> authors = userMapper.selectByUuids(authorUuids);
+        Map<String, User> authorMap = authors.stream()
+                .collect(Collectors.toMap(User::getUuid, u -> u));
+
+        // 3. 按传入 uuids 顺序组装 VO（不存在的跳过）
+        Map<String, Guide> guideMap = guides.stream()
+                .collect(Collectors.toMap(Guide::getUuid, g -> g));
+        List<GuideVO> result = new ArrayList<>();
+        for (String uuid : uuids) {
+            Guide g = guideMap.get(uuid);
+            if (g != null) {
+                result.add(toVO(g, authorMap.get(g.getUserUuid())));
+            }
+        }
+        return result;
     }
 
     private User fetchAuthor(String userUuid) {

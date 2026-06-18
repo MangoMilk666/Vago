@@ -52,4 +52,14 @@ public interface GuideService {
      * @return 更新后的攻略 VO（aiStatus 已重置为 PENDING）
      */
     GuideVO triggerIndex(String userUuid, String guideUuid);
+
+    /**
+     * 批量查询攻略列表（收藏夹内使用，不触发浏览量+1 和 Redis 点赞读取）。
+     * 返回的 VO 不含 liked 状态和实时点赞数。
+     *
+     * @param userUuid 当前用户 UUID（仅用于鉴权，判断是否展示草稿）
+     * @param uuids    攻略 UUID 列表
+     * @return 按传入顺序排列的攻略 VO 列表（不存在的 ID 会被跳过）
+     */
+    List<GuideVO> listByIds(String userUuid, List<String> uuids);
 }

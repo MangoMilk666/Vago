@@ -29,6 +29,8 @@ public enum ResultCode {
     PLAN_NOT_FOUND(4043, "计划不存在"),
     GUIDE_NOT_FOUND(4044, "攻略不存在"),
     PLAN_ALREADY_CONVERTED(4045, "该计划已转为正式行程，不可再次转换"),
+    COLLECTION_NOT_FOUND(4046, "收藏夹不存在"),
+    COLLECTION_ITEM_EXISTS(4096, "该攻略已在收藏夹中，请勿重复收藏"),
 
     // 5xx 服务端错误
     SMS_SERVICE_ERROR(5001, "短信服务暂不可用"),

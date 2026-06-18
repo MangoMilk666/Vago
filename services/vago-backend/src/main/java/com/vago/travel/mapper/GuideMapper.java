@@ -97,4 +97,15 @@ public interface GuideMapper {
      */
     @Update("UPDATE guides SET ai_status = #{aiStatus,jdbcType=TINYINT}, updated_at = NOW(3) WHERE uuid = #{uuid}")
     int updateAiStatus(@Param("uuid") String uuid, @Param("aiStatus") Integer aiStatus);
+
+    /**
+     * 批量查询攻略（用于收藏夹内攻略列表，解决 N+1 问题）。
+     * MyBatis 直接传入 List，自动展开为 IN 子句。
+     */
+    @Select("<script>" +
+            "SELECT * FROM guides WHERE uuid IN " +
+            "<foreach item='uuid' collection='uuids' open='(' separator=',' close=')'>" +
+            "#{uuid}</foreach> AND deleted_at IS NULL" +
+            "</script>")
+    List<Guide> selectByUuids(@Param("uuids") List<String> uuids);
 }

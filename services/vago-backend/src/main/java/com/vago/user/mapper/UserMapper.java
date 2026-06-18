@@ -3,6 +3,8 @@ package com.vago.user.mapper;
 import com.vago.user.model.entity.User;
 import org.apache.ibatis.annotations.*;
 
+import java.util.List;
+
 @Mapper
 public interface UserMapper {
 
@@ -34,4 +36,15 @@ public interface UserMapper {
 
     @Update("UPDATE users SET deleted_at = NOW(3), updated_at = NOW(3) WHERE uuid = #{uuid}")
     int softDelete(String uuid);
+
+    /**
+     * 批量查询用户（用于收藏夹攻略列表批量加载作者信息）。
+     * MyBatis <foreach> 自动展开为 IN 子句。
+     */
+    @Select("<script>" +
+            "SELECT * FROM users WHERE uuid IN " +
+            "<foreach item='uuid' collection='uuids' open='(' separator=',' close=')'>" +
+            "#{uuid}</foreach> AND deleted_at IS NULL" +
+            "</script>")
+    List<User> selectByUuids(@Param("uuids") List<String> uuids);
 }

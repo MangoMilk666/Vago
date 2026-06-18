@@ -13,10 +13,11 @@
 2. [ER 关系总览](#2-er-关系总览)
 3. [模块一：用户与认证](#3-模块一用户与认证)
 4. [模块二：攻略库](#4-模块二攻略库)
-5. [模块三：AI 行程规划](#5-模块三ai-行程规划)
-6. [模块四：出行打卡与轨迹](#6-模块四出行打卡与轨迹)
-7. [模块五：图文存档](#7-模块五图文存档)
-8. [模块六：统计汇总](#8-模块六统计汇总)
+5. [模块：收藏夹](#5-模块收藏夹)
+6. [模块三：AI 行程规划](#6-模块三ai-行程规划)
+7. [模块四：出行打卡与轨迹](#7-模块四出行打卡与轨迹)
+8. [模块五：图文存档](#8-模块五图文存档)
+9. [模块六：统计汇总](#9-模块六统计汇总)
 9. [索引策略汇总](#9-索引策略汇总)
 10. [分区策略](#10-分区策略)
 11. [Redis 数据结构补充](#11-redis-数据结构补充)
@@ -47,6 +48,9 @@ users (1)
   │
   ├── articles (N)                     -- 攻略库
   │     └── article_tags (N)           -- 攻略标签（目的地/分类）
+  │
+  ├── collections (N)                  -- 收藏夹
+  │     └── collection_items (N)       -- 收藏夹-攻略关联
   │
   ├── ai_sessions (N)                  -- AI 规划会话
   │     └── ai_messages (N)            -- 会话消息记录
@@ -189,9 +193,53 @@ CREATE TABLE article_tags (
 
 ---
 
-## 5. 模块三：AI 行程规划
+## 5. 模块：收藏夹
 
-### 5.1 `ai_sessions` — AI 规划会话
+### 5.1 `collections` — 收藏夹
+
+```sql
+CREATE TABLE collections (
+    id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    uuid          CHAR(36)        NOT NULL COMMENT '对外业务 ID',
+    user_uuid     VARCHAR(36)     NOT NULL COMMENT '所属用户 UUID',
+    name          VARCHAR(100)    NOT NULL COMMENT '收藏夹名称',
+    type          TINYINT         NOT NULL DEFAULT 1 COMMENT '0=RAG(AI知识库) 1=NORMAL(普通收藏)',
+    description   VARCHAR(255)    NULL     COMMENT '收藏夹描述',
+    sort_order    INT             NOT NULL DEFAULT 0 COMMENT '排序序号（越小越靠前）',
+    created_at    DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at    DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_uuid (uuid),
+    KEY idx_user (user_uuid),
+    KEY idx_user_sort (user_uuid, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='收藏夹';
+```
+
+### 5.2 `collection_items` — 收藏夹-攻略关联
+
+```sql
+CREATE TABLE collection_items (
+    id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    uuid            CHAR(36)        NOT NULL COMMENT '对外业务 ID',
+    collection_uuid VARCHAR(36)     NOT NULL COMMENT '所属收藏夹 UUID',
+    guide_uuid      VARCHAR(36)     NOT NULL COMMENT '被收藏的攻略 UUID',
+    user_uuid       VARCHAR(36)     NOT NULL COMMENT '收藏者 UUID（冗余，加速按用户查询）',
+    note            VARCHAR(200)    NULL     COMMENT '收藏时的备注',
+    sort_order      INT             NOT NULL DEFAULT 0 COMMENT '收藏夹内排序',
+    created_at      DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_collection_guide (collection_uuid, guide_uuid),
+    KEY idx_user (user_uuid),
+    KEY idx_collection (collection_uuid),
+    KEY idx_guide (guide_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='收藏夹-攻略关联表';
+```
+
+---
+
+## 6. 模块三：AI 行程规划
+
+### 6.1 `ai_sessions` — AI 规划会话
 
 ```sql
 CREATE TABLE ai_sessions (
@@ -209,7 +257,7 @@ CREATE TABLE ai_sessions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 行程规划会话';
 ```
 
-### 5.2 `ai_messages` — 会话消息记录
+### 6.2 `ai_messages` — 会话消息记录
 
 ```sql
 CREATE TABLE ai_messages (
@@ -227,7 +275,7 @@ CREATE TABLE ai_messages (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 会话消息记录';
 ```
 
-### 5.3 `trip_plans` — 行程计划
+### 6.3 `trip_plans` — 行程计划
 
 ```sql
 CREATE TABLE trip_plans (
@@ -253,7 +301,7 @@ CREATE TABLE trip_plans (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户行程计划';
 ```
 
-### 5.4 `trip_plan_days` — 行程按天分组
+### 6.4 `trip_plan_days` — 行程按天分组
 
 ```sql
 CREATE TABLE trip_plan_days (
@@ -269,7 +317,7 @@ CREATE TABLE trip_plan_days (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='行程计划按天分组';
 ```
 
-### 5.5 `trip_plan_items` — 行程活动项
+### 6.5 `trip_plan_items` — 行程活动项
 
 ```sql
 CREATE TABLE trip_plan_items (
@@ -296,9 +344,9 @@ CREATE TABLE trip_plan_items (
 
 ---
 
-## 6. 模块四：出行打卡与轨迹
+## 7. 模块四：出行打卡与轨迹
 
-### 6.1 `checkins` — 手动打卡点
+### 7.1 `checkins` — 手动打卡点
 
 ```sql
 CREATE TABLE checkins (
@@ -322,7 +370,7 @@ CREATE TABLE checkins (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户手动打卡点';
 ```
 
-### 6.2 `checkin_photos` — 打卡点即拍照片（中间关联表）
+### 7.2 `checkin_photos` — 打卡点即拍照片（中间关联表）
 
 ```sql
 CREATE TABLE checkin_photos (
@@ -332,7 +380,7 @@ CREATE TABLE checkin_photos (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='打卡点与照片关联';
 ```
 
-### 6.3 `gps_tracks` — GPS 轨迹点（高写入分区表）
+### 7.3 `gps_tracks` — GPS 轨迹点（高写入分区表）
 
 > **注意**：此表按 `recorded_at` 按月进行 `RANGE` 分区，单分区数据量可控。
 
@@ -369,7 +417,7 @@ PARTITION BY RANGE (TO_DAYS(recorded_at)) (
 );
 ```
 
-### 6.4 `fog_unlock_regions` — 迷雾解锁区域记录
+### 7.4 `fog_unlock_regions` — 迷雾解锁区域记录
 
 > 迷雾瓦片的**实时渲染**由 Redis Bitmap 负责（详见第 11 节），此表存储持久化的**区域级解锁状态**，用于统计、数据迁移和 Redis 冷启动重建。
 
@@ -390,9 +438,9 @@ CREATE TABLE fog_unlock_regions (
 
 ---
 
-## 7. 模块五：图文存档
+## 8. 模块五：图文存档
 
-### 7.1 `photos` — 照片元数据
+### 8.1 `photos` — 照片元数据
 
 ```sql
 CREATE TABLE photos (
@@ -419,7 +467,7 @@ CREATE TABLE photos (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='照片元数据（二进制存 OSS）';
 ```
 
-### 7.2 `trip_archives` — 行程存档头
+### 8.2 `trip_archives` — 行程存档头
 
 ```sql
 CREATE TABLE trip_archives (
@@ -447,7 +495,7 @@ CREATE TABLE trip_archives (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='行程存档头信息';
 ```
 
-### 7.3 `archive_entries` — 存档打卡点（含日志）
+### 8.3 `archive_entries` — 存档打卡点（含日志）
 
 ```sql
 CREATE TABLE archive_entries (
@@ -467,7 +515,7 @@ CREATE TABLE archive_entries (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='存档打卡点（含图文日志）';
 ```
 
-### 7.4 `entry_photos` — 存档打卡点与照片关联
+### 8.4 `entry_photos` — 存档打卡点与照片关联
 
 ```sql
 CREATE TABLE entry_photos (
@@ -481,9 +529,9 @@ CREATE TABLE entry_photos (
 
 ---
 
-## 8. 模块六：统计汇总
+## 9. 模块六：统计汇总
 
-### 8.1 `user_travel_stats` — 旅行统计汇总（冗余聚合表）
+### 9.1 `user_travel_stats` — 旅行统计汇总（冗余聚合表）
 
 > 此表为**读优化的冗余表**，避免每次统计页面都全表扫描 `gps_tracks` 和 `fog_unlock_regions`。由后台任务定期更新（每次行程存档完成后触发更新）。
 
