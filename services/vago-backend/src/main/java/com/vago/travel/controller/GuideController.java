@@ -36,7 +36,9 @@ public class GuideController {
     public Result<PageVO<GuideVO>> listPublished(
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        return Result.success(guideService.listPublished(page, size));
+        // 如果用户已登录则传入 UUID，用于标记已点赞状态
+        String currentUuid = BaseContext.getCurrentUuid();
+        return Result.success(guideService.listPublished(page, size, currentUuid));
     }
 
     @Operation(summary = "我的攻略列表（含草稿）")
@@ -75,6 +77,13 @@ public class GuideController {
     @PostMapping("/{uuid}/like")
     public Result like(@PathVariable("uuid") String uuid) {
         guideService.like(BaseContext.getCurrentUuid(), uuid);
+        return Result.success();
+    }
+
+    @Operation(summary = "取消点赞")
+    @DeleteMapping("/{uuid}/like")
+    public Result<String> unlike(@PathVariable("uuid") String uuid) {
+        guideService.unlike(BaseContext.getCurrentUuid(), uuid);
         return Result.success();
     }
 

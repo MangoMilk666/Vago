@@ -9,8 +9,8 @@ import java.util.List;
 
 public interface GuideService {
 
-    /** 公开攻略列表（分页，只返回已发布的） */
-    PageVO<GuideVO> listPublished(int page, int size);
+    /** 公开攻略列表（分页，只返回已发布的），currentUserUuid 可为 null */
+    PageVO<GuideVO> listPublished(int page, int size, String currentUserUuid);
 
     /** 我的攻略列表（含草稿） */
     List<GuideVO> listMine(String userUuid);
@@ -29,13 +29,17 @@ public interface GuideService {
 
     /**
      * 点赞攻略。
-     * 同一用户对同一攻略只能点赞一次（Redis Set 防重），计数写入 Redis，
-     * 由定时 Flush Job 异步同步到 MySQL。
-     *
-     * @param userUuid  当前用户 UUID
-     * @param guideUuid 目标攻略 UUID
+     * Redis 实时写入（SADD + INCR），由 LikeFlushTask 每 5 分钟异步刷回 DB。
+     * 幂等：已点赞时静默返回。
      */
     void like(String userUuid, String guideUuid);
+
+    /**
+     * 取消点赞。
+     * Redis 实时写入（SREM + DECR），由 LikeFlushTask 每 5 分钟异步刷回 DB。
+     * 幂等：未点赞时静默返回。
+     */
+    void unlike(String userUuid, String guideUuid);
 
     /**
      * 手动触发攻略向量化（加入 AI 知识库）。

@@ -18,13 +18,12 @@ import com.vago.user.model.entity.User;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -37,8 +36,19 @@ public class GuideServiceImpl implements GuideService {
     // Redis key 前缀
     // 点赞计数 key：vago:guide:like:count:{uuid}  →  String（INCR）
     public static final String LIKE_COUNT_KEY_PREFIX = "vago:guide:like:count:";
-    // 已点赞用户集合 key：vago:guide:like:users:{uuid}  →  Set<userUuid>（SADD 防重）
+
+    // 布隆过滤器 key：vago:guide:like:bloom:{uuid}  →  Bitmap（setBit / getBit）
+    private static final String LIKE_BLOOM_PREFIX = "vago:guide:like:bloom:";
+
+    // 撤回黑名单 key：vago:guide:like:unlike:users:{uuid}  →  Set<userUuid>（带 5 分钟 TTL）
+    static final String LIKE_UNLIKE_BLACK_PREFIX = "vago:guide:like:unlike:users:";
+
+    // 已点赞用户集合 key（仅供 LikeFlushTask 持久化使用，不在热读路径上）
     static final String LIKE_USERS_KEY_PREFIX = "vago:guide:like:users:";
+
+    // 布隆过滤器参数
+    private static final int BLOOM_BITS = 10_000;          // 位图大小
+    private static final int[] BLOOM_SEEDS = {31, 37, 131}; // k 个哈希种子
     // 浏览量前缀（预留，暂未使用 Redis 缓存）
     private static final String GUIDE_VIEW_KEY_PREFIX = "vago:guide:view:";
 
@@ -60,7 +70,7 @@ public class GuideServiceImpl implements GuideService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
-    public PageVO<GuideVO> listPublished(int page, int size) {
+    public PageVO<GuideVO> listPublished(int page, int size, String currentUserUuid) {
         int offset = (page - 1) * size;
         List<Guide> guides = guideMapper.listPublished(size, offset);
         long total = guideMapper.countPublished();
@@ -68,6 +78,11 @@ public class GuideServiceImpl implements GuideService {
         List<GuideVO> records = guides.stream()
                 .map(g -> toVO(g, fetchAuthor(g.getUserUuid())))
                 .collect(Collectors.toList());
+
+        // 如果传入了用户 UUID，批量填充 liked 状态
+        if (currentUserUuid != null && !records.isEmpty()) {
+            fillLikedStatus(currentUserUuid, records);
+        }
 
         return PageVO.<GuideVO>builder()
                 .total(total)
@@ -80,8 +95,14 @@ public class GuideServiceImpl implements GuideService {
     @Override
     public List<GuideVO> listMine(String userUuid) {
         User author = userMapper.getByUuid(userUuid);
-        return guideMapper.listByUserUuid(userUuid)
+        List<GuideVO> records = guideMapper.listByUserUuid(userUuid)
                 .stream().map(g -> toVO(g, author)).collect(Collectors.toList());
+
+        // 批量填充 liked 状态
+        if (!records.isEmpty()) {
+            fillLikedStatus(userUuid, records);
+        }
+        return records;
     }
 
     @Override
@@ -94,7 +115,7 @@ public class GuideServiceImpl implements GuideService {
             guide.setViewCount(guide.getViewCount() == null ? 1 : guide.getViewCount() + 1);
         }
 
-        // 从 Redis 读取实时点赞数（比 DB 更新，因为 flush 是异步的）
+        // 从 Redis 读取实时点赞数，不存在则从 DB 查询并写入 Redis
         String countStr = stringRedisTemplate.opsForValue().get(LIKE_COUNT_KEY_PREFIX + guideUuid);
         if (countStr != null) {
             try {
@@ -102,11 +123,22 @@ public class GuideServiceImpl implements GuideService {
             } catch (NumberFormatException e) {
                 log.warn("like count parse error: key={} val={}", guideUuid, countStr);
             }
+        } else {
+            int dbCount = guideMapper.countLikeByGuide(guideUuid);
+            guide.setLikeCount(dbCount);
+            stringRedisTemplate.opsForValue().setIfAbsent(
+                    LIKE_COUNT_KEY_PREFIX + guideUuid, String.valueOf(dbCount));
         }
 
-        // 检查当前用户是否已点赞
-        Boolean liked = stringRedisTemplate.opsForSet()
-                .isMember(LIKE_USERS_KEY_PREFIX + guideUuid, userUuid);
+        // 点赞状态判定（布隆过滤器 + 黑名单二次确认）
+        boolean liked = false;
+        String bloomKey = LIKE_BLOOM_PREFIX + guideUuid;
+        String blackKey = LIKE_UNLIKE_BLACK_PREFIX + guideUuid;
+        if (bloomFilterCheck(bloomKey, userUuid)) {
+            // 布隆判定「可能已点赞」，查黑名单排除撤回
+            Boolean inBlack = stringRedisTemplate.opsForSet().isMember(blackKey, userUuid);
+            liked = Boolean.FALSE.equals(inBlack);
+        }
 
         return toVO(guide, fetchAuthor(guide.getUserUuid()), liked);
     }
@@ -208,34 +240,72 @@ public class GuideServiceImpl implements GuideService {
     }
 
     /**
-     * 点赞流程：
+     * 点赞（布隆过滤器 + INCR 计数器）：
      * 1. 验证攻略存在
-     * 2. SADD userUuid 到 like:users set，返回 0 说明已点赞，直接返回
-     * 3. SETNX 初始化 like:count（避免 Redis 冷启动时计数从 0 开始）
-     * 4. INCR like:count（原子操作）
-     * DB 写入由 LikeFlushJob 异步批量完成，不在此处同步写入。
+     * 2. 布隆过滤器判定 → 若已在且黑名单无此用户 → 幂等返回
+     * 3. 布隆标记（SETBIT）
+     * 4. 写 users Set（供 LikeFlushTask 持久化）
+     * 5. SETNX 初始化 count + INCR
      */
     @Override
     public void like(String userUuid, String guideUuid) {
         Guide guide = getGuideOrThrow(guideUuid);
 
-        String usersKey = LIKE_USERS_KEY_PREFIX + guideUuid;
+        String bloomKey = LIKE_BLOOM_PREFIX + guideUuid;
         String countKey = LIKE_COUNT_KEY_PREFIX + guideUuid;
+        String blackKey = LIKE_UNLIKE_BLACK_PREFIX + guideUuid;
 
-        // SADD 返回 0 = 已经点赞过，幂等退出
-        Long added = stringRedisTemplate.opsForSet().add(usersKey, userUuid);
-        if (added == null || added == 0) {
-            log.debug("忽略重复点赞: userUuid={} guideUuid={}", userUuid, guideUuid);
-            return;
+        // 布隆判定：如果已标记，检查是否在黑名单中
+        if (bloomFilterCheck(bloomKey, userUuid)) {
+            Boolean inBlack = stringRedisTemplate.opsForSet().isMember(blackKey, userUuid);
+            if (Boolean.FALSE.equals(inBlack)) {
+                log.debug("忽略重复点赞: userUuid={} guideUuid={}", userUuid, guideUuid);
+                return;
+            }
+            // 从黑名单移除（重新点赞）
+            stringRedisTemplate.opsForSet().remove(blackKey, userUuid);
+        } else {
+            // 首次点赞：布隆标记
+            bloomFilterSet(bloomKey, userUuid);
         }
 
-        // count key 不存在时，从 DB 初始化（SETNX 保证并发安全）
+        // users Set（供 FlushTask 持久化 guide_likes 关系）
+        stringRedisTemplate.opsForSet().add(LIKE_USERS_KEY_PREFIX + guideUuid, userUuid);
+
+        // SETNX 初始化 count + INCR（原子自增）
         int dbCount = guide.getLikeCount() != null ? guide.getLikeCount() : 0;
         stringRedisTemplate.opsForValue().setIfAbsent(countKey, String.valueOf(dbCount));
-
-        // 原子自增
         stringRedisTemplate.opsForValue().increment(countKey);
-        log.debug("点赞记录在Redis: userUuid={} guideUuid={}", userUuid, guideUuid);
+        log.debug("点赞: userUuid={} guideUuid={}", userUuid, guideUuid);
+    }
+
+    /**
+     * 取消点赞（DECR + 写入撤回黑名单）：
+     * 1. 验证攻略存在
+     * 2. 黑名单 SADD（5 分钟 TTL），补偿布隆过滤器无法删除的缺陷
+     * 3. users Set SREM（FlushTask 不再计入此人）
+     * 4. DECR count，最小值 0
+     */
+    @Override
+    public void unlike(String userUuid, String guideUuid) {
+        getGuideOrThrow(guideUuid);
+
+        String blackKey = LIKE_UNLIKE_BLACK_PREFIX + guideUuid;
+        String countKey = LIKE_COUNT_KEY_PREFIX + guideUuid;
+
+        // 写入撤回黑名单（带 5 分钟过期）
+        stringRedisTemplate.opsForSet().add(blackKey, userUuid);
+        stringRedisTemplate.expire(blackKey, 5, TimeUnit.MINUTES);
+
+        // users Set SREM（FlushTask 不再将此用户刷入 guide_likes）
+        stringRedisTemplate.opsForSet().remove(LIKE_USERS_KEY_PREFIX + guideUuid, userUuid);
+
+        // DECR count，最小 0
+        Long newCount = stringRedisTemplate.opsForValue().decrement(countKey);
+        if (newCount != null && newCount < 0) {
+            stringRedisTemplate.opsForValue().set(countKey, "0");
+        }
+        log.debug("取消点赞: userUuid={} guideUuid={}", userUuid, guideUuid);
     }
 
     /**
@@ -266,6 +336,78 @@ public class GuideServiceImpl implements GuideService {
     // ── 私有工具 ─────────────────────────────────────────────────────────────
 
     /**
+     * 批量填充攻略 VO 的 liked 状态。
+     *
+     * 流程（Pipeline 两阶段，严禁穿透 DB）：
+     *   ① Bloom Filter 批量判定（getBit pipeline）→ 拦截 90%+ 未点赞流量
+     *   ② 对 Bloom 判定「可能已点赞」的 guide → 查撤回黑名单（SISMEMBER pipeline）
+     *        - 黑名单中 → 已取消点赞 → false
+     *        - 不在黑名单中 → 真正已点赞 → true
+     */
+    private void fillLikedStatus(String userUuid, List<GuideVO> records) {
+        List<String> uuids = records.stream().map(GuideVO::getUuid).collect(Collectors.toList());
+        int k = BLOOM_SEEDS.length;
+
+        // ── 阶段①：Bloom Filter pipeline ──
+        List<Object> bloomBits = stringRedisTemplate.executePipelined(
+                (RedisCallback<Object>) connection -> {
+                    for (String uuid : uuids) {
+                        byte[] bloomKey = (LIKE_BLOOM_PREFIX + uuid).getBytes();
+                        int[] offsets = bloomOffsets(userUuid);
+                        for (int offset : offsets) {
+                            connection.getBit(bloomKey, offset);
+                        }
+                    }
+                    return null;
+                });
+
+        // 解析：连续 k 个 bit 为一组，全 1 才算「可能已点赞」
+        List<String> maybeLiked = new ArrayList<>();
+        for (int i = 0; i < uuids.size(); i++) {
+            boolean allSet = true;
+            for (int j = 0; j < k; j++) {
+                Boolean bit = (Boolean) bloomBits.get(i * k + j);
+                if (bit == null || !bit) {
+                    allSet = false;
+                    break;
+                }
+            }
+            if (allSet) {
+                maybeLiked.add(uuids.get(i));
+            }
+            // else: 布隆说未点赞 → 必定未点赞，直接跳过（拦截 90%+ 流量）
+        }
+
+        // ── 阶段②：黑名单二次确认 pipeline ──
+        Set<String> likedSet = new HashSet<>();
+        if (!maybeLiked.isEmpty()) {
+            List<Object> blackResults = stringRedisTemplate.executePipelined(
+                    (RedisCallback<Object>) connection -> {
+                        for (String uuid : maybeLiked) {
+                            byte[] blackKey = (LIKE_UNLIKE_BLACK_PREFIX + uuid).getBytes();
+                            connection.sIsMember(blackKey, userUuid.getBytes());
+                        }
+                        return null;
+                    });
+
+            for (int i = 0; i < maybeLiked.size(); i++) {
+                Boolean inBlack = (Boolean) blackResults.get(i);
+                if (Boolean.FALSE.equals(inBlack)) {
+                    likedSet.add(maybeLiked.get(i));
+                }
+                // 在黑名单中 → 用户已撤回 → 不加入 likedSet
+            }
+        }
+
+        // ── 设置 VO ──
+        for (GuideVO vo : records) {
+            if (likedSet.contains(vo.getUuid())) {
+                vo.setLiked(true);
+            }
+        }
+    }
+
+    /**
      * 验证帖子是否存在
      */
     private Guide getGuideOrThrow(String uuid) {
@@ -281,6 +423,39 @@ public class GuideServiceImpl implements GuideService {
         if (!userUuid.equals(guide.getUserUuid())) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
+    }
+
+    // ── 布隆过滤器工具 ──────────────────────────────────────────────────────────
+
+    /** 计算 k 个哈希桶下标 */
+    private int[] bloomOffsets(String userUuid) {
+        int[] offsets = new int[BLOOM_SEEDS.length];
+        for (int i = 0; i < BLOOM_SEEDS.length; i++) {
+            int h = 0;
+            for (int j = 0; j < userUuid.length(); j++) {
+                h = BLOOM_SEEDS[i] * h + userUuid.charAt(j);
+            }
+            offsets[i] = (h & Integer.MAX_VALUE) % BLOOM_BITS;
+        }
+        return offsets;
+    }
+
+    /** 布隆过滤器：标记（SETBIT k 个位） */
+    private void bloomFilterSet(String bloomKey, String userUuid) {
+        int[] offsets = bloomOffsets(userUuid);
+        for (int offset : offsets) {
+            stringRedisTemplate.opsForValue().setBit(bloomKey, offset, true);
+        }
+    }
+
+    /** 布隆过滤器：判定（GETBIT k 个位，全 1 返回 true） */
+    private boolean bloomFilterCheck(String bloomKey, String userUuid) {
+        int[] offsets = bloomOffsets(userUuid);
+        for (int offset : offsets) {
+            Boolean bit = stringRedisTemplate.opsForValue().getBit(bloomKey, offset);
+            if (bit == null || !bit) return false;
+        }
+        return true;
     }
 
     /**
