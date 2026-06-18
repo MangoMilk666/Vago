@@ -11,12 +11,10 @@ import com.vago.travel.model.dto.GuideSavedDTO;
 import com.vago.travel.model.entity.Collection;
 import com.vago.travel.model.entity.CollectionItem;
 import com.vago.travel.model.entity.Guide;
-import com.vago.travel.model.vo.CollectionVO;
 import com.vago.travel.model.vo.GuideVO;
 import com.vago.travel.service.CollectionService;
 import com.vago.travel.service.GuideService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,26 +36,24 @@ public class CollectionServiceImpl implements CollectionService {
     private GuideService guideService;
 
     @Override
-    public CollectionVO create(String currentUuid, CollectionCreateDTO dto) {
+    public Collection create(String currentUuid, CollectionCreateDTO dto) {
         LocalDateTime now = LocalDateTime.now();
-        CollectionVO collectionVO = CollectionVO.builder().
-                                    uuid(IdUtil.fastSimpleUUID()).
-                                    userUuid(currentUuid).
-                                    name(dto.getName()).
-                                    type(1).
-                                    description(dto.getDescription()).
-                                    createdAt(now).
-                                    updatedAt(now).
-                                    build();
+        Collection collection = Collection.builder()
+                .uuid(IdUtil.fastSimpleUUID())
+                .userUuid(currentUuid)
+                .name(dto.getName())
+                .type(1)
+                .description(dto.getDescription())
+                .createdAt(now)
+                .updatedAt(now)
+                .build();
 
-        Collection collection = new Collection();
-        BeanUtils.copyProperties(collectionVO, collection);
         collectionMapper.insert(collection);
-        return collectionVO;
+        return collection;
     }
 
     @Override
-    public CollectionVO update(CollectionUpdateDTO dto) {
+    public Collection update(CollectionUpdateDTO dto) {
         // 校验：收藏夹存在且属于当前用户
         Collection c = collectionMapper.getByUuid(dto.getUuid());
         if (c == null) {
@@ -65,8 +61,7 @@ public class CollectionServiceImpl implements CollectionService {
         }
 
         collectionMapper.update(dto);
-        Collection updated = collectionMapper.getByUuid(dto.getUuid());
-        return toVO(updated);
+        return collectionMapper.getByUuid(dto.getUuid());
     }
 
     @Override
@@ -89,8 +84,7 @@ public class CollectionServiceImpl implements CollectionService {
 
     @Override
     public List<Collection> collectionList(String userUuid) {
-        List<Collection> collectionList = collectionMapper.getListByUserid(userUuid);
-        return collectionList;
+        return collectionMapper.getListByUserid(userUuid);
     }
 
     @Override
@@ -166,24 +160,13 @@ public class CollectionServiceImpl implements CollectionService {
     }
 
     @Override
-    public List<CollectionVO> inWhichGuideList(String guideUuid, String userUuid) {
+    public List<Collection> inWhichGuideList(String guideUuid, String userUuid) {
         List<String> collectionIds = collectionMapper.inWhichCollections(guideUuid, userUuid);
         if (collectionIds.isEmpty()) {
             return Collections.emptyList();
         }
         return collectionIds.stream()
                 .map(id -> collectionMapper.getByUuid(id))
-                .map(this::toVO)
                 .collect(Collectors.toList());
-    }
-
-    // ── 私有工具 ───────────────────────────────────────────────────────────────
-
-    /** Collection 实体 → CollectionVO */
-    private CollectionVO toVO(Collection c) {
-        if (c == null) return null;
-        CollectionVO vo = new CollectionVO();
-        BeanUtils.copyProperties(c, vo);
-        return vo;
     }
 }

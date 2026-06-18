@@ -3,7 +3,7 @@ package com.vago.travel.mapper;
 import com.vago.travel.model.dto.CollectionUpdateDTO;
 import com.vago.travel.model.entity.Collection;
 import com.vago.travel.model.entity.CollectionItem;
-import com.vago.travel.model.vo.CollectionVO;
+
 import org.apache.ibatis.annotations.*;
 
 import java.util.List;

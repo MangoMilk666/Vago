@@ -6,7 +6,6 @@ import com.vago.travel.model.dto.CollectionCreateDTO;
 import com.vago.travel.model.dto.CollectionUpdateDTO;
 import com.vago.travel.model.dto.GuideSavedDTO;
 import com.vago.travel.model.entity.Collection;
-import com.vago.travel.model.vo.CollectionVO;
 import com.vago.travel.model.vo.GuideVO;
 import com.vago.travel.service.CollectionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -33,14 +32,14 @@ public class CollectionController {
 
     @Operation(summary = "创建收藏夹")
     @PostMapping
-    public Result<CollectionVO> create(@Valid @RequestBody CollectionCreateDTO dto) {
+    public Result<Collection> create(@Valid @RequestBody CollectionCreateDTO dto) {
         log.info("创建收藏夹: name={} type={}", dto.getName(), dto.getType());
         return Result.success(collectionService.create(BaseContext.getCurrentUuid(), dto));
     }
 
     @Operation(summary = "编辑收藏夹（名称/描述）")
     @PutMapping
-    public Result<CollectionVO> update(@Valid @RequestBody CollectionUpdateDTO dto) {
+    public Result<Collection> update(@Valid @RequestBody CollectionUpdateDTO dto) {
         log.info("更新收藏夹: uuid={} name={}", dto.getUuid(), dto.getName());
         return Result.success(collectionService.update(dto));
     }
@@ -92,7 +91,7 @@ public class CollectionController {
 
     @Operation(summary = "查询某攻略被当前用户收藏到哪些收藏夹")
     @GetMapping("/items/check")
-    public Result<List<CollectionVO>> folders(@RequestParam("guideUuid") String guideUuid) {
+    public Result<List<Collection>> folders(@RequestParam("guideUuid") String guideUuid) {
         String userUuid = BaseContext.getCurrentUuid();
         return Result.success(collectionService.inWhichGuideList(guideUuid, userUuid));
     }

@@ -4,7 +4,6 @@ import com.vago.travel.model.dto.CollectionCreateDTO;
 import com.vago.travel.model.dto.CollectionUpdateDTO;
 import com.vago.travel.model.dto.GuideSavedDTO;
 import com.vago.travel.model.entity.Collection;
-import com.vago.travel.model.vo.CollectionVO;
 import com.vago.travel.model.vo.GuideVO;
 import jakarta.validation.Valid;
 
@@ -13,10 +12,10 @@ import java.util.List;
 public interface CollectionService {
 
     /** 创建收藏夹 */
-    CollectionVO create(String userUuid, CollectionCreateDTO dto);
+    Collection create(String userUuid, CollectionCreateDTO dto);
 
     /** 更新收藏夹（名称、描述） */
-    CollectionVO update(CollectionUpdateDTO dto);
+    Collection update(CollectionUpdateDTO dto);
 
     /**
      * 删除收藏夹（含内部所有收藏记录）。
@@ -43,5 +42,5 @@ public interface CollectionService {
     List<GuideVO> guideList(String collectionUuid, String userUuid);
 
     /** 查询某攻略被当前用户收藏到了哪些收藏夹 */
-    List<CollectionVO> inWhichGuideList(String guideUuid, String userUuid);
+    List<Collection> inWhichGuideList(String guideUuid, String userUuid);
 }
