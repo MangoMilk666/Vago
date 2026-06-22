@@ -72,15 +72,15 @@ public interface GuideMapper {
     int update(Guide guide);
 
     /** 浏览量 +1 */
-    @Update("UPDATE guides SET view_count = view_count + 1 WHERE uuid = #{uuid}")
+    @Update("UPDATE guides SET view_count = view_count + 1, updated_at = NOW(3) WHERE uuid = #{uuid}")
     int incrementViewCount(String uuid);
 
     /** 点赞 +1（直接写 DB — 已废弃，由 LikeFlushTask 异步刷回替代） */
-    @Update("UPDATE guides SET like_count = like_count + 1 WHERE uuid = #{uuid}")
+    @Update("UPDATE guides SET like_count = like_count + 1, updated_at = NOW(3) WHERE uuid = #{uuid}")
     int incrementLikeCount(String uuid);
 
     /** 将 Redis 中的点赞计数写回 guides.like_count（由 LikeFlushTask 调用） */
-    @Update("UPDATE guides SET like_count = #{count} WHERE uuid = #{uuid} AND deleted_at IS NULL")
+    @Update("UPDATE guides SET like_count = #{count}, updated_at = NOW(3) WHERE uuid = #{uuid} AND deleted_at IS NULL")
     int updateLikeCount(@Param("uuid") String uuid, @Param("count") int count);
 
     /**
@@ -135,7 +135,7 @@ public interface GuideMapper {
     int checkLiked(@Param("guideUuid") String guideUuid, @Param("userUuid") String userUuid);
 
     /** 更新 guides 表 like_count 为真实计数（用于数据修复） */
-    @Update("UPDATE guides g SET like_count = (SELECT COUNT(*) FROM guide_likes WHERE guide_uuid = g.uuid) WHERE g.uuid = #{uuid}")
+    @Update("UPDATE guides g SET like_count = (SELECT COUNT(*) FROM guide_likes WHERE guide_uuid = g.uuid), updated_at = NOW(3) WHERE g.uuid = #{uuid}")
     int syncLikeCountFromDb(String uuid);
 
     /** 获取所有有点赞记录的攻略 UUID（用于预热 Redis） */

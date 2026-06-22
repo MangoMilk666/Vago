@@ -18,7 +18,7 @@ public interface CollectionMapper {
     @Select("select uuid, user_uuid, name, type, description, created_at, updated_at from collections where uuid = #{uuid}")
     Collection getByUuid(String uuid);
 
-    @Update("update collections set name = #{name}, description = #{description} where uuid = #{uuid}")
+    @Update("update collections set name = #{name}, description = #{description}, updated_at = NOW(3) where uuid = #{uuid}")
     void update(CollectionUpdateDTO dto);
 
     /** 删除指定收藏夹下的所有收藏记录 */
