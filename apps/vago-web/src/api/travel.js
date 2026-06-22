@@ -86,6 +86,28 @@ export const guideApi = {
   update:    (uuid, data) => http.put(`/guides/${uuid}`, data),
   delete:    (uuid)       => http.delete(`/guides/${uuid}`),
   like:      (uuid)       => http.post(`/guides/${uuid}/like`),
+  unlike:    (uuid)       => http.delete(`/guides/${uuid}/like`),
   /** 手动触发向量化（加入 / 重试加入 AI 知识库） */
   index:     (uuid)       => http.post(`/guides/${uuid}/index`),
+}
+
+// ─── 收藏夹 API ──────────────────────────────────────────────────────────────
+
+export const collectionApi = {
+  /** 获取当前用户的所有收藏夹列表 */
+  list:      ()                        => http.get('/collections'),
+  /** 创建收藏夹 */
+  create:    (data)                    => http.post('/collections', data),
+  /** 更新收藏夹（名称、描述） */
+  update:    (data)                    => http.put('/collections', data),
+  /** 删除收藏夹（含内部所有收藏记录） */
+  delete:    (uuid)                    => http.delete(`/collections/${uuid}`),
+  /** 获取某收藏夹内的攻略列表 */
+  guideList: (uuid)                    => http.get(`/collections/${uuid}/items`),
+  /** 查询某攻略被当前用户收藏到哪些收藏夹 */
+  check:     (guideUuid)               => http.get('/collections/items/check', { params: { guideUuid } }),
+  /** 收藏攻略到指定收藏夹 */
+  saveInto:  (data)                    => http.post('/collections/items', data),
+  /** 从收藏夹移除指定攻略 */
+  removeItem:(collectionUuid, guideUuid) => http.delete(`/collections/${collectionUuid}/items/${guideUuid}`),
 }

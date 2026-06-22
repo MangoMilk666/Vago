@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import Navbar from '../components/Navbar'
 import GuideDetailModal from '../components/GuideDetailModal'
+import CollectPanel from '../components/CollectPanel'
 import { guideApi } from '../api/travel'
 
 // ── 工具：格式化日期 ──────────────────────────────────────────────────────────
@@ -11,15 +12,19 @@ function fmtDate(str) {
 }
 
 // ── 攻略卡片（瀑布流样式）────────────────────────────────────────────────────
-function GuideCard({ guide, isMine, onOpen, onEdit, onDelete, onLike }) {
-  const [liked, setLiked] = useState(false)
+function GuideCard({ guide, isMine, onOpen, onEdit, onDelete, onLike, onUnlike, onCollect, collected }) {
+  const [liked, setLiked] = useState(!!guide.liked)
 
   const handleLike = async (e) => {
     e.stopPropagation()
-    if (liked) return
     try {
-      await onLike(guide.uuid)
-      setLiked(true)
+      if (liked) {
+        await onUnlike(guide.uuid)
+        setLiked(false)
+      } else {
+        await onLike(guide.uuid)
+        setLiked(true)
+      }
     } catch (_) {}
   }
 
@@ -79,7 +84,7 @@ function GuideCard({ guide, isMine, onOpen, onEdit, onDelete, onLike }) {
           </div>
         )}
 
-        {/* 底部：作者 + 点赞 */}
+        {/* 底部：作者 + 点赞 + 收藏 */}
         <div className="flex items-center justify-between mt-1">
           <div className="flex items-center gap-1.5">
             <div className="w-5 h-5 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500
@@ -91,16 +96,28 @@ function GuideCard({ guide, isMine, onOpen, onEdit, onDelete, onLike }) {
             </span>
           </div>
 
-          <button onClick={handleLike}
-            className={`flex items-center gap-0.5 text-xs transition-colors
-              ${liked ? 'text-red-500' : 'text-gray-400 hover:text-red-400'}`}>
-            <svg className="w-3.5 h-3.5" fill={liked ? 'currentColor' : 'none'}
-              stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
-            </svg>
-            <span>{(guide.likeCount ?? 0) + (liked ? 1 : 0)}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={handleLike}
+              className={`flex items-center gap-0.5 text-xs transition-colors
+                ${liked ? 'text-red-500' : 'text-gray-400 hover:text-red-400'}`}>
+              <svg className="w-3.5 h-3.5" fill={liked ? 'currentColor' : 'none'}
+                stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+              </svg>
+              <span>{(guide.likeCount ?? 0) + (liked ? 1 : 0)}</span>
+            </button>
+
+            <button onClick={(e) => { e.stopPropagation(); onCollect(guide) }}
+              className={`flex items-center gap-0.5 text-xs transition-colors
+                ${collected ? 'text-indigo-500' : 'text-gray-400 hover:text-indigo-500'}`}>
+              <svg className="w-3.5 h-3.5" fill={collected ? 'currentColor' : 'none'}
+                stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* 我的攻略 — 编辑/删除 */}
@@ -243,6 +260,8 @@ export default function GuidePage() {
   const [modal,      setModal]      = useState(null)   // null | 'create' | guide obj (edit)
   const [deleting,   setDeleting]   = useState(null)   // guide obj
   const [viewGuide,  setViewGuide]  = useState(null)   // guide obj — 详情弹窗
+  const [collecting, setCollecting]  = useState(null)   // guide obj — 收藏面板
+  const [collectedSet, setCollectedSet] = useState(new Set()) // 已收藏的攻略 UUID 集合
   const PAGE_SIZE = 20
 
   const loadDiscover = useCallback(async (p = 1) => {
@@ -282,6 +301,15 @@ export default function GuidePage() {
   }, [tab])
 
   const hasMore = tab === 'discover' && guides.length < total
+
+  const handleCollectChange = (guideUuid, isCollected) => {
+    setCollectedSet((prev) => {
+      const next = new Set(prev)
+      if (isCollected) next.add(guideUuid)
+      else next.delete(guideUuid)
+      return next
+    })
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -359,10 +387,13 @@ export default function GuidePage() {
                   key={guide.uuid}
                   guide={guide}
                   isMine={tab === 'mine'}
+                  collected={collectedSet.has(guide.uuid)}
                   onOpen={(g) => setViewGuide(g)}
                   onEdit={(g) => setModal(g)}
                   onDelete={(g) => setDeleting(g)}
                   onLike={guideApi.like}
+                  onUnlike={guideApi.unlike}
+                  onCollect={(g) => setCollecting(g)}
                 />
               ))}
             </div>
@@ -383,6 +414,16 @@ export default function GuidePage() {
           </>
         )}
       </main>
+
+      {/* 收藏面板 */}
+      {collecting && (
+        <CollectPanel
+          guideUuid={collecting.uuid}
+          guideTitle={collecting.title}
+          onClose={() => setCollecting(null)}
+          onCollectChange={handleCollectChange}
+        />
+      )}
 
       {/* 攻略详情弹窗 */}
       {viewGuide && (

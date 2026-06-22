@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { guideApi } from '../api/travel'
+import { guideApi, collectionApi } from '../api/travel'
+import CollectPanel from './CollectPanel'
 
 function fmtDate(str) {
   if (!str) return ''
@@ -30,20 +31,22 @@ export default function GuideDetailModal({ guide, isMine, onClose, onEdit, onDel
   const [liked,       setLiked]       = useState(false)
   const [likeLoading, setLikeLoading] = useState(false)
   const [fetching,    setFetching]    = useState(true)
+  const [collected,   setCollected]   = useState(false)
+  const [collecting,  setCollecting]  = useState(false)
 
   // 拉取完整详情（触发浏览量 +1，并从后端同步 liked 状态）
   useEffect(() => {
     let alive = true
     setFetching(true)
-    guideApi.detail(guide.uuid)
-      .then((res) => {
-        if (!alive) return
-        setDetail(res.data)
-        // 后端返回当前用户是否已点赞，直接初始化按钮状态
-        if (res.data?.liked === true) setLiked(true)
-      })
-      .catch(() => {})
-      .finally(() => { if (alive) setFetching(false) })
+    Promise.all([
+      guideApi.detail(guide.uuid),
+      collectionApi.check(guide.uuid),
+    ]).then(([detailRes, checkRes]) => {
+      if (!alive) return
+      setDetail(detailRes.data)
+      if (detailRes.data?.liked === true) setLiked(true)
+      if ((checkRes.data ?? []).length > 0) setCollected(true)
+    }).catch(() => {}).finally(() => { if (alive) setFetching(false) })
     return () => { alive = false }
   }, [guide.uuid])
 
@@ -61,12 +64,18 @@ export default function GuideDetailModal({ guide, isMine, onClose, onEdit, onDel
   }, [])
 
   const handleLike = async () => {
-    if (liked || likeLoading) return
+    if (likeLoading) return
     setLikeLoading(true)
     try {
-      await guideApi.like(detail.uuid)
-      setLiked(true)
-      setDetail((d) => ({ ...d, likeCount: (d.likeCount ?? 0) + 1 }))
+      if (liked) {
+        await guideApi.unlike(detail.uuid)
+        setLiked(false)
+        setDetail((d) => ({ ...d, likeCount: Math.max(0, (d.likeCount ?? 1) - 1) }))
+      } else {
+        await guideApi.like(detail.uuid)
+        setLiked(true)
+        setDetail((d) => ({ ...d, likeCount: (d.likeCount ?? 0) + 1 }))
+      }
     } catch (_) {}
     finally { setLikeLoading(false) }
   }
@@ -254,13 +263,15 @@ export default function GuideDetailModal({ guide, isMine, onClose, onEdit, onDel
                 {detail.likeCount ?? 0}
               </button>
 
-              {/* 收藏占位 */}
+              {/* 收藏 */}
               <button
-                disabled
-                title="收藏功能即将上线"
-                className="flex items-center gap-1.5 text-gray-300 cursor-not-allowed"
+                onClick={() => setCollecting(true)}
+                className={`flex items-center gap-1.5 transition-colors
+                  ${collected ? 'text-indigo-500' : 'text-gray-400 hover:text-indigo-500'}`}
+                title="收藏到收藏夹"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" fill={collected ? 'currentColor' : 'none'}
+                  stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
                 </svg>
@@ -292,6 +303,16 @@ export default function GuideDetailModal({ guide, isMine, onClose, onEdit, onDel
 
         </div>
       </div>
+
+      {/* 收藏面板 */}
+      {collecting && (
+        <CollectPanel
+          guideUuid={detail.uuid}
+          guideTitle={detail.title}
+          onClose={() => setCollecting(false)}
+          onCollectChange={(_, isCollected) => setCollected(isCollected)}
+        />
+      )}
     </div>
   )
 }

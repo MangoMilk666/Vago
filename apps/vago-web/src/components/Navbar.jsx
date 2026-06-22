@@ -4,9 +4,9 @@ import { logout } from '../api/user'
 import { clearAuth, getAuth } from '../stores/auth'
 
 const NAV_LINKS = [
-  { to: '/',       label: '首页'   },
-  { to: '/trips',  label: '行程'   },
-  { to: '/plans',  label: '计划'   },
+  { to: '/',            label: '首页'   },
+  { to: '/trips',       label: '行程'   },
+  { to: '/plans',       label: '计划'   },
   { to: '/guides', label: '攻略'   },
   { to: '/ai',     label: 'AI 规划' },
 ]
