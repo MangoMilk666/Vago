@@ -44,7 +44,7 @@ public class GuideServiceImpl implements GuideService {
     static final String LIKE_UNLIKE_BLACK_PREFIX = "vago:guide:like:unlike:users:";
 
     // 已点赞用户集合 key（仅供 LikeFlushTask 持久化使用，不在热读路径上）
-    static final String LIKE_USERS_KEY_PREFIX = "vago:guide:like:users:";
+    public static final String LIKE_USERS_KEY_PREFIX = "vago:guide:like:users:";
 
     // 布隆过滤器参数
     private static final int BLOOM_BITS = 10_000;          // 位图大小

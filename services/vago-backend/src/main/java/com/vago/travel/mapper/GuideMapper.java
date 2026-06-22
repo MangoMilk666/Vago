@@ -75,11 +75,11 @@ public interface GuideMapper {
     @Update("UPDATE guides SET view_count = view_count + 1 WHERE uuid = #{uuid}")
     int incrementViewCount(String uuid);
 
-    /** 点赞 +1（直接写 DB，已被 Redis flush 方案替代，保留供回退） */
+    /** 点赞 +1（直接写 DB — 已废弃，由 LikeFlushTask 异步刷回替代） */
     @Update("UPDATE guides SET like_count = like_count + 1 WHERE uuid = #{uuid}")
     int incrementLikeCount(String uuid);
 
-    /** 将 Redis 中的点赞计数批量写回 DB（由 LikeFlushJob 调用） */
+    /** 将 Redis 中的点赞计数写回 guides.like_count（由 LikeFlushTask 调用） */
     @Update("UPDATE guides SET like_count = #{count} WHERE uuid = #{uuid} AND deleted_at IS NULL")
     int updateLikeCount(@Param("uuid") String uuid, @Param("count") int count);
 
@@ -108,4 +108,45 @@ public interface GuideMapper {
             "#{uuid}</foreach> AND deleted_at IS NULL" +
             "</script>")
     List<Guide> selectByUuids(@Param("uuids") List<String> uuids);
+
+    // ── guide_likes 点赞关系表 ──────────────────────────────────────────────
+
+    /** 插入点赞关系（幂等，已存在时忽略） */
+    @Insert("INSERT IGNORE INTO guide_likes (guide_uuid, user_uuid, created_at) VALUES (#{guideUuid}, #{userUuid}, NOW(3))")
+    int insertIgnoreLike(@Param("guideUuid") String guideUuid, @Param("userUuid") String userUuid);
+
+    /** 删除点赞关系 */
+    @Delete("DELETE FROM guide_likes WHERE guide_uuid = #{guideUuid} AND user_uuid = #{userUuid}")
+    int deleteLike(@Param("guideUuid") String guideUuid, @Param("userUuid") String userUuid);
+
+    /** 查询某攻略的点赞数 */
+    @Select("SELECT COUNT(*) FROM guide_likes WHERE guide_uuid = #{guideUuid}")
+    int countLikeByGuide(String guideUuid);
+
+    /** 批量查询当前用户点赞了哪些攻略（返回参数范围内的已点赞的 guide_uuid 列表） */
+    @Select("<script>" +
+            "SELECT guide_uuid FROM guide_likes WHERE user_uuid = #{userUuid} AND guide_uuid IN " +
+            "<foreach item='uuid' collection='uuids' open='(' separator=',' close=')'>#{uuid}</foreach>" +
+            "</script>")
+    List<String> batchCheckLiked(@Param("userUuid") String userUuid, @Param("uuids") List<String> uuids);
+
+    /** 查询某用户是否点赞了某攻略 1-已点赞，0-未点赞*/
+    @Select("SELECT COUNT(1) FROM guide_likes WHERE guide_uuid = #{guideUuid} AND user_uuid = #{userUuid}")
+    int checkLiked(@Param("guideUuid") String guideUuid, @Param("userUuid") String userUuid);
+
+    /** 更新 guides 表 like_count 为真实计数（用于数据修复） */
+    @Update("UPDATE guides g SET like_count = (SELECT COUNT(*) FROM guide_likes WHERE guide_uuid = g.uuid) WHERE g.uuid = #{uuid}")
+    int syncLikeCountFromDb(String uuid);
+
+    /** 获取所有有点赞记录的攻略 UUID（用于预热 Redis） */
+    @Select("SELECT DISTINCT guide_uuid FROM guide_likes")
+    List<String> getAllLikedGuideUuids();
+
+    /** 获取某攻略的所有点赞用户 UUID */
+    @Select("SELECT user_uuid FROM guide_likes WHERE guide_uuid = #{guideUuid}")
+    List<String> getLikeUserUuids(String guideUuid);
+
+    /** 清空某攻略的所有点赞关系（供 FlushTask 全量替换使用） */
+    @Delete("DELETE FROM guide_likes WHERE guide_uuid = #{guideUuid}")
+    int deleteAllLikes(String guideUuid);
 }

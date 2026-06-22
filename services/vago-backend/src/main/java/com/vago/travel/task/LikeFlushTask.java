@@ -10,18 +10,23 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+
 /**
- * 点赞计数异步写回任务。
+ * 点赞数据异步刷回任务。
  *
- * Redis 是点赞计数的实时权威，MySQL 为持久化存储。
- * 每 5 分钟将 Redis 中所有攻略的点赞数批量同步到 MySQL，保证最终一致。
- * 使用 SCAN 而非 KEYS，避免 key 量大时阻塞 Redis。
+ * Redis 是点赞的实时权威存储，MySQL（guide_likes 表 + guides.like_count）为持久化存储。
+ * 每 5 分钟将 Redis 中的点赞计数和点赞关系批量同步到 MySQL，保证最终一致。
+ *
+ * 同步策略（全量替换）：
+ *   1. 从 `guides.like_count` 写入 Redis 计数
+ *   2. 从 `SISMEMBER` 写入 `guide_likes` 表（先清空该攻略的所有记录再逐条 INSERT IGNORE）
  */
 @Component
 @Slf4j
 public class LikeFlushTask {
 
-    private static final String SCAN_PATTERN = GuideServiceImpl.LIKE_COUNT_KEY_PREFIX + "*";
+    private static final String COUNT_PATTERN = GuideServiceImpl.LIKE_COUNT_KEY_PREFIX + "*";
     private static final int    PREFIX_LENGTH = GuideServiceImpl.LIKE_COUNT_KEY_PREFIX.length();
 
     @Autowired
@@ -31,19 +36,19 @@ public class LikeFlushTask {
     private GuideMapper guideMapper;
 
     /**
-     * 把这 5 分钟内所有产生过点赞变化的攻略 Key 集中扫描出来，批量或者分批更新回 MySQL
+     * 每 5 分钟将 Redis 中标脏的点赞数据全量同步到 MySQL。
      * 应用启动 60s 后首次执行，之后每次执行结束再等 5 分钟（fixedDelay 避免任务堆积）。
      */
     @Scheduled(initialDelay = 60_000, fixedDelay = 300_000)
     public void flush() {
         int flushed = 0;
         int failed  = 0;
-        // SCAN 的目的：用流式、分步的方式替代 KEYS。每次只看一小批（比如 count(100)），走走停停，给别的高频线上请求留出喘息和插队的时间
+
         ScanOptions opts = ScanOptions.scanOptions()
-                .match(SCAN_PATTERN)
+                .match(COUNT_PATTERN)
                 .count(100)
                 .build();
-        // try-with-resources, 自动调用 cursor.close()
+
         try (Cursor<String> cursor = stringRedisTemplate.scan(opts)) {
             while (cursor.hasNext()) {
                 String key       = cursor.next();
@@ -53,23 +58,39 @@ public class LikeFlushTask {
 
                 try {
                     int count = Integer.parseInt(countStr);
-                    int rows  = guideMapper.updateLikeCount(guideUuid, count);
-                    if (rows > 0) flushed++;
+
+                    // 1. 刷点赞数到 guides.like_count
+                    guideMapper.updateLikeCount(guideUuid, count);
+
+                    // 2. 刷点赞关系到 guide_likes 表
+                    String usersKey = GuideServiceImpl.LIKE_USERS_KEY_PREFIX + guideUuid;
+                    Set<String> users = stringRedisTemplate.opsForSet().members(usersKey);
+
+                    if (users != null) {
+                        // 全量替换：先清空该攻略的所有历史记录
+                        guideMapper.deleteAllLikes(guideUuid);
+                        // 再逐条插入 Redis 中最新的用户集合
+                        for (String userUuid : users) {
+                            guideMapper.insertIgnoreLike(guideUuid, userUuid);
+                        }
+                    }
+
+                    flushed++;
                 } catch (NumberFormatException e) {
-                    log.warn("点赞数刷新写入DB失败: 无效的 count val={} key={}", countStr, key);
+                    log.warn("无效的点赞计数 val={} key={}", countStr, key);
                     failed++;
                 } catch (Exception e) {
-                    log.error("点赞数刷新写入DB失败: DB write failed for uuid={}", guideUuid, e);
+                    log.error("刷写失败 uuid={}", guideUuid, e);
                     failed++;
                 }
             }
         } catch (Exception e) {
-            log.error("点赞数刷新写入DB失败: Redis SCAN failed", e);
+            log.error("Redis SCAN 失败", e);
             return;
         }
 
         if (flushed > 0 || failed > 0) {
-            log.info("点赞数写入DB完成: flushed={} failed={}", flushed, failed);
+            log.info("点赞数据刷写完成: flushed={} failed={}", flushed, failed);
         }
     }
 }
