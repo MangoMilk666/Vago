@@ -1,7 +1,7 @@
 # Vago 架构说明
 
 > 最后更新：2026-08-28
-> 当前状态：Remould Phase 0 — Repository Inventory / Documentation Alignment
+> 当前状态：Remould Phase 1 — FastAPI Backend Foundation
 > 目标架构：FastAPI Modular Monolith + React Web + Native iOS
 
 ## 1. 架构原则
@@ -216,8 +216,8 @@ API contract 不应依赖浏览器 cookie、React state 或 Vite proxy。React W
 
 | Phase | 目标 | 状态 |
 |------|------|------|
-| 0 | Repository inventory + docs alignment | 当前进行 |
-| 1 | 建立 FastAPI backend foundation | 待开始 |
+| 0 | Repository inventory + docs alignment | 已完成 |
+| 1 | 建立 FastAPI backend foundation | 已完成基础骨架 |
 | 2 | 迁移 Auth / User | 待开始 |
 | 3 | 迁移 Trip / Plan / Itinerary | 待开始 |
 | 4 | 整合 Knowledge / RAG / AI Companion | 待开始 |

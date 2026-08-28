@@ -69,6 +69,10 @@ bun.lockb
 .env
 .env.*
 !.env.prod.example
+!.env.example
+!**/.env.example
+!.env.*.example
+!**/.env.*.example
 *.env
 **/application-dev.yml
 **/application-dev.properties
@@ -94,6 +98,7 @@ htmlcov/
 docker-compose.override.yml
 docker-compose.override.yaml
 *.sql
+!docs/**/*.sql
 *.dump
 .idea/dataSources/
 .idea/dataSources.local.xml

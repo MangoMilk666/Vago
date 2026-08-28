@@ -12,8 +12,9 @@
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import tiktoken
 
-# cl100k_base 是 text-embedding-3-small / GPT-4 系列使用的 BPE 编码器
-_ENCODER = tiktoken.get_encoding("cl100k_base")
+# cl100k_base 是 text-embedding-3-small / GPT-4 系列使用的 BPE 编码器。
+# 懒加载可以避免健康检查、OpenAPI 或非 RAG 测试在 import 阶段触发 tiktoken 网络下载。
+_ENCODER = None
 
 # 中文语义分隔符优先级列表（由粗到细）
 _CHINESE_SEPARATORS = [
@@ -43,6 +44,9 @@ def _token_length(text: str) -> int:
     返回:
         整数 token 数量。
     """
+    global _ENCODER
+    if _ENCODER is None:
+        _ENCODER = tiktoken.get_encoding("cl100k_base")
     return len(_ENCODER.encode(text))
 
 

@@ -298,8 +298,8 @@ users
 
 | Phase | 目标 | 验收 |
 |------|------|------|
-| 0 | 仓库盘点和文档重塑 | README / PRD / architecture / inventory 对齐 |
-| 1 | FastAPI backend foundation | config、DB、Alembic、auth dependency、exceptions、tests skeleton |
+| 0 | 仓库盘点和文档重塑 | 已完成 README / PRD / architecture / inventory 对齐 |
+| 1 | FastAPI backend foundation | 已完成 config、DB、Alembic、auth dependency、exceptions、tests skeleton |
 | 2 | Auth / User migration | React 可切换到 FastAPI auth，用户隔离测试通过 |
 | 3 | Trip domain migration | Plan / Trip / Itinerary API 和 Web 调用切换 |
 | 4 | Knowledge / RAG integration | 统一后端承接 ingestion、RAG、AI Companion |

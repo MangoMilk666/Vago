@@ -1,0 +1,165 @@
+# Vago Remould 迁移盘点
+
+> 最后更新：2026-08-28
+> 当前阶段：Phase 1 — FastAPI 后端地基建设
+
+## 1. 仓库状态
+
+执行 `git status --short` 时发现一个本轮开始前已经存在的工作区改动：
+
+```text
+ D docs/USAGE.md
+```
+
+本盘点文档不会恢复或覆盖该删除。
+
+## 2. 当前 Web 路由
+
+在 `apps/vago-web/src/App.jsx` 中发现的当前路由：
+
+| 路由 | 页面 | Remould 分类 |
+|------|------|--------------|
+| `/login` | `LoginPage` | 保留 / 迁移 |
+| `/` | `DashboardPage` | 保留 / 重塑 |
+| `/trips` | `TripPage` | 保留 / 迁移 |
+| `/plans` | `PlanPage` | 保留 / 迁移 |
+| `/guides` | `GuidePage` | 保留 / 重塑为 Knowledge |
+| `/ai` | `AiPlanPage` | 保留 / 重塑为 AI Companion |
+| `/profile` | `ProfilePage` | 保留 / 迁移 |
+| `/trips/:uuid/itinerary` | `ItineraryPage` | 保留 / 迁移 |
+| `/plans/:uuid/itinerary` | `ItineraryPage` | 保留 / 迁移 |
+
+当前 React Router 中没有发现正在使用的公共 Feed / 社区页面路由。
+
+## 3. Spring Boot 盘点
+
+`services/vago-backend/src/main/java/com/vago` 下的 Controller：
+
+| Controller | 当前职责 | Remould 分类 |
+|------------|----------|--------------|
+| `UserController` | 认证、个人资料、用户设置 | 保留 / 迁移 |
+| `TripController` | 正式行程 CRUD | 保留 / 迁移 |
+| `PlanController` | 草稿计划 CRUD | 保留 / 迁移 |
+| `TripItineraryController` | 正式行程每日安排编辑 | 保留 / 迁移 |
+| `PlanItineraryController` | 草稿计划每日安排编辑 | 保留 / 迁移 |
+| `GuideController` | 攻略 CRUD、discover、like、index | 保留个人知识核心；移除公共/点赞语义 |
+| `CollectionController` | 攻略收藏夹 | 如果重定位为个人知识组织能力，则保留 |
+| `AiController` | 将 AI 结构化计划保存为草稿/正式行程 | 保留 / 迁移 |
+
+值得注意的服务与模型：
+
+- `user/*`：用户、OAuth 绑定、用户设置、JWT 鉴权。
+- `travel/*`：行程、计划、攻略、收藏夹、每日安排、景点。
+- `ai/*`：Java 保存端点，以及 Java 到 Python 的索引桥接层。
+- `GuideLike` 和 `LikeFlushTask`：偏公共社区的互动信号，不属于目标核心能力。
+- `Collection` / `CollectionItem`：如果从公共社区语义中拆出来，可以复用为个人知识组织能力。
+
+## 4. FastAPI 盘点
+
+`services/vago-ai/app` 下的当前文件：
+
+| 区域 | 文件 | Remould 分类 |
+|------|------|--------------|
+| Routers | `chat.py`、`articles.py`、`ai.py` | 保留 / 整合进目标后端 |
+| Dependencies | `auth.py`、`rate_limit.py` | 保留概念，后续迁入统一 `core` / `auth` |
+| Models | `models/schemas.py` | 保留，后续按业务域拆分 |
+| RAG 管道 | `cleaner.py`、`chunker.py`、`embedder.py`、`indexer.py`、`metadata_extractor.py`、`vector_store.py` | 保留 |
+| AI 编排 | `rag_chain.py`、`plan_extractor.py`、`llm.py` | 保留 / 重塑为自适应上下文检索 |
+
+当前 FastAPI 仍主要是 AI 服务。目标状态是统一的模块化单体后端，逐步吸收 auth、trip、knowledge、AI、footprint、memory 等业务域。
+
+## 5. 数据库 / Schema 盘点
+
+当前可执行 DDL 位于 `docs/database/db_schema.sql`，包含以下表：
+
+| 表 | 当前职责 | Remould 分类 |
+|----|----------|--------------|
+| `users` | 用户账号 | 保留 / 迁移 |
+| `user_oauth_bindings` | OAuth 账号绑定 | 保留 / 迁移 |
+| `user_settings` | 用户设置 | 保留 / 扩展为偏好 |
+| `trips` | 正式行程 | 保留 / 迁移 |
+| `plans` | 草稿计划 | 保留 / 迁移 |
+| `guides` | 旅行攻略 | 保留 / 重塑为 knowledge sources |
+| `itinerary_days` | 每日行程 | 保留 / 迁移 |
+| `itinerary_spots` | 景点 / 活动 | 保留 / 迁移 |
+
+`docs/database/schema.md` 中包含 AI sessions、GPS tracks、fog tiles、photos、archives、statistics 等更完整的未来设计。当前应将其视为目标草案，而 `db_schema.sql` 代表较小的当前实现。
+
+## 6. React API 依赖
+
+当前 Web API client：
+
+| 文件 | Base path | 当前目标 | 迁移说明 |
+|------|-----------|----------|----------|
+| `apps/vago-web/src/api/user.js` | `/api/v1/user` | Java Spring Boot | Phase 2 迁移到 FastAPI auth/users |
+| `apps/vago-web/src/api/travel.js` | `/api/v1/travel` | Java Spring Boot | 逐步迁移 trips/plans/itinerary/knowledge |
+| `apps/vago-web/src/api/ai.js` | `/api/v1/ai/chat*` | Python FastAPI | AI 整合期间保持路径稳定 |
+| `apps/vago-web/src/api/ai.js` | `/api/v1/ai/plans/save-*` | Java Spring Boot | Phase 3/4 迁移到 FastAPI trip/plan domain |
+
+## 7. Java 到 Python 依赖
+
+Java 当前依赖 Python AI 服务维护攻略向量索引：
+
+- `VagoAiClient.ingestGuide()` 调用 `POST /api/v1/articles/ingest`。
+- `VagoAiClient.deleteGuide()` 调用 `DELETE /api/v1/articles/{articleId}?user_uuid=...`。
+- `AiServiceImpl.indexGuideAsync()` 协调 Java 攻略持久化与 Python 向量索引。
+- `GuideServiceImpl` 在攻略创建、更新、删除后触发异步索引或删除。
+
+当 Knowledge / RAG 完整整合进目标 FastAPI 后端后，这条 Java 到 Python 的桥接链路应逐步消失。
+
+## 8. 功能分类
+
+| 功能 | 分类 | 说明 |
+|------|------|------|
+| User / Auth | 保留 / 迁移 | FastAPI 地基稳定后，从 Spring Boot 迁移 |
+| JWT / Redis token invalidation | 保留概念 | 迁移期间保持与 Java 的兼容 |
+| Guides / knowledge import | 保留 / 重塑 | 产品语言调整为 Personal Travel Knowledge |
+| RAG / Qdrant | 保留 | 作为非结构化个人知识的可选上下文来源 |
+| AI chat / SSE | 保留 | 继续作为 AI Companion 核心能力 |
+| Structured plan extraction | 保留 | 以结构化校验和用户确认为边界 |
+| Plan / Trip / Itinerary | 保留 / 迁移 | 核心业务域 |
+| Collections | 有条件保留 | 重定位为个人知识组织，而不是社区功能 |
+| Guide likes / discover | 从核心移除 | 除非未来分享能力确实需要，否则不迁入目标后端 |
+| Public feed / follow / comments | 移除 | 当前 Web 路由未发现，不应进入目标架构 |
+| Footprints | 后续建设 | 需要新增 API、数据库模型和 iOS 支持 |
+| Fog-of-world map | 后续建设 | 第一版保持简单，避免过早引入复杂 GIS |
+| Photos / notes | 后续建设 | 二进制照片使用对象存储 |
+| Travel Memory | 后续建设 | 必须基于真实事实数据生成 |
+| Native iOS | 后续建设 | SwiftUI 直接调用 FastAPI public API |
+
+## 9. Phase 1 地基状态
+
+Phase 1 选择继续以 `services/vago-ai` 作为未来统一 FastAPI 后端的迁移种子，而不是立刻创建新的服务目录。这样可以保留已经可运行的 AI / RAG 代码，同时在其周围建立后端地基。
+
+已新增的地基能力：
+
+- `app/main.py`：FastAPI app factory 与应用装配入口。
+- `main.py`：兼容现有 `uvicorn main:app` 启动命令的 ASGI 入口。
+- `app/api/v1.py`：v1 API 聚合路由，并保持当前外部路径稳定。
+- `app/core/config.py`：统一类型化配置，并通过旧 `app.config` re-export 保持兼容。
+- `app/core/database.py`：SQLAlchemy `Base`、engine、sessionmaker 和 `get_db` 依赖。
+- `app/core/exceptions.py`：统一应用异常和响应 envelope。
+- `app/core/security.py`：为后续 domain router 准备类型化 `CurrentUser`。
+- `alembic.ini` 与 `migrations/`：Alembic 迁移地基，暂不迁移业务表。
+- `pytest.ini` 与 `tests/test_foundation.py`：轻量 foundation 测试。
+
+Phase 1 中刻意保留：
+
+- 现有 RAG ingestion、chunking、embedding、Qdrant vector retrieval 代码。
+- 现有 `/api/v1/articles/*`、`/api/v1/ai/chat*`、`/api/v1/ai/plan` 路径。
+- 现有由 Java 负责的 auth、user、trip、plan、itinerary API。
+
+测试中发现并修复的重要问题：
+
+- `app.services.chunker` 已改为懒加载 tiktoken encoder，避免导入 FastAPI app 时在 health check 或非 RAG 路由启动前触发网络下载。
+
+## 10. 推荐下一步
+
+进入 **Phase 2 — Authentication and User Migration**：
+
+- 基于当前 MySQL schema 定义 `users`、`user_oauth_bindings`、`user_settings` 的 SQLAlchemy ORM models。
+- 实现 FastAPI `/api/v1/auth` 和 `/api/v1/users` 路由，并先补兼容性测试。
+- 迁移期间保持与当前 Java 后端的 JWT 兼容。
+- 在切换 React `/api/v1/user` client 前，补用户级数据隔离测试。
+
+在 Auth 兼容性验证前，不建议同时迁移 Trip API。

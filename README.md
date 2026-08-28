@@ -171,11 +171,11 @@ Vago/
 
 ## 迁移状态
 
-本次 remould 文档将仓库现状标记为 **Phase 0 — Repository Inventory / Documentation Alignment**。
+当前 remould 进度为 **Phase 1 — FastAPI Backend Foundation**。
 
 迁移优先级：
 
-1. 建立统一 FastAPI backend foundation；
+1. 建立统一 FastAPI backend foundation；已完成基础骨架
 2. 迁移 Auth / User；
 3. 迁移 Trip / Plan / Itinerary；
 4. 整合 Knowledge / RAG / AI Companion；
