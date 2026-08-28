@@ -1,640 +1,314 @@
 # Vago（叠迹）产品需求文档（PRD）
 
-**文档版本**：v0.3  
-**撰写日期**：2026-06-05  
-**最后更新**：2026-06-17  
-**状态**：定稿（Final）
+**文档版本**：v0.4-remould
+**最后更新**：2026-08-28
+**状态**：Remould draft，作为后续迁移与实现基准
 
----
+## 1. 产品定位
 
-## 目录
+### 1.1 一句话
 
-[TOC]
+> Vago（叠迹）是一个 AI-Native 个性化旅行搭子，将用户零散的旅行知识沉淀为个人知识库，通过 AI 辅助旅行规划，并将实际旅行过程中的地点、照片和记录转化为长期可回顾、可复用的旅行记忆。
 
+英文表达：
 
+> Vago is an AI-native personal travel companion that turns a user's fragmented travel knowledge into personalized plans, records real-world journeys, and transforms them into reusable travel memories.
 
-1. [产品概述与目标](#1-产品概述与目标)
-2. [用户角色与核心场景](#2-用户角色与核心场景)
-3. [核心功能需求模块](#3-核心功能需求模块)
-   - 3.1 RAG 智能攻略库
-   - 3.2 AI 行程伴侣
-   - 3.3 旅行足迹与地图（移动端特有）
-   - 3.4 足迹图文存档
-4. [非功能性需求](#4-非功能性需求)
-5. [数据模型概览](#5-数据模型概览)
-6. [技术架构映射](#6-技术架构映射)
-7. [里程碑与优先级](#7-里程碑与优先级)
+### 1.2 不再是什么
 
----
+Vago 不再以公共旅行社区为核心，不再围绕陌生人 Feed、关注、点赞、评论或社区增长设计核心流程。
 
-## 1. 产品概述与目标
+分享能力可以保留，但它是旅行结果的输出能力，例如分享某次旅行、足迹地图、AI 旅行回忆或 itinerary，不应重新演变为完整社交平台。
 
-### 1.1 核心价值主张（Value Proposition）
+### 1.3 核心闭环
 
-> **Vago = 旅行前的攻略整合 × 旅行中的 AI 规划 × 旅行后的足迹存档**
+```text
+Personal Travel Knowledge
+        ↓
+Adaptive Personal Context Retrieval
+        ↓
+AI Travel Companion
+        ↓
+Structured Travel Plan
+        ↓
+User Confirmation
+        ↓
+Actual Trip
+        ↓
+GPS / Photos / Notes
+        ↓
+Travel Footprint
+        ↓
+AI-generated Travel Memory
+        ↓
+Personal Travel Profile / Memory
+        ↓
+Future Personalized Planning
+```
 
-市面上的旅行类产品呈碎片化分布：小红书/微博提供攻略内容但无结构化沉淀；Fog of World 提供足迹地图但无内容承载；携程/马蜂窝提供行程规划但与个人知识库割裂。**Vago 的差异化在于将这三个阶段打通，以用户个人旅行知识库为核心资产**，让攻略真正服务于规划，让规划真正映射到足迹。
+### 1.4 产品原则
 
-### 1.2 产品定位
-
-| 维度 | 描述 |
+| 原则 | 说明 |
 |------|------|
-| **产品类型** | 一站式旅行管理平台（Web + 移动端 App） |
-| **核心闭环** | 攻略导入 → AI 行程规划 → 出行打卡 → 图文存档 |
-| **商业模式（初期）** | 免费基础功能 + 高级 AI 调用次数订阅 |
-| **竞争壁垒** | 用户私有攻略库（个人知识资产沉淀） + 足迹地图数据 |
+| Personal-first | 优先服务用户自己的攻略、偏好、行程、足迹、照片、回忆和历史数据 |
+| AI-native | AI 深入规划、检索、结构化输出、回忆生成，而不是附加聊天入口 |
+| Human-in-the-loop | AI 生成建议和草稿，用户确认后才写入正式业务数据 |
+| Context-aware | 根据任务选择 Direct Context、SQL、Profile、RAG |
+| Mobile-native | Web 管理复杂资料，iOS 采集真实旅途数据 |
 
-### 1.3 Web 端 vs. 移动端差异化定位
+## 2. 用户场景
 
-| 功能域 | Web 端 | 移动端 App |
-|--------|--------|-----------|
-| **攻略管理** | 长文粘贴、批量 URL 导入、富文本编辑 | 分享链接一键导入、快速摘录 |
-| **行程规划** | 大屏多列看板编辑、拖拽排序 | 查看与微调当前行程 |
-| **足迹地图** | 大屏足迹统计看板、全球热力图 | 实时 GPS 打卡、迷雾解锁、离线地图 |
-| **存档管理** | 批量相册上传、日志排版 | 拍照即存、位置自动绑定 |
-| **AI 交互** | 复杂多轮对话规划 | 快问快答（轻量场景） |
+### 2.1 Planner：深度攻略整理与规划用户
 
-### 1.4 产品目标（OKR 视角）
+Planner 出行前会收集大量攻略、笔记和链接，但资料分散、重复、难以比较。
 
-| 目标 | 关键结果 |
-|------|---------|
-| 成为用户旅行知识资产的唯一沉淀地 | 人均攻略库 ≥ 10 条（3 个月内活跃用户） |
-| AI 行程规划成为核心留存钩子 | AI 生成行程后 7 日留存率 ≥ 60% |
-| 足迹地图驱动社交传播 | 足迹地图分享率 ≥ 30%（已完成行程用户） |
+Vago 需要帮助这类用户：
 
----
+- 导入和整理个人旅行资料；
+- 按目的地、主题、来源组织知识；
+- 用 AI 结合个人资料和偏好生成行程草稿；
+- 在确认后保存为 Plan 或 Trip；
+- 在后续旅行中把实际经历反哺个人记忆。
 
-## 2. 用户角色与核心场景
+### 2.2 Tracker：重视旅行记录和足迹用户
 
-### 2.1 用户画像
+Tracker 更重视实际旅行中的地点解锁、照片、笔记和回忆沉淀。
 
-#### 画像 A：深度攻略收集控「策划者 Planner」
+Vago 需要帮助这类用户：
 
-| 维度 | 描述 |
-|------|------|
-| **年龄** | 25–35 岁，职场白领 |
-| **行为特征** | 出行前 1–3 个月开始收集攻略，习惯在小红书、公众号、微博上收藏大量帖子，但这些内容散落在各平台，无法汇总整理 |
-| **核心痛点** | 收藏了大量攻略却在规划时找不到；同类目的地攻略重复且矛盾，需要人工筛选 |
-| **期望价值** | 将碎片内容结构化沉淀，用 AI 自动帮我整合出一份定制行程 |
-| **设备偏好** | Web 端为主（整理攻略）+ 移动端（出行时查看） |
+- 查看当前行程；
+- 记录 GPS 足迹和打卡点；
+- 将照片、时间、位置和笔记绑定到 Trip / Spot；
+- 旅行后自动生成 grounded travel memory；
+- 形成未来 AI 规划可使用的旅行偏好和历史信号。
 
-#### 画像 B：说走就走的足迹打卡狂热者「记录者 Tracker」
+## 3. Web 与 iOS 分工
 
-| 维度 | 描述 |
-|------|------|
-| **年龄** | 20–30 岁，学生或自由职业者 |
-| **行为特征** | 旅行频次高但攻略准备少，更注重记录过程、打卡地标、解锁地图 |
-| **核心痛点** | 足迹散落在不同 App（微信朋友圈、Instagram）；没有统一的地图可以直观展示去过哪些地方 |
-| **期望价值** | 一张漂亮的全球足迹地图，出行时自动打卡，旅行后一键生成图文回忆 |
-| **设备偏好** | 移动端为主 |
+| 功能域 | Web | iOS |
+|--------|-----|-----|
+| Knowledge | 长文粘贴、URL 导入、资料整理、知识库管理 | 快速摘录、分享链接接力 |
+| AI Planning | 复杂多轮规划、结构化预览、行程编辑 | 当前场景轻量问答、局部调整 |
+| Plans / Trips | 列表、详情、每日安排、预算、历史管理 | 当前行程查看、当日安排 |
+| Footprints | 大屏地图、统计、历史回放 | GPS 采样、打卡、迷雾地图 |
+| Photos / Notes | 批量管理、回忆编辑 | 拍照、相册选择、快速笔记 |
+| Memories | 浏览、编辑、导出、分享 | 回忆浏览、移动端分享 |
+| Profile | 偏好、账号、数据管理 | 轻量设置、权限管理 |
 
-### 2.2 典型用户旅程（User Journey）
+## 4. 功能范围
 
-#### 策划者 Planner 的旅程
-
-```
-[旅行意向产生]
-    │
-    ▼
-[攻略收集阶段 - Web端]
-导入小红书链接 / 粘贴攻略文本 → RAG 系统清洗向量化 → 攻略库入库
-    │
-    ▼
-[AI 规划阶段 - Web端]
-向 AI 提问："帮我规划一个6天云南行程，预算8000元，偏小众" → AI 检索个人攻略库 → 生成行程草稿 → 用户微调 → 导出"待执行行程"
-    │
-    ▼
-[出行阶段 - 移动端]
-按行程执行 → GPS 实时打卡 → 迷雾地图解锁 → 随手拍照存档
-    │
-    ▼
-[回顾阶段 - Web/移动端]
-自动生成行程回忆 → 照片与足迹点绑定 → 足迹统计更新 → 可选分享
-```
-
-#### 记录者 Tracker 的旅程
-
-```
-[临时决定出行]
-    │
-    ▼
-[快速问询 - 移动端]
-"成都两天有什么好玩的" → AI 基于公共知识库（无个人攻略时的 fallback）生成建议
-    │
-    ▼
-[出行打卡 - 移动端]
-实时 GPS 自动打卡 → 迷雾地图实时解锁 → 拍照绑定地点
-    │
-    ▼
-[存档与展示 - 移动端/Web端]
-查看城市探索百分比 → 生成本次旅行总结 → 分享足迹地图截图
-```
-
----
-
-## 3. 核心功能需求模块
-
-### 3.1 RAG 智能攻略库
-
-#### 3.1.1 功能概述
-
-用户的个人攻略库是 Vago 的**核心数据资产**。本模块负责将用户从各渠道收集的零散攻略（文本、图文、URL）导入并结构化，形成可被 AI 检索的私有知识库。
-
-#### 3.1.2 导入方式
-
-| 导入方式 | 支持端 | 说明 |
-|---------|-------|------|
-| **粘贴纯文本** | Web + App | 直接粘贴攻略文字，适合从各平台手动复制 |
-| **URL 导入** | Web 为主 | 输入小红书、公众号等链接，系统自动抓取正文（需处理各平台反爬限制，需用户授权或手动复制） |
-| **分享链接接力（移动端）** | App | 在小红书等 App 内「分享到 Vago」，触发 URL scheme 跳转并传递链接 |
-| **手动分段摘录** | Web + App | 用户手动输入标题、目的地标签、正文摘要，快速创建结构化卡片 |
-| **文件导入** | Web | 支持 .txt / .md / .docx 导入 |
-
-> **暂不支持**：直接截图 OCR 导入（列入 v2 规划）
-
-#### 3.1.3 内容处理流程（后端业务流）
-
-```
-用户提交原始内容
-    │
-    ▼
-【Java 服务】攻略持久化（MySQL guides 表）→ 异步触发向量化（@Async）
-    │
-    ▼
-【Python AI 服务】HTTP 调用（POST /api/v1/articles/ingest）
-    ├─ 1. 文本清洗（去除广告词、表情符号、重复内容、HTML 标签）
-    ├─ 2. 元数据提取（目的地识别、标签打标：交通/住宿/美食/景点）
-    ├─ 3. 语义分块（按语义滑动窗口切块，chunk_size ≈ 512 tokens，overlap ≈ 64）
-    ├─ 4. Embedding 向量化（调用 Embedding 模型）
-    └─ 5. 写入向量数据库（按 user_uuid payload 隔离）
-    │
-    ▼
-【Java 服务】更新 guide.ai_status 为 INDEXED/FAILED（前端轮询 5s 刷新状态）
-```
-
-#### 3.1.4 攻略卡片数据结构
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `article_id` | UUID | 主键 |
-| `user_id` | Long | 所属用户 |
-| `title` | String | 攻略标题（用户填写或 AI 提取） |
-| `source_url` | String | 来源链接（可为空） |
-| `destinations` | String[] | 目的地标签，如 `["云南", "大理"]` |
-| `categories` | Enum[] | 内容分类：`TRANSPORT / HOTEL / FOOD / ATTRACTION / TIPS` |
-| `raw_content` | Text | 原始全文（MySQL 存储） |
-| `status` | Enum | `PENDING / INDEXING / INDEXED / FAILED` |
-| `created_at` | Timestamp | 创建时间 |
-
-#### 3.1.5 前端展示需求
-
-- **攻略库列表**：按目的地 / 分类 / 时间过滤；支持全文搜索（走向量搜索）
-- **卡片视图**：显示目的地标签、分类标签、摘要预览（首 200 字）、索引状态
-- **详情页**：全文展示 + 关联行程（该攻略被哪些行程引用）
-
-#### 3.1.6 前置条件与边界
-
-- 单条攻略**原始文本上限 50,000 字**，超出则提示分批导入
-- 每个用户攻略库上限：免费版 **50 条**，付费版**无限制**
-- 处理时间提示：导入后异步处理，预计 **10–60 秒**完成索引，前端展示进度状态
-
----
-
-### 3.2 AI 行程伴侣
-
-#### 3.2.1 功能概述
-
-用户通过自然语言向 AI 发问，AI **优先检索用户个人攻略库（RAG）**，当个人库内容不足时 fallback 到模型通用知识，生成定制化旅行建议。
-
-本阶段重点实现「**AI 文本回答 + 结构化计划草稿**」双轨输出：AI 正常返回可读的定制攻略文本，同时在识别到用户具有明确行程规划意图时，额外返回一份可保存的结构化计划数据。前端在 AI 回复下方展示两个动作按钮：
-
-- **保存为行程**：用户已确认出行，直接创建正式 Trip，并写入每日行程数据。
-- **保存为草稿**：用户仍在规划阶段，创建 Plan 草稿，并写入每日计划数据，后续可继续编辑或转为正式行程。
-
-该设计避免 AI 自动落库带来的误操作风险，同时让 RAG 回答真正接入 Vago 的计划/行程业务闭环。
-
-#### 3.2.2 功能点详细
-
-**（1）智能问答与行程生成**
-
-| 步骤 | 说明 |
-|------|------|
-| **用户输入** | 自然语言描述：目的地、天数、预算、偏好（偏小众/主流/亲子/深度游） |
-| **RAG 检索** | Python 服务将问题 Embedding 后，在用户私有向量库中检索 Top-K 相关文本块 |
-| **Prompt 构建** | 将检索结果 + 用户偏好 + 系统 Prompt 拼装，调用 LLM |
-| **结果输出** | 文本回答 + 可选结构化计划草稿（JSON 格式，前端渲染保存入口） |
-
-**Prompt 设计约束**（产品层面要求，供 AI 团队参考）：
-- 明确要求 LLM 优先使用检索到的用户攻略内容，引用时标注来源攻略 ID
-- 当用户请求具有行程规划意图时，约束模型同时输出结构化 JSON，包含：`title`、`destination`、`startDate`、`endDate`、`budget`、`days[]`
-- `days[]` 需要包含：`dayIndex`、`dayDate`、`transportation`、`accommodation`、`mealBreakfast`、`mealLunch`、`mealDinner`、`spots[]`、`budgetDay`、`notes`
-- `spots[]` 需要包含：`name`、`address`、`category`、`sortOrder`、`durationMinutes`、`notes`、`sourceArticleId`
-- 当个人库无相关内容时，在回答中明确告知用户"以下建议来自通用知识，未在您的攻略库中找到对应内容"
-- 不允许模型直接代表用户创建计划或行程，必须由用户点击「保存为行程」或「保存为草稿」确认
-
-**（2）结构化计划草稿展示**
-
-- AI 回复仍以普通聊天气泡展示完整文本，保证用户能自然阅读建议。
-- 若响应中包含结构化计划草稿，聊天气泡下方展示「AI 已整理出可保存的行程方案」提示。
-- 前端展示两个主操作：
-  - **保存为行程**：创建正式行程，适用于用户已确定出行。
-  - **保存为草稿**：创建计划草稿，适用于用户还在比较方案。
-- 用户保存前可展开预览结构化摘要，包括目的地、日期、预算、每日景点数、住宿和交通概览。
-- 暂不在聊天页内做复杂编辑，保存后跳转到 Plan/Trip 的每日规划页面进行细改。
-
-**（3）保存为草稿 Plan**
-
-- 用户点击「保存为草稿」后，Java 后端创建 `plans` 记录。
-- 系统根据结构化 `days[]` 写入 `itinerary_days`，并根据 `spots[]` 写入 `itinerary_spots`。
-- 保存成功后，前端提示「已保存为草稿」，并提供跳转入口到计划详情/每日规划页面。
-- 若 AI 输出缺少日期，允许创建无明确日期的 Plan，但每日规划需要用户后续补充日期后再初始化。
-
-**（4）保存为正式行程 Trip**
-
-- 用户点击「保存为行程」后，Java 后端创建 `trips` 记录。
-- 若结构化数据缺少 `startDate` 或 `endDate`，前端需要弹出补充日期表单，不允许直接创建正式行程。
-- 系统写入 `itinerary_days` 和 `itinerary_spots`，并将 Trip 状态默认为 `计划中`。
-- 保存成功后，前端提示「已保存为行程」，并提供跳转入口到行程详情/每日规划页面。
-
-**（5）AI 来源引用与可解释性**
-
-- AI 文本回复下方继续展示 RAG 引用来源，用户可点击查看原始攻略。
-- 结构化计划中的景点如果来自某篇攻略，需要保留 `sourceArticleId`。
-- 前端在预览时展示「来自攻略」标识，帮助用户理解推荐依据。
-
-**（6）会话历史**
-
-- 每次规划会话保存完整对话记录
-- 用户可回溯历史规划，基于旧方案继续修改
-
-#### 3.2.3 结构化计划数据 Schema（产品层）
-
-```json
-{
-  "answer": "自然语言旅行建议文本",
-  "structuredPlan": {
-    "title": "关西 5 日自由行",
-    "destination": "大阪 / 京都 / 奈良",
-    "startDate": "2026-05-26",
-    "endDate": "2026-05-31",
-    "budget": 8000,
-    "budgetCurrency": "CNY",
-    "days": [
-      {
-        "dayIndex": 1,
-        "dayDate": "2026-05-26",
-        "transportation": "飞机 + 地铁",
-        "accommodation": "大阪难波附近酒店",
-        "mealBreakfast": "机场简餐",
-        "mealLunch": "黑门市场",
-        "mealDinner": "道顿堀蟹道乐",
-        "budgetDay": 1600,
-        "notes": "首日控制强度，以抵达和市区适应为主",
-        "spots": [
-          {
-            "name": "大阪城公园",
-            "address": "大阪市中央区大阪城",
-            "category": 0,
-            "sortOrder": 1,
-            "durationMinutes": 120,
-            "notes": "适合下午游览",
-            "sourceArticleId": "guide_uuid"
-          }
-        ]
-      }
-    ]
-  },
-  "sources": [
-    {
-      "articleId": "guide_uuid",
-      "title": "大阪京都五日攻略",
-      "score": 0.82
-    }
-  ]
-}
-```
-
-字段约束：
-
-| 字段 | 是否必填 | 说明 |
-|------|----------|------|
-| `answer` | 是 | 用户可直接阅读的自然语言回答 |
-| `structuredPlan` | 否 | 仅当用户意图是规划行程时返回；普通问答可为空 |
-| `title` | 是 | 保存 Plan/Trip 时作为标题 |
-| `destination` | 建议必填 | 目的地描述，可为多个城市 |
-| `startDate/endDate` | 保存 Trip 必填，保存 Plan 可选 | 正式行程必须有完整日期 |
-| `days` | 建议必填 | 每日规划数据；无日期时可只保留 dayIndex |
-| `spots` | 可选 | 每日景点列表，支持自定义排序 |
-| `sourceArticleId` | 可选 | 关联 RAG 来源攻略 |
-
-#### 3.2.4 前后端交互设计
-
-**Python AI 服务（vago-ai）**
-
-| 接口 | 说明 |
-|------|------|
-| `POST /api/v1/ai/chat/stream` | SSE 流式对话，实时推送文本 token |
-| `POST /api/v1/ai/chat` | 非流式接口，返回文本回答 + 结构化计划草稿 |
-
-**Java 后端（vago-backend）**
-
-| 接口 | 说明 |
-|------|------|
-| `POST /api/v1/ai/plans/save-draft` | 将 AI 结构化计划保存为 Plan 草稿（已实现） |
-| `POST /api/v1/ai/plans/save-trip` | 将 AI 结构化计划保存为正式 Trip（已实现） |
-| `POST /api/v1/travel/guides/{uuid}/index` | 手动触发攻略向量化 |
-
-**前端 Web**
-
-| 页面区域 | 行为 |
-|----------|------|
-| AI 聊天区 | 展示 AI 文本回答 |
-| 回复操作区 | 当返回 `structuredPlan` 时展示「保存为行程」「保存为草稿」 |
-| 结构化预览 | 展开查看标题、目的地、日期、预算、每日安排摘要 |
-| 保存成功 Toast | 提供跳转到 `/plans/:uuid/itinerary` 或 `/trips/:uuid/itinerary` |
-
-#### 3.2.5 业务流程图
-
-```
-用户输入规划需求
-    │
-    ▼
-Python AI 服务
-    ├─ Embedding 用户问题
-    ├─ 向量检索（用户私有库，Top-K=5~10）
-    ├─ 相关度过滤（低于阈值的 chunk 丢弃）
-    └─ 构建 RAG Prompt → 调用 LLM → 输出文本回答 + 结构化计划草稿
-    │
-    ▼
-前端聊天页
-    ├─ 渲染 AI 文本回答
-    ├─ 展示引用攻略来源
-    └─ 若存在 structuredPlan，展示保存按钮
-    │
-    ▼
-用户确认
-    ├─ 保存为草稿 → Java 创建 Plan + itinerary_days + itinerary_spots
-    └─ 保存为行程 → Java 创建 Trip + itinerary_days + itinerary_spots
-```
-
-#### 3.2.6 限制与降级策略
-
-| 场景 | 处理方式 |
-|------|---------|
-| 用户攻略库为空 | 完全 fallback 到 LLM 通用知识，前端提示"导入攻略后可获得更个性化的建议" |
-| LLM 调用超时（>15s） | 返回部分结果 + 提示"继续生成中"，后台异步补全 |
-| LLM 返回非结构化内容 | 文本回答正常展示，但不展示保存按钮；提示用户可以补充“天数/日期/目的地”等信息后重新生成 |
-| 结构化 JSON 校验失败 | Java 不落库，前端展示“AI 方案格式异常，请重新生成” |
-| 保存正式行程时缺少日期 | 前端弹窗要求补充 `startDate/endDate` |
-| 结构化内容与现有表字段不完全匹配 | 先保存核心字段；无法映射的内容写入 `notes` |
-| 免费版 AI 调用次数耗尽 | 提示升级，不硬拦截（允许超出一定比例后才限制） |
-
----
-
-### 3.3 旅行足迹与地图（移动端特有）
-
-#### 3.3.1 功能概述
-
-**迷雾解锁地图**是 Vago 移动端的视觉核心与情感钩子。用户在现实世界移动，地图上的「迷雾」随之消散，同时系统记录精确的空间轨迹。
-
-#### 3.3.2 功能点详细
-
-**（1）实时 GPS 打卡与迷雾解锁**
-
-| 子功能 | 说明 |
-|--------|------|
-| **后台定位** | App 保持低频后台 GPS 采集（节省电量，频率可配置：步行模式 10s/次，驾车模式 30s/次） |
-| **迷雾解锁半径** | 以用户当前位置为圆心，解锁半径 **300m**（可配置）的地图区域 |
-| **地图渲染层** | 基于瓦片地图叠加迷雾蒙版，已解锁区域透明，未解锁区域深色覆盖 |
-| **离线支持** | 当前行程区域支持下载离线瓦片，断网时仍可记录轨迹（待联网后同步） |
-| **轨迹线** | 实时绘制移动轨迹线，可在行程详情中回放 |
-
-**（2）手动地标打卡**
-
-- 用户在某地点主动点击「打卡」按钮
-- 系统记录当前 GPS 坐标 + 时间戳，可附加一张照片和简短文字
-- 打卡点在地图上显示为自定义图标（根据分类：美食/景点/住宿等）
-
-**（3）足迹统计看板**
-
-| 统计维度 | 说明 |
-|---------|------|
-| **国家探索** | 已探索国家数量 / 全球国家总数，可视化世界地图着色 |
-| **省市探索** | 国内已探索省份/城市百分比 |
-| **总里程** | 累计旅行距离（km） |
-| **打卡点数** | 历史手动打卡点总数 |
-| **足迹热力图** | 基于历史所有轨迹生成的个人热力图（Web 大屏展示效果最佳） |
-
-**（4）行程关联**
-
-- 每次出行前，用户可从"待执行行程"中选择关联本次旅行
-- 出行结束后，系统自动将本次 GPS 轨迹、打卡点归入该行程
-- 若未关联行程，轨迹存入「未归档足迹」，用户可事后手动关联
-
-#### 3.3.3 位置数据采集策略
-
-| 模式 | GPS 频率 | 精度 | 适用场景 |
-|------|---------|------|---------|
-| **精细模式** | 10s/次 | 高（±5m） | 步行探索，用户手动开启 |
-| **标准模式（默认）** | 60s/次 | 中（±20m） | 日常旅行 |
-| **省电模式** | 5min/次 | 低（±100m，使用基站辅助） | 长途驾车或后台挂起 |
-
-#### 3.3.4 权限要求
-
-| 权限 | 说明 |
-|------|------|
-| `ACCESS_FINE_LOCATION` | GPS 精细定位 |
-| `ACCESS_BACKGROUND_LOCATION` | 后台定位（需单独申请，引导用户授权） |
-| `CAMERA` | 打卡拍照 |
-| `READ/WRITE_EXTERNAL_STORAGE` | 照片存储（Android） |
-
----
-
-### 3.4 足迹图文存档
-
-#### 3.4.1 功能概述
-
-行程结束后，用户将旅行中拍摄的照片、文字日志与地图足迹点绑定，形成结构化的旅行回忆存档。这是 Vago 的**内容沉淀闭环**，也是用户愿意长期留存的核心动力。
-
-#### 3.4.2 功能点详细
-
-**（1）行程回顾创建**
-
-- 行程结束后，App 推送通知："您的 [目的地] 之旅已结束，点击创建旅行回忆"
-- 用户进入回顾创建流程：自动拉取本次行程的所有打卡点 + 轨迹
-- 时间线视图展示打卡顺序，用户逐点添加照片和文字
-
-**（2）照片管理**
+### 4.1 KEEP / MIGRATE
 
 | 功能 | 说明 |
 |------|------|
-| **位置自动绑定** | 读取照片 EXIF GPS 信息，自动匹配最近的打卡点（误差 < 500m 则自动关联） |
-| **手动拖拽绑定** | 无 EXIF 信息的照片可手动拖到对应打卡点 |
-| **批量上传** | Web 端支持批量上传（最多 200 张/次），移动端单次最多 30 张 |
-| **存储规格** | 压缩后存储（最长边 ≤ 2048px），保留原图可选（付费功能） |
+| User / Auth | 用户账户、JWT、用户级数据隔离、个人设置 |
+| Knowledge Base | 攻略文本 / URL 导入、清洗、元数据、分块、Embedding、Qdrant、来源引用 |
+| AI Companion | 多轮问答、SSE、Tool Calling、结构化行程输出、用户确认保存 |
+| Plan / Trip / Itinerary | 草稿计划、正式行程、每日安排、景点、交通、住宿、预算 |
+| Personal Profile / Preferences | 旅行偏好、节奏、兴趣、预算倾向、历史目的地信号 |
 
-**（3）日志编辑**
+### 4.2 BUILD
 
-- 支持每个打卡点添加富文本日志（最多 5000 字）
-- 支持 Markdown 基本语法（加粗、列表、引用）
-- Web 端支持完整富文本编辑器，移动端支持基础格式
-
-**（4）封面与分享**
-
-- 系统自动从本次行程照片中生成推荐封面（选取清晰度最高的 3 张供用户选择）
-- 生成旅行总结卡片（可自定义配色），包含：封面图、目的地、天数、公里数、打卡点数
-- 分享选项：生成图片分享到外部 App、生成行程链接（可设置公开/私密）
-
-**（5）存档数据结构**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `trip_archive_id` | UUID | 主键 |
-| `trip_plan_id` | UUID | 关联的行程计划 |
-| `user_id` | Long | 所属用户 |
-| `cover_photo_id` | UUID | 封面照片 |
-| `entries` | List | 打卡点存档列表（见下） |
-| `stats` | Object | 行程统计（天数、里程、打卡数） |
-| `visibility` | Enum | `PRIVATE / LINK / PUBLIC` |
-
-打卡点存档（`entry`）字段：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `checkin_id` | UUID | 打卡点 ID |
-| `geo` | Point | 经纬度 |
-| `timestamp` | Timestamp | 打卡时间 |
-| `category` | Enum | 分类标签 |
-| `note` | Text | 日志文字 |
-| `photos` | UUID[] | 关联照片 ID 列表 |
-
----
-
-## 4. 非功能性需求
-
-### 4.1 高并发与高可用
-
-#### 4.1.1 节假日打卡高峰应对
-
-| 策略 | 说明 |
+| 功能 | 说明 |
 |------|------|
-| **GPS 数据写入降级** | 高峰期将轨迹点写入本地缓存队列，异步批量上传，用户感知无影响 |
-| **迷雾解锁延迟容忍** | 地图迷雾更新延迟容忍 ≤ **3 秒**（非强一致，最终一致即可） |
-| **地图瓦片 CDN 加速** | 所有地图瓦片资源走 CDN，不走业务服务器 |
-| **AI 请求排队** | 高峰期 AI 行程生成请求进入队列，前端展示排队提示（预计等待时间） |
-| **限流规则** | 单用户 AI 调用：5 次/分钟；单 IP 攻略导入：10 次/分钟 |
+| Travel Footprint | GPS sampling、route、visited places、check-in、城市/区域/国家统计 |
+| Fog-of-World Map | 根据用户移动解锁区域，支持当前旅行和历史旅行视图 |
+| Travel Photos / Notes | 拍照、相册、时间戳、经纬度、Trip / Day / Spot 绑定 |
+| AI-generated Travel Memory | 基于事实数据生成 timeline、highlights、summary、narrative、share card |
+| Native iOS | SwiftUI、URLSession、Codable、MapKit、Core Location、PhotosUI |
 
-#### 4.1.2 大文件上传
+### 4.3 REMOVE FROM CORE
 
-| 要求 | 说明 |
+| 功能 | 处理 |
 |------|------|
-| **分片上传** | 照片批量上传使用分片上传（5MB/片），支持断点续传 |
-| **前端进度反馈** | 上传进度条精确到百分比，失败时提示具体失败文件 |
-| **后台处理** | 图片压缩、缩略图生成均为异步任务，上传成功后异步处理 |
+| Public Feed | 不迁移到目标 FastAPI 后端 |
+| Follow / Comment | 不作为核心业务继续开发 |
+| Like / public ranking | 仅在分享能力需要时重新评估 |
+| Community recommendation | 暂停，不作为 remould 阶段目标 |
 
-#### 4.1.3 可用性要求
+### 4.4 DEFER
 
-| 指标 | 目标值 |
-|------|-------|
-| **核心接口可用率** | ≥ 99.5%（月度） |
-| **AI 服务可用率** | ≥ 99%（允许降级到通用知识库回答） |
-| **移动端离线可用** | 当前行程查看、打卡记录（本地）100% 可用 |
+Android、React Native、Kubernetes、Service Mesh、复杂事件总线、大规模 GIS、自主多 Agent、商业订阅体系、App Store 正式发布、高级离线地图、OCR / screenshot ingestion 均暂缓。
 
-### 4.2 数据隐私与安全
+## 5. Personal Context Retrieval
 
-#### 4.2.1 位置数据保护
+Vago 的个性化由多类上下文共同组成：
 
-| 措施 | 说明 |
-|------|------|
-| **传输加密** | 所有 GPS 数据通过 HTTPS/TLS 1.3 传输 |
-| **存储隔离** | 位置数据按 `user_id` 严格隔离，禁止跨用户查询 |
-| **精度脱敏** | 公开分享的足迹地图，将精确坐标模糊至 **500m 级别** |
-| **数据最小化** | GPS 采集仅在用户明确开启旅行模式时进行，不在非旅行状态后台采集 |
-| **删除权** | 用户可申请删除全部历史轨迹数据，系统 **7 个工作日内**物理删除 |
-
-#### 4.2.2 个人攻略库保护
-
-| 措施 | 说明 |
-|------|------|
-| **向量库命名空间隔离** | 每个用户的攻略向量数据存储在独立命名空间，AI 检索严格限定在当前用户空间 |
-| **内容不用于模型训练** | 用户私有攻略库内容不用于 LLM 微调或公共知识库更新（需在隐私政策中明确声明） |
-| **访问日志** | 记录所有对用户攻略库的检索操作，异常访问告警 |
-
-#### 4.2.3 账户安全
-
-- 支持 OAuth 2.0 第三方登录（微信、Apple）+ 手机号验证码登录
-- 关键操作（数据删除、账户注销）需二次验证
-- JWT Token 有效期：Access Token **2 小时**，Refresh Token **30 天**
-
----
-
-## 5. 数据模型概览
-
-```
-users
-  └── trip_plans (行程计划)
-        └── trip_archives (行程存档)
-              └── checkin_entries (打卡点)
-                    └── photos (照片)
-
-users
-  └── articles (攻略库)
-        └── [向量DB命名空间 user_{id}]
-
-users
-  └── gps_tracks (GPS 轨迹点，时序数据)
-  └── fog_tiles (迷雾解锁瓦片记录)
+```text
+Current User Intent
++ Structured Travel Data
++ Unstructured Personal Knowledge
++ Explicit / Learned Preferences
 ```
 
----
+### 5.1 Direct Context
 
-## 6. 技术架构映射
+用户明确选择 1 到数篇攻略、笔记或历史回忆时，优先直接提供给 LLM，不为了形式感再次向量检索。
 
-| 功能域 | 服务 | 存储 |
-|--------|------|------|
-| 用户、行程、攻略 CRUD | Java 单体（vago-backend） | MySQL |
-| 会话 Token、攻略索引状态缓存 | Java → Redis | Redis |
-| 攻略向量化、RAG 检索、LLM 调用 | Python AI 服务（vago-ai） | Qdrant 向量数据库 |
-| GPS 轨迹点存储（高写入） | Java → 时序存储 | 时序数据库或 MySQL 分区表 |
-| 迷雾瓦片状态 | Java → Redis Bitmap | Redis |
-| 照片文件存储 | 上传后转存 | 对象存储（OSS/S3） |
-| 地图瓦片 | 第三方地图 SDK | CDN |
+### 5.2 Structured Retrieval
 
----
+以下问题优先通过 SQL / domain service：
 
-## 7. 里程碑与优先级
+- 我去过多少个国家？
+- 上次东京去了哪些地方？
+- 这次不要重复去过的景点。
+- 最近几次旅行预算大概是多少？
 
-### P0 — MVP（必须上线）
+### 5.3 Semantic Retrieval / RAG
 
-| 功能 | 端 |
-|------|----|
-| 用户注册登录 | Web + App |
-| 攻略库：文本粘贴导入 + RAG 索引 | Web |
-| AI 行程规划（基础对话 + 结构化输出） | Web |
-| AI 生成结构化计划并保存为草稿/行程 | Web |
-| 手动打卡 + 基础地图展示 | App |
-| 照片上传 + 绑定打卡点 | App |
+当用户知识库规模较大，或需要从大量攻略、Notes、Memories 中寻找相关内容时，使用 Embedding + Qdrant + RAG。
 
-### P1 — 体验提升（首月迭代）
+RAG 要求：
 
-| 功能 | 端 |
-|------|----|
-| 迷雾地图解锁 | App |
-| GPS 实时轨迹记录 | App |
-| 攻略库 URL 导入 | Web |
-| 行程一键导出 | Web |
-| 足迹统计看板（国家/省市） | Web + App |
+- 按 `user_uuid` 严格隔离；
+- 保留来源引用；
+- 不把适合 SQL 的结构化数据全部写入 vector DB；
+- 不把模型常识伪装成用户知识库结果。
 
-### P2 — 增长功能（季度迭代）
+## 6. 核心需求
 
-| 功能 | 端 |
-|------|----|
-| 旅行总结卡片生成 + 分享 | Web + App |
-| 行程公开分享链接 | Web + App |
-| 全球热力图 | Web |
-| 批量照片上传 + EXIF 自动绑定 | Web |
-| AI 追问与局部行程更新 | Web + App |
+### 6.1 Personal Travel Knowledge
 
----
+需求：
 
-*文档维护：请在每次产品评审后更新本文档版本号与日期。*
+- 支持文本粘贴和 URL 导入；
+- 支持标题、目的地、标签、来源、正文；
+- 支持清洗、metadata extraction、chunking、embedding、Qdrant upsert；
+- 支持删除攻略时清理对应向量；
+- 支持索引状态；
+- 支持用户级隔离；
+- 支持来源引用。
+
+当前实现中该能力主要由 Java `guides` 表和 Python `articles` router / RAG pipeline 共同完成。后续应迁入统一 FastAPI 后端。
+
+### 6.2 AI Travel Companion
+
+需求：
+
+- 支持自然语言问答；
+- 支持多轮上下文；
+- 支持 SSE streaming；
+- 支持 Tool Calling；
+- 支持结构化 `TravelPlanDraft` 输出；
+- 支持来源引用；
+- 支持用户确认后保存为 Plan / Trip；
+- 支持 Direct Context、SQL、Profile、RAG 的可选编排。
+
+AI 不应未经确认直接创建正式行程、修改重要计划或覆盖用户记录。
+
+### 6.3 Plans / Trips / Itinerary
+
+需求：
+
+- Plan 表示规划阶段草稿，可无完整日期；
+- Trip 表示确定出行的正式行程，必须有起止日期；
+- Itinerary Day 支持每日交通、住宿、餐饮、预算、备注；
+- Spot 支持地点名称、地址、类型、排序、预计停留、来源说明；
+- AI 结构化草稿保存后进入普通编辑流程。
+
+### 6.4 Travel Footprint
+
+需求：
+
+- iOS 采集 GPS location samples；
+- 支持行程关联；
+- 支持离线缓存和恢复同步；
+- 支持手动 check-in；
+- 支持 route / trajectory；
+- 服务端为长期 source of truth；
+- 采样策略考虑隐私、电量、频率和权限。
+
+第一版优先保证数据结构清晰、同步可靠、地图可运行。
+
+### 6.5 Photos / Notes
+
+需求：
+
+- iOS 拍照或从相册选择；
+- 读取时间戳和可用 EXIF 位置；
+- 绑定 Trip / Day / Spot / Check-in；
+- 用户可添加 caption / note；
+- 服务端持久化 metadata；
+- 照片二进制资源走对象存储，不直接写入关系型数据库。
+
+### 6.6 AI-generated Travel Memory
+
+输入：
+
+- structured itinerary；
+- GPS footprint；
+- visited spots；
+- photos metadata；
+- user notes；
+- trip duration；
+- statistics；
+- optional preferences。
+
+输出：
+
+- trip summary；
+- timeline；
+- highlights；
+- memorable moments；
+- city / route summary；
+- editable narrative；
+- shareable travel card data。
+
+约束：
+
+- 事实数据和 AI 生成文本分离；
+- 不生成用户未到访地点；
+- 对 GPS、时间戳、用户笔记、照片 metadata 支持的事实保持 grounded；
+- 用户可以编辑生成内容。
+
+## 7. 非功能性需求
+
+| 类型 | 要求 |
+|------|------|
+| Privacy | 位置、攻略、照片、记忆按用户隔离；分享时坐标可脱敏 |
+| Security | JWT、当前用户依赖、重要操作二次确认、删除权 |
+| Reliability | AI 可降级，GPS 可离线缓存，上传可重试 |
+| Performance | AI streaming，地图渲染稳定，批量 GPS 同步 |
+| Maintainability | FastAPI modular monolith，API / service / persistence / LLM boundary 清晰 |
+| Testability | auth、user isolation、trip CRUD、RAG scoping、footprint ownership、memory grounding 均需测试 |
+
+## 8. 目标数据域
+
+```text
+users
+  ├── profile / preferences
+  ├── knowledge sources
+  ├── plans
+  ├── trips
+  │     ├── itinerary days
+  │     ├── spots
+  │     ├── footprints
+  │     ├── photos / notes
+  │     └── memories
+  └── travel history / personalization signals
+```
+
+存储分工：
+
+- MySQL：用户、计划、行程、地点、足迹 metadata、照片 metadata、回忆 facts / narrative；
+- Redis：token invalidation、rate limit、短期缓存；
+- Qdrant：非结构化个人知识 chunk embedding；
+- Object storage：照片和媒体文件。
+
+## 9. 里程碑
+
+| Phase | 目标 | 验收 |
+|------|------|------|
+| 0 | 仓库盘点和文档重塑 | README / PRD / architecture / inventory 对齐 |
+| 1 | FastAPI backend foundation | config、DB、Alembic、auth dependency、exceptions、tests skeleton |
+| 2 | Auth / User migration | React 可切换到 FastAPI auth，用户隔离测试通过 |
+| 3 | Trip domain migration | Plan / Trip / Itinerary API 和 Web 调用切换 |
+| 4 | Knowledge / RAG integration | 统一后端承接 ingestion、RAG、AI Companion |
+| 5 | Remove legacy community | 不迁移 public feed / like / follow，清理无依赖代码 |
+| 6 | Web experience remould | 导航聚焦 Dashboard、Knowledge、AI、Plans、Trips、Footprints、Memories、Profile |
+| 7 | iOS foundation | SwiftUI app 完成 API config、login、current trip、basic profile |
+| 8 | iOS tracking | Core Location、local buffer、sync、MapKit、check-in |
+| 9 | Travel memory | 基于真实足迹 / 笔记 / 照片生成 grounded memory |
+
+## 10. 当前实现边界
+
+当前代码尚未完成统一 FastAPI 后端、iOS、Footprint、Travel Memory。README 和架构文档必须区分当前架构与目标架构，不能把尚未迁移完成的能力描述成已上线事实。

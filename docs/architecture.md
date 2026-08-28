@@ -1,272 +1,246 @@
-# 项目架构
+# Vago 架构说明
 
-> 最后更新：2026-06-17｜架构：混合单体（Java CRUD + Python AI）
+> 最后更新：2026-08-28
+> 当前状态：Remould Phase 0 — Repository Inventory / Documentation Alignment
+> 目标架构：FastAPI Modular Monolith + React Web + Native iOS
 
----
+## 1. 架构原则
 
-## 当前实现状态
+Vago 的新架构服务于一个更聚焦的产品定位：
 
-| 模块 | 路径 | 状态 | 说明 |
-|------|------|------|------|
-| vago-backend | `services/vago-backend/` | ✅ 完成 | Java Spring Boot 单体，端口 8080 |
-| vago-ai | `services/vago-ai/` | ✅ 完成 | Python FastAPI AI 服务，端口 8000 |
-| vago-web | `apps/vago-web/` | ✅ 完成 | React + Vite 前端，端口 5173 |
-| ~~vago-gateway~~ | `services/vago-gateway/` | ⛔ 已废弃 | 单体架构不需要网关，目录保留 |
-| ~~vago-service-user~~ | `services/vago-service-user/` | ⛔ 已废弃 | 代码已迁入 vago-backend，目录保留 |
+> AI-Native Personal Travel Companion — 以个人旅行知识、AI 规划、真实足迹与旅行回忆为核心的个性化旅行搭子。
 
----
+架构原则：
 
-## 架构演进历史
+- **Personal-first**：以单个用户的攻略、行程、足迹、照片、笔记、回忆和偏好为中心。
+- **AI-native**：AI 嵌入规划、检索、结构化输出和回忆生成链路，而不是孤立聊天页。
+- **Human-in-the-loop**：AI 生成草稿，用户确认后才写入正式 Plan / Trip / Memory。
+- **Adaptive Context Retrieval**：根据任务选择 Direct Context、SQL、Profile、RAG，而不是所有请求都强制 RAG。
+- **Modular Monolith**：个人项目规模优先采用模块化单体，避免过早微服务化。
+- **Mobile-native**：Web 和 iOS 分工明确，iOS 聚焦旅行中采集与轻量体验。
 
-```
-v0.1（初始微服务）：
-  vago-gateway:8080 → vago-service-user:8081
-  Java SSE 代理 → Python AI（两跳延迟）
+## 2. 当前架构
 
-v0.2（当前 · 混合单体，2026-05 重构）：
-  vago-backend:8080  ← 所有 CRUD + auth
-  vago-ai:8000       ← AI 对话（前端直连，消除 Java SSE 代理）
-```
+当前仓库仍采用 React Web + Spring Boot + FastAPI AI 的混合架构：
 
-**核心重构**（2026-06）：AI 对话接口（chat / chat/stream）从前端 → Java → Python 的三跳链路，
-改为前端 → Python 直连，消除 Java SSE 代理，降低延迟和连接管理复杂度。
-
----
-
-## 总目录
-
-```
-Vago/
-├── apps/
-│   └── vago-web/               # ✅ React 18 + Vite 5 + Tailwind CSS
-│       ├── src/
-│       │   ├── api/ai.js           # AI chat SSE + save draft/trip
-│       │   ├── api/travel.js       # Guide/Trip/Plan CRUD
-│       │   ├── api/user.js         # 用户认证
-│       │   ├── pages/AiPlanPage.jsx# 攻略库 + AI 对话（双栏布局）
-│       │   ├── pages/GuidePage.jsx # 攻略库管理
-│       │   ├── pages/PlanPage.jsx  # 计划列表
-│       │   ├── pages/TripPage.jsx  # 行程列表
-│       │   ├── pages/ItineraryPage.jsx # 每日行程编辑
-│       │   ├── stores/auth.js      # localStorage 认证状态
-│       │   └── App.jsx             # React Router v6
-│       └── vite.config.js      # 代理：/api/v1/ai/chat → :8000，其余 /api/v1 → :8080
-│
-├── services/
-│   ├── pom.xml                 # Maven 父 POM（只构建 vago-backend）
-│   │
-│   ├── vago-backend/           # ✅ Java 单体后端（Spring Boot 3.2.5，:8080）
-│   │   └── src/main/java/com/vago/
-│   │       ├── VagoApplication.java           # 主类，@MapperScan
-│   │       ├── common/                        # Result.java, ResultCode.java, PageVO.java
-│   │       ├── config/                        # WebMvc, Swagger, AiClient
-│   │       ├── constant/ context/ exception/ handler/ interceptor/ json/ properties/ utils/
-│   │       ├── user/                          # 用户域（controller/service/mapper/model）
-│   │       ├── travel/                        # 行程域（Trip/Plan/Itinerary/Guide CRUD）
-│   │       └── ai/                            # AI 对接层
-│   │           ├── controller/AiController.java   # save-draft / save-trip
-│   │           ├── service/AiService.java         # 索引异步管理 + 行程保存
-│   │           ├── client/VagoAiClient.java       # HTTP 客户端（含 Spring Retry）
-│   │           ├── config/AiClientConfig.java     # @EnableAsync + @EnableRetry
-│   │           └── model/                         # AiPlanSaveDTO / AiPlanSaveVO
-│   │
-│   └── vago-ai/                # ✅ Python FastAPI AI 服务（:8000）
-│       ├── main.py             # FastAPI 入口 + CORS + 限流中间件
-│       ├── requirements.txt
-│       ├── app/
-│       │   ├── config.py       # Pydantic Settings（多 Provider 兼容）
-│       │   ├── models/schemas.py   # 所有 Pydantic Schema
-│       │   ├── dependencies/
-│       │   │   ├── auth.py         # JWT 验证（asyncio Redis 连接池）
-│       │   │   └── rate_limit.py   # IP + 用户级别限流
-│       │   ├── routers/
-│       │   │   ├── chat.py         # SSE 流式 + 非流式对话
-│       │   │   ├── articles.py     # 攻略入库/检索/删除
-│       │   │   └── ai.py          # 预留端点
-│       │   └── services/
-│       │       ├── rag_chain.py    # LangChain Tool-Calling Agent
-│       │       ├── plan_extractor.py  # 结构化行程提取（两步法）
-│       │       ├── llm.py         # LLM 工厂（多 Provider）
-│       │       ├── vector_store.py # Qdrant CRUD（按 user_uuid 隔离）
-│       │       ├── embedder.py    # OpenAI Embedding
-│       │       ├── indexer.py     # 攻略入库编排
-│       │       ├── chunker.py     # 语义分块
-│       │       ├── cleaner.py     # HTML/文本清洗
-│       │       └── metadata_extractor.py
-│   │
-│   └── nginx/
-│       └── nginx.conf            # 生产 Nginx 反向代理
-│
-├── data/
-│   └── collections/vago_articles/  # Qdrant 向量数据（磁盘存储）
-│
-├── docs/
-│   ├── prd/PRD.md
-│   ├── database/schema.md
-│   ├── API/                     # API 文档
-│   ├── USAGE.md                 # 本地开发指南
-│   └── architecture.md          # 本文件
-│
-├── dev-up.sh                    # 一键启动脚本
-├── .env.example
-└── README.md
-```
-
----
-
-## 请求链路（本地开发）
-
-```
-浏览器 localhost:5173
+```text
+Browser / React SPA (:5173)
     │
-    ├── /api/v1/user/**         →  Vite proxy  →  Java vago-backend :8080
-    ├── /api/v1/travel/**       →  Vite proxy  →  Java vago-backend :8080
-    ├── /api/v1/ai/plans/**     →  Vite proxy  →  Java vago-backend :8080
-    │                                                            │
-    │                               JWT 拦截器 → Controller → Service → Mapper
-    │                                                            ├── MySQL :3306
-    │                                                            └── Redis :6379
+    ├── /api/v1/user/**       → Spring Boot vago-backend (:8080)
+    ├── /api/v1/travel/**     → Spring Boot vago-backend (:8080)
+    ├── /api/v1/ai/plans/**   → Spring Boot vago-backend (:8080)
     │
-    └── /api/v1/ai/chat/**     →  Vite proxy  →  Python vago-ai :8000（直连，消除 SSE 代理）
-                                                                 │
-                              JWT 验证（Python auth.py）→ Router → RAG Agent
-                                                                 ├── Qdrant :6333（向量检索）
-                                                                 ├── Redis :6379（JWT 黑名单 + 限流）
-                                                                 └── OpenAI API（LLM + Embedding）
+    └── /api/v1/ai/chat/**    → FastAPI vago-ai (:8000)
+
+Spring Boot vago-backend
+    ├── MySQL
+    ├── Redis
+    └── WebClient bridge → FastAPI /api/v1/articles/*
+
+FastAPI vago-ai
+    ├── Redis auth / rate limit checks
+    ├── Qdrant
+    └── OpenAI / LangChain
 ```
 
-### 生产环境（Nginx）
+当前实现中的关键事实：
 
+- Web 路由包括 `/login`、`/`、`/trips`、`/plans`、`/guides`、`/ai`、`/profile`、`/trips/:uuid/itinerary`、`/plans/:uuid/itinerary`。
+- AI chat / stream 由前端经 Vite proxy 直连 Python FastAPI。
+- 用户、计划、行程、攻略、收藏夹、AI 计划保存仍在 Java Spring Boot。
+- 攻略创建 / 删除后由 Java 异步调用 Python `/api/v1/articles/ingest` 和删除接口维护 Qdrant。
+- 数据库当前落地表集中在 `users`、`user_oauth_bindings`、`user_settings`、`trips`、`plans`、`guides`、`itinerary_days`、`itinerary_spots`。
+
+这套架构是迁移起点，不再作为最终架构描述。
+
+## 3. 目标架构
+
+目标后端为统一 FastAPI Modular Monolith：
+
+```text
+React Web                SwiftUI iOS
+    │                        │
+    └──────────┬─────────────┘
+               │ HTTPS
+               ▼
+          FastAPI Backend
+               │
+   ┌───────────┼────────────┐
+   │           │            │
+Business      AI       Personalization
+Modules       Modules  Modules
+   │           │            │
+   └───────────┼────────────┘
+               │
+     ┌─────────┼─────────┐
+     │         │         │
+   MySQL     Redis     Qdrant
+                         │
+                        LLM
 ```
-浏览器 :80
-    │
-    ├── /api/v1/ai/chat/**     →  Nginx → Python :8000（proxy_buffering off）
-    ├── /api/v1/**              →  Nginx → Java :8080
-    └── /                       →  Nginx → 静态文件 (/var/www/vago-web/dist/)
+
+建议目录：
+
+```text
+services/vago-api/
+└── app/
+    ├── main.py
+    ├── api/
+    ├── core/
+    │   ├── config.py
+    │   ├── security.py
+    │   ├── database.py
+    │   └── exceptions.py
+    ├── auth/
+    ├── users/
+    ├── trips/
+    ├── itineraries/
+    ├── knowledge/
+    ├── footprints/
+    ├── memories/
+    ├── personalization/
+    ├── agents/
+    ├── rag/
+    ├── llm/
+    └── shared/
 ```
 
----
+模块边界：
 
-## 包结构设计原则
+| 模块 | 职责 |
+|------|------|
+| `auth` / `users` | 登录、JWT、current user、profile、settings、用户隔离 |
+| `trips` / `itineraries` | Plan、Trip、Day、Spot、交通、住宿、预算、状态流转 |
+| `knowledge` | 攻略 / Notes 导入、清洗、元数据、索引状态、来源引用 |
+| `rag` | Chunking、Embedding、Qdrant 检索、用户级向量隔离 |
+| `personalization` | 偏好、历史旅行信号、Context Router |
+| `agents` | AI Companion、Tool Calling、结构化输出编排 |
+| `footprints` | GPS 采样、轨迹、打卡、区域统计 |
+| `memories` | 基于事实数据生成、编辑、分享旅行回忆 |
+| `llm` | OpenAI SDK、模型配置、流式输出、结构化 schema validation |
 
+## 4. Personal Context Orchestration
+
+Vago 的个性化不是简单的 `Personalization = RAG`。
+
+目标模型：
+
+```text
+Personalization
+=
+Current User Intent
++
+Structured Travel Data
++
+Unstructured Personal Knowledge
++
+Explicit / Learned Preferences
 ```
-com.vago
-├── # 基础设施包（跨域）：所有业务域共享，不依赖任何域
-│   common / config / constant / context / handler / interceptor / json / properties / utils
-│
-└── # 业务域包（按域隔离）：域内自治，不跨域直接依赖
-    user / travel / ai
+
+Context Router 应根据用户任务选择上下文来源：
+
+```text
+                 User Query
+                     │
+                     ▼
+              Context Router
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+ Direct Context     SQL        RAG
+ selected guides    trips      guides / notes / memories
+          └──────────┼──────────┘
+                     ▼
+              Preferences
+                     ▼
+                LLM / Agent
+                     ▼
+           Personalized Result
 ```
 
-新增业务域时：
-1. 在 `com.vago.<domain>/` 下建 `controller / service / mapper / model` 四层
-2. 在 `WebMvcConfiguration.addInterceptors()` 追加需要保护的路径
-3. `@MapperScan("com.vago.**.mapper")` 自动扫描，无需修改主类
+检索规则：
 
----
+- 用户明确选择少量攻略或笔记时，优先 Direct Context。
+- 查询历史旅行、去过地点、预算统计时，优先 SQL / domain service。
+- 面对大量非结构化攻略、笔记、回忆时，使用 RAG / Qdrant。
+- 结构化输出进入业务数据前必须经过用户确认。
+- Travel Memory 必须区分事实数据和 AI 生成叙事，不能虚构未到访地点。
 
-## 技术选型
+## 5. API 方向
 
-### Java 后端
-| 技术 | 版本 | 用途 |
+目标 API 统一为：
+
+```text
+/api/v1/auth
+/api/v1/users
+/api/v1/knowledge
+/api/v1/ai
+/api/v1/plans
+/api/v1/trips
+/api/v1/footprints
+/api/v1/memories
+```
+
+API contract 不应依赖浏览器 cookie、React state 或 Vite proxy。React Web 和 SwiftUI iOS 应共享同一套 domain API。
+
+## 6. 技术选型
+
+保留：
+
+- React、Vite、Tailwind CSS；
+- MySQL；
+- Redis；
+- Qdrant；
+- LangChain / OpenAI SDK / SSE；
+- 当前已稳定工作的 ingestion、chunking、embedding、vector retrieval。
+
+逐步替换：
+
+- Spring Boot；
+- MyBatis；
+- JJWT；
+- Java WebClient AI bridge。
+
+目标 Python 后端栈：
+
+- FastAPI；
+- Pydantic v2；
+- SQLAlchemy 2.x；
+- Alembic；
+- PyJWT / python-jose / equivalent maintained JWT solution；
+- Redis client；
+- Qdrant client；
+- OpenAI SDK；
+- pytest。
+
+## 7. 迁移路线
+
+| Phase | 目标 | 状态 |
 |------|------|------|
-| Spring Boot | 3.2.5 | 单体框架 |
-| MyBatis | 3.0.3 (starter) | ORM |
-| WebClient (WebFlux) | 3.2.5 | 调用 Python AI 服务 |
-| Spring Retry | 3.2.5 | Java → Python 重试容错 |
-| MySQL | 8.0 | 主数据库 |
-| Redis | 6.x+ | Token 黑名单、限流、验证码 |
-| JJWT | 0.12.5 | JWT 签发/校验 |
-| SpringDoc OpenAPI | 2.3.0 | Swagger UI |
+| 0 | Repository inventory + docs alignment | 当前进行 |
+| 1 | 建立 FastAPI backend foundation | 待开始 |
+| 2 | 迁移 Auth / User | 待开始 |
+| 3 | 迁移 Trip / Plan / Itinerary | 待开始 |
+| 4 | 整合 Knowledge / RAG / AI Companion | 待开始 |
+| 5 | 清理 legacy community / public-feed 能力 | 待开始 |
+| 6 | 更新 Web 产品体验和导航 | 待开始 |
+| 7 | 建立 SwiftUI iOS foundation | 待开始 |
+| 8 | 实现 iOS Travel Tracking | 待开始 |
+| 9 | 实现 grounded Travel Memory | 待开始 |
 
-### Python AI 服务
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| FastAPI | 0.111 | Web 框架 |
-| LangChain | 0.2.5 | LLM Agent 编排 |
-| OpenAI SDK | 1.35.3 | GPT 调用 + Embedding |
-| Qdrant Client | 1.9.1 | 向量数据库客户端 |
-| Redis (asyncio) | 5.0.7 | 限流 + JWT 黑名单 |
-| Uvicorn | 0.30 | ASGI 服务器 |
+迁移原则：
 
-### 前端
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| React | 18.3 | UI 框架 |
-| Vite | 5.3 | 构建 + 代理 |
-| Tailwind CSS | 3.4 | 样式 |
-| Axios | 1.7 | HTTP 客户端 |
+- 先新实现、测试、切换调用方，再删除旧实现。
+- 不为了统一技术栈而一次性重写全部系统。
+- 不把 public community 迁入新 FastAPI 后端。
+- 不把结构化旅行数据塞进向量库代替关系型查询。
+- 数据库 destructive migration 需要单独确认。
 
----
+## 8. 当前风险
 
-## 本地端口分配
+- Java 与 Python 共享 JWT secret / Redis 黑名单，迁移 auth 时需保证兼容窗口。
+- Web API client 当前按 `/api/v1/user`、`/api/v1/travel`、`/api/v1/ai` 拆分，切换 FastAPI 时需要逐模块迁移 proxy。
+- `guides` 表含 `view_count`、`like_count`、`status=published` 等社区语义，后续应重新定位为个人知识 / 可分享内容。
+- 收藏夹能力可作为个人知识组织能力复用，但不应演变为公共社区关系。
+- `docs/database/schema.md` 中有部分未来表设计，`docs/database/db_schema.sql` 是当前较小实现，两者需要在后续 schema remould 中对齐。
 
-| 进程 | 端口 | 说明 |
-|------|------|------|
-| MySQL | 3306 | 宿主机直接运行 |
-| Redis | 6379 | 宿主机直接运行 |
-| vago-backend | **8080** | Java Spring Boot 单体 |
-| vago-ai | **8000** | Python FastAPI（uvicorn） |
-| vago-web | **5173** | Vite Dev Server |
-| Qdrant | **6333** | 向量数据库 |
-
----
-
-## 关键数据流
-
-### 攻略向量化流程
-```
-用户创建/更新攻略
-    │
-    ▼
-GuideController → GuideService → MySQL 持久化
-    │                              ▲
-    ▼                              │
-AiServiceImpl.indexGuideAsync()    │
-    │  (@Async)                    │
-    ▼                              │
-VagoAiClient.ingestGuide()        │
-    │  (Spring Retry 最多 3 次)     │
-    ▼                              │
-Python POST /api/v1/articles/ingest│
-    │                              │
-    ├─ cleaner → chunker          │
-    ├─ embedder → Qdrant upsert   │
-    └─ 返回 IngestResponse ────────┘
-                                   
-└→ guideMapper.updateAiStatus(INDEXED/FAILED)
-```
-
-### AI 对话流程
-```
-用户发送消息
-    │
-    ▼
-前端 POST /api/v1/ai/chat/stream（直连 Python）
-    │
-    ▼
-Python auth.py（JWT 验证 + Redis 黑名单检查）
-    │
-    ▼
-rate_limit（IP + 用户级别限流）
-    │
-    ▼
-rag_chain.py（LangChain Tool-Calling Agent）
-    ├─ 搜索用户私有攻略库（Qdrant RAG）
-    ├─ 调用 LLM 生成回答
-    ├─ SSE 流式输出 token
-    └─ 文本回答 → plan_extractor 提取结构化行程
-    │
-    ▼
-前端渲染：打字机效果 → 来源引用 → 结构化计划保存按钮
-```
-
----
-
-## 待办事项
-
-- [ ] 实现移动端 App（React Native / Flutter）
-- [ ] 足迹地图模块（GPS 轨迹、迷雾解锁）
-- [ ] 限流策略支持可配置化（管理后台）
-- [ ] AI 回答流中断重连机制
-- [ ] 清理废弃的 `vago-gateway` 和 `vago-service-user` 目录
+更多盘点见 [remould migration inventory](remould-migration-inventory.md)。
