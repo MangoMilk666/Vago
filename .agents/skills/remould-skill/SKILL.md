@@ -171,17 +171,51 @@ iOS 侧重点：
 - Qdrant；
 - `user_uuid` 级向量隔离；
 - 攻略删除与重新索引；
-- RAG 检索；
+- 语义检索；
 - 来源引用。
 
 这是 Vago 的核心长期数据资产之一。
+
+但必须明确：
+
+> **RAG 不是 Vago 的核心产品卖点，也不是所有个性化请求的默认执行路径。**
+
+Vago 的核心能力是 **Personal Travel Intelligence / Personal Context Orchestration**。
+
+RAG 只负责其中一类问题：
+
+> 从用户长期积累的大量、非结构化旅行资料中，检索当前任务真正相关的个人上下文。
+
+因此不要把：
+
+```text
+Personalization = RAG
+```
+
+作为产品或架构假设。
+
+更准确的模型是：
+
+```text
+Personalization
+=
+Current User Intent
++
+Structured Travel Data
++
+Unstructured Personal Knowledge
++
+Explicit / Learned Preferences
+```
+
+RAG 只对应其中的 **Unstructured Personal Knowledge retrieval**。
 
 ### AI Travel Companion
 
 保留：
 
 - 自然语言旅行问答；
-- 个人攻略 RAG；
+- Personal Context Retrieval；
 - Tool Calling；
 - SSE streaming；
 - 多轮交互；
@@ -189,7 +223,14 @@ iOS 侧重点：
 - 结构化行程生成；
 - 用户确认后保存为 Plan / Trip。
 
-重塑过程中应避免把它退化成简单的 `prompt -> LLM -> text`。
+其中 Personal Context Retrieval 可以来自：
+
+- 直接传入的用户选中资料；
+- SQL 中的历史 Trip / Spot / Budget / GPS 数据；
+- 用户 Profile / Preferences；
+- 对大量非结构化攻略、笔记、回忆执行的语义检索 / RAG。
+
+重塑过程中应避免把它退化成简单的 `prompt -> LLM -> text`，也不要把所有个性化请求强制绑定到 RAG。
 
 ### Trip / Plan / Itinerary
 
@@ -794,16 +835,210 @@ Swift iOS 和 React Web 应共享同一套 domain API。
 
 ---
 
+
+# Personal Context and Retrieval Strategy
+
+Vago 的个性化能力应建立在 **Hybrid Personal Context** 上，而不是单一 RAG。
+
+## Context Categories
+
+### Structured Personal Data
+
+例如：
+
+- Trip；
+- Spot；
+- Date；
+- Budget；
+- Visited / Not Visited；
+- Country / City；
+- GPS coordinates；
+- Trip statistics。
+
+这些数据应优先通过关系型数据库查询。
+
+例如：
+
+```text
+“我去过多少个国家？”
+“我上次东京去了哪些地方？”
+“这次不要重复已经去过的景点。”
+```
+
+这些问题不应使用向量检索代替 SQL。
+
+### Unstructured Personal Knowledge
+
+例如：
+
+- 收藏的旅行攻略；
+- 长文本 Notes；
+- 网页内容；
+- AI / 用户生成的长篇 Travel Memory；
+- 非结构化旅行资料。
+
+只有当当前任务需要在较大的非结构化个人资料集合中寻找相关内容时，才使用：
+
+```text
+Embedding
+→ Vector Search
+→ RAG Context
+```
+
+### Explicit / Learned Preferences
+
+例如：
+
+- prefers museums；
+- slow travel；
+- budget range；
+- avoids early flights；
+- preferred food categories；
+- preferred itinerary density。
+
+这些偏好应逐步沉淀为结构化 profile / memory，而不是永远依赖 RAG 从长文本中猜测。
+
+## Adaptive Retrieval
+
+不要对所有请求机械执行 RAG。
+
+根据上下文规模和用户意图选择 retrieval strategy。
+
+### Direct Context
+
+如果：
+
+- 用户明确选择了 1～数篇攻略；
+- 上下文体量可以安全直接提供给模型；
+- 不需要跨大量历史资料检索；
+
+则优先：
+
+```text
+Selected Sources
+      ↓
+Direct Context
+      ↓
+LLM
+```
+
+不要为了“必须使用 RAG”再执行无意义的 embedding search。
+
+### Semantic Retrieval / RAG
+
+如果：
+
+- 用户知识库规模较大；
+- 查询范围模糊；
+- 需要跨大量攻略 / Notes / Memories 找相关信息；
+- 无法合理把全部资料直接放入 context；
+
+则：
+
+```text
+User Query
+    ↓
+Semantic Retrieval
+    ↓
+Relevant Personal Knowledge
+    ↓
+LLM / Agent
+```
+
+### Structured Retrieval
+
+如果问题主要依赖：
+
+- historical trips；
+- visited spots；
+- GPS；
+- dates；
+- budget；
+- statistics；
+
+应优先使用 SQL / domain service。
+
+## Context Orchestration
+
+目标架构应更接近：
+
+```text
+                 User Query
+                     ↓
+              Context Router
+          ┌──────────┼──────────┐
+          ↓          ↓          ↓
+    Direct Context   SQL       RAG
+                     ↓          ↓
+                Past Trips   Guides / Notes
+          └──────────┼──────────┘
+                     ↓
+              Preferences
+                     ↓
+                LLM / Agent
+                     ↓
+           Personalized Result
+```
+
+Agent 的价值之一是决定：
+
+- 当前任务需要哪些个人上下文；
+- 哪些数据应该直接读取；
+- 哪些应该走 SQL；
+- 哪些才值得执行 semantic retrieval。
+
+## Product Messaging
+
+不要在 README、简历或产品描述中把：
+
+> RAG-based itinerary recommendation
+
+作为 Vago 的主要产品定位。
+
+优先使用：
+
+- Personal Travel Intelligence；
+- Personal Context Retrieval；
+- Personalized Travel Companion；
+- Personal Travel Memory。
+
+RAG / Qdrant 应作为实现非结构化个人知识检索的底层技术，而不是产品本身。
+
+## Codex Migration Rule for Existing RAG
+
+现有 RAG 能力属于可复用技术资产，应保留，但在 remould 时必须重新定位。
+
+Codex 不应：
+
+- 删除已经稳定工作的 RAG pipeline；
+- 强制所有 AI 请求经过 RAG；
+- 为展示 Qdrant 而扩大向量化数据范围；
+- 把适合 SQL 的结构化业务数据全部写入 vector DB；
+- 把短小、用户明确选择的资料再次无意义检索。
+
+Codex 应：
+
+- 保留 ingestion / chunking / embedding / vector retrieval；
+- 将 RAG 封装为可选择的 context source；
+- 允许 direct context；
+- 允许 relational retrieval；
+- 为未来 Context Router / Agent Tool orchestration 留出清晰 interface；
+- 保持来源引用和 user-level isolation。
+
+---
+
 # AI-Native Design Rules
 
-## Retrieval Before Generation Where Personal Context Matters
+## Personal Context Before Generic Generation
 
 涉及用户个人攻略、历史旅行或偏好时：
 
-- 优先检索个人数据；
+- 优先利用用户自己的相关上下文；
+- 根据任务选择 Direct Context / SQL / Profile / RAG；
 - 明确数据来源；
 - 个人数据不足时再 fallback；
-- 不要把模型常识伪装成用户知识库结果。
+- 不要把模型常识伪装成用户知识库结果；
+- 不要为了调用 RAG 而调用 RAG。
 
 ## Structured Output
 
@@ -923,13 +1158,16 @@ README 最终应突出：
 
 ```text
 AI-Native Personal Travel Companion
-Personal RAG
+Personal Travel Intelligence
+Adaptive Personal Context Retrieval
 AI Planning
 Travel Footprint
 Travel Memory
 Web + Native iOS
 FastAPI Modular Monolith
 ```
+
+RAG / Qdrant 可以在技术架构与实现细节中出现，但不要继续作为产品主标题或唯一的 personalization 解释。
 
 不要继续把 Spring Boot + FastAPI 混合架构描述为最终架构。
 
@@ -1006,7 +1244,7 @@ Storage
 
 - Spring Boot 不再是运行依赖；
 - public community 不再是核心产品域；
-- RAG 与 Agent 与实际 Trip domain 形成闭环；
+- Agent 能根据任务组合 Direct Context、结构化业务数据、Preferences 与必要的 RAG 上下文；
 - iOS 可以访问统一 FastAPI API；
 - 旅行中真实数据可以沉淀；
 - 旅行后 AI 可以基于真实数据生成可编辑回忆；
