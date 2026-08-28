@@ -258,7 +258,7 @@ public class UserServiceImpl implements UserService {
     public TokenVO refreshToken(TokenRefreshDTO dto) {
         String oldRefreshToken = dto.getRefreshToken();
 
-        // 1. 解析 JWT（过期或签名非法时直接 401）
+        // 1. 解析 JWT（旧的refreshToken过期或签名非法时直接 401）
         Claims claims;
         try {
             claims = JwtUtil.parseJWT(jwtProperties.getSecretKey(), oldRefreshToken);

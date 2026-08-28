@@ -16,7 +16,6 @@ Thumbs.db
 # --- AI Vibe Tools ---
 .trae/
 .claude/
-vago-skill.md
 
 # --- Java / Spring Boot / Maven / Gradle ---
 **/target/
@@ -108,4 +107,3 @@ docs/.log/
 .log/
 **/test.txt
 bug-records.md
-*skill.md
