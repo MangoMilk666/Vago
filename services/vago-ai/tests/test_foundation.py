@@ -21,6 +21,28 @@ def test_settings_keep_legacy_provider_fallbacks():
     assert settings.get_llm_base_url() is None
 
 
+def test_settings_build_database_url_from_mysql_parts():
+    """数据库连接应由分开的 MySQL 配置字段构造。"""
+    settings = Settings(
+        mysql_host="db.internal",
+        mysql_port=3307,
+        mysql_db="vago_test",
+        mysql_user="vago_user",
+        mysql_password="p@ss/word",
+        mysql_charset="utf8mb4",
+    )
+
+    url = settings.build_database_url()
+
+    assert url.drivername == "mysql+pymysql"
+    assert url.host == "db.internal"
+    assert url.port == 3307
+    assert url.database == "vago_test"
+    assert url.username == "vago_user"
+    assert url.password == "p@ss/word"
+    assert url.query["charset"] == "utf8mb4"
+
+
 def test_health_endpoint_uses_app_metadata():
     """应用工厂创建的 app 应正常暴露健康检查接口。"""
     client = TestClient(create_app())

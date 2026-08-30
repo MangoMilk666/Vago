@@ -10,6 +10,7 @@ from functools import lru_cache
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
@@ -83,8 +84,13 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_db: int = 0
 
-    # 关系型数据库地基。remould 阶段继续使用 MySQL，不在同一轮迁移里更换数据库。
-    database_url: str = "mysql+pymysql://root:password@127.0.0.1:3306/vago"
+    # 关系型数据库地基。用分开的 MySQL 字段适配不同环境，避免在 .env 里维护整串连接 URL。
+    mysql_host: str = "127.0.0.1"
+    mysql_port: int = 3306
+    mysql_db: str = "vago"
+    mysql_user: str = "root"
+    mysql_password: str = "password"
+    mysql_charset: str = "utf8mb4"
     database_echo: bool = False
     database_pool_pre_ping: bool = True
 
@@ -109,6 +115,18 @@ class Settings(BaseSettings):
     def get_llm_base_url(self) -> str | None:
         """返回最终生效的 LLM base_url；为空时交给 SDK 使用默认端点。"""
         return self.llm_base_url or None
+
+    def build_database_url(self) -> URL:
+        """基于分开的 MySQL 配置构造 SQLAlchemy URL。"""
+        return URL.create(
+            "mysql+pymysql",
+            username=self.mysql_user,
+            password=self.mysql_password,
+            host=self.mysql_host,
+            port=self.mysql_port,
+            database=self.mysql_db,
+            query={"charset": self.mysql_charset},
+        )
 
 
 @lru_cache

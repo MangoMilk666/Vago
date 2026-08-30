@@ -18,7 +18,7 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     """离线迁移模式：不打开数据库连接，只根据 URL 生成迁移 SQL。"""
     context.configure(
-        url=settings.database_url,
+        url=settings.build_database_url().render_as_string(hide_password=False),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

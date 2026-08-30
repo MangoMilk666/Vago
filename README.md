@@ -171,12 +171,12 @@ Vago/
 
 ## 迁移状态
 
-当前 remould 进度为 **Phase 1 — FastAPI Backend Foundation**。
+当前 remould 进度为 **Phase 2 — Authentication and User Migration**。
 
 迁移优先级：
 
 1. 建立统一 FastAPI backend foundation；已完成基础骨架
-2. 迁移 Auth / User；
+2. 迁移 Auth / User；已完成 FastAPI 代码侧迁移，进入本地联调验证
 3. 迁移 Trip / Plan / Itinerary；
 4. 整合 Knowledge / RAG / AI Companion；
 5. 清理 legacy community / public-feed 相关能力；
