@@ -30,6 +30,7 @@ CANCEL_KEY_PREFIX = "vago:cancel:"
 
 def mask_phone(phone: str | None) -> str | None:
     """手机号脱敏：保持与 Java 侧 ``138****1000`` 的展示规则一致。"""
+    # 分支条件：手机号为空或长度不足时，原样返回。
     if not phone or len(phone) < 7:
         return phone
     return f"{phone[:3]}****{phone[-4:]}"
@@ -53,6 +54,7 @@ def get_user_by_email(db: Session, email: str) -> User | None:
 def get_user_or_raise(db: Session, user_uuid: str) -> User:
     """获取当前用户，不存在或状态异常时抛出业务异常。"""
     user = get_user_by_uuid(db, user_uuid)
+    # 分支条件：UUID 找不到未删除用户时，返回用户不存在。
     if user is None:
         raise AppException("用户不存在", status_code=404, code="USER_NOT_FOUND")
     ensure_user_can_login(user)
@@ -61,10 +63,13 @@ def get_user_or_raise(db: Session, user_uuid: str) -> User:
 
 def ensure_user_can_login(user: User) -> None:
     """校验账号状态，复用 Java 侧 active/banned/cancelling 语义。"""
+    # 分支条件：账号状态为正常时允许继续业务流程。
     if user.status == ACTIVE_STATUS:
         return
+    # 分支条件：账号状态为封禁时拒绝登录或资料操作。
     if user.status == BANNED_STATUS:
         raise AppException("账号已被禁用", status_code=403, code="ACCOUNT_BANNED")
+    # 分支条件：账号状态为注销中时拒绝登录或资料操作。
     if user.status == CANCELLING_STATUS:
         raise AppException("账号注销中", status_code=403, code="ACCOUNT_CANCELLING")
     raise AppException("账号状态异常", status_code=403, code="ACCOUNT_INVALID")
@@ -89,6 +94,7 @@ def create_default_settings(db: Session, user_id: int) -> UserSettings:
 def get_or_create_settings(db: Session, user_id: int) -> UserSettings:
     """获取用户设置；历史脏数据缺失时补齐默认设置。"""
     settings = db.get(UserSettings, user_id)
+    # 分支条件：历史用户缺少设置记录时，补一份默认设置。
     if settings is None:
         settings = create_default_settings(db, user_id)
     return settings
@@ -117,8 +123,10 @@ def update_profile(db: Session, user_uuid: str, payload: UserProfileUpdate) -> U
     """更新用户基础资料，并返回更新后的脱敏资料。"""
     user = get_user_or_raise(db, user_uuid)
 
+    # 分支条件：请求传入 nickname 时更新昵称。
     if payload.nickname is not None:
         user.nickname = payload.nickname
+    # 分支条件：请求传入 email 时先检查唯一性再更新。
     if payload.email is not None:
         existing = db.scalar(
             select(User).where(
@@ -127,9 +135,11 @@ def update_profile(db: Session, user_uuid: str, payload: UserProfileUpdate) -> U
                 User.deleted_at.is_(None),
             )
         )
+        # 分支条件：邮箱被其他未删除用户占用时，返回冲突。
         if existing is not None:
             raise AppException("邮箱已被使用", status_code=409, code="EMAIL_ALREADY_USED")
         user.email = payload.email
+    # 分支条件：请求传入 avatarUrl/avatarUuid 时更新头像字段。
     if payload.avatar_url is not None:
         user.avatar_oss_key = payload.avatar_url
 
@@ -155,6 +165,7 @@ def update_settings(db: Session, user_uuid: str, payload: UserSettingsUpdate) ->
 
     values = payload.model_dump(exclude_unset=True, by_alias=False)
     for field_name, value in values.items():
+        # 分支条件：notification_checkin 为布尔入参时，转换成数据库 0/1。
         if field_name == "notification_checkin":
             value = 1 if value else 0
         setattr(settings, field_name, value)
@@ -171,12 +182,16 @@ async def cancel_account(user_uuid: str, sms_code: str, db: Session) -> AccountC
     from app.auth.service import validate_sms_code
 
     user = get_user_by_uuid(db, user_uuid)
+    # 分支条件：UUID 找不到未删除用户时，返回用户不存在。
     if user is None:
         raise AppException("用户不存在", status_code=404, code="USER_NOT_FOUND")
+    # 分支条件：账号已经处于注销中时，拒绝重复提交注销。
     if user.status == CANCELLING_STATUS:
         raise AppException("账号已在注销中", status_code=409, code="ACCOUNT_ALREADY_CANCELLING")
+    # 分支条件：账号已封禁时，不允许发起注销流程。
     if user.status == BANNED_STATUS:
         raise AppException("账号已被禁用", status_code=403, code="ACCOUNT_BANNED")
+    # 分支条件：账号未绑定手机号时，无法用短信验证码确认注销。
     if not user.phone:
         raise AppException("当前账号未绑定手机号，无法短信校验", status_code=400, code="PHONE_NOT_BOUND")
 
@@ -201,13 +216,16 @@ async def cancel_account(user_uuid: str, sms_code: str, db: Session) -> AccountC
 async def revoke_cancel_account(user_uuid: str, db: Session) -> None:
     """撤销账号注销申请：宽限期 Redis key 存在时恢复正常状态。"""
     user = get_user_by_uuid(db, user_uuid)
+    # 分支条件：UUID 找不到未删除用户时，返回用户不存在。
     if user is None:
         raise AppException("用户不存在", status_code=404, code="USER_NOT_FOUND")
+    # 分支条件：账号不是注销中状态时，不能撤销注销。
     if user.status != CANCELLING_STATUS:
         raise AppException("账号不在注销中", status_code=409, code="ACCOUNT_NOT_CANCELLING")
 
     redis = await get_redis_client()
     cancel_key = f"{CANCEL_KEY_PREFIX}{user_uuid}"
+    # 分支条件：Redis 宽限期 key 不存在时，说明撤销窗口已过。
     if not await redis.exists(cancel_key):
         raise AppException("注销撤销已过期", status_code=409, code="CANCEL_REVOKE_EXPIRED")
 

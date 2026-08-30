@@ -8,7 +8,13 @@ from app.main import create_app
 
 def test_settings_keep_legacy_provider_fallbacks():
     """配置迁移后仍保留旧 Provider fallback 规则。"""
-    settings = Settings(openai_api_key="openai-key", llm_api_key="")
+    settings = Settings(
+        openai_api_key="openai-key",
+        embed_api_key="",
+        embed_base_url="",
+        llm_api_key="",
+        llm_base_url="",
+    )
 
     assert settings.get_llm_api_key() == "openai-key"
     assert settings.get_embed_api_key() == "openai-key"

@@ -18,6 +18,7 @@ _redis_pool: aioredis.ConnectionPool | None = None
 async def get_redis_client() -> aioredis.Redis:
     """返回复用连接池的 Redis 客户端实例。"""
     global _redis_pool
+    # 分支条件：当前进程还没有 Redis 连接池时，创建新的连接池。
     if _redis_pool is None:
         _redis_pool = aioredis.ConnectionPool(
             host=settings.redis_host,
@@ -34,6 +35,7 @@ async def get_redis_client() -> aioredis.Redis:
 async def close_redis_pool() -> None:
     """关闭 Redis 连接池，供 FastAPI lifespan 在 shutdown 阶段调用。"""
     global _redis_pool
+    # 分支条件：仅当连接池已经创建时才执行断开，避免重复 shutdown。
     if _redis_pool is not None:
         await _redis_pool.disconnect()
         _redis_pool = None

@@ -29,6 +29,7 @@ _BLACKLIST_KEY_PREFIX = "vago:token:bl:"
 def _resolve_token(request: Request) -> str | None:
     """按配置读取 token header，并兼容 Swagger 常见的 Bearer 前缀。"""
     token = request.headers.get(settings.jwt_token_name) or request.headers.get("authorization")
+    # 分支条件：请求头带 Bearer 前缀时，只取后面的原始 token。
     if token and token.lower().startswith("bearer "):
         return token[7:]
     return token
@@ -50,6 +51,7 @@ async def get_current_user_uuid(request: Request) -> str:
         HTTPException(401) — token 缺失 / 签名无效 / 已过期 / 在黑名单中。
     """
     token = _resolve_token(request)
+    # 分支条件：请求中没有任何可用 token 时，拒绝访问。
     if not token:
         raise HTTPException(status_code=401, detail="缺少认证令牌")
 
@@ -71,6 +73,7 @@ async def get_current_user_uuid(request: Request) -> str:
         token_hash = hashlib.md5(token.encode()).hexdigest()
         bl_key = f"{_BLACKLIST_KEY_PREFIX}{token_hash}"
         r = await get_redis_client()
+        # 分支条件：token 哈希命中 Redis 黑名单时，说明用户已退出登录。
         if await r.exists(bl_key):
             raise HTTPException(status_code=401, detail="令牌已失效，请重新登录")
     except HTTPException:
@@ -80,6 +83,7 @@ async def get_current_user_uuid(request: Request) -> str:
         logger.warning("Redis 黑名单检查失败，降级放行: %s", exc)
 
     user_uuid: str | None = payload.get("userUuid")
+    # 分支条件：JWT payload 缺少 userUuid 时，无法建立用户级数据隔离。
     if not user_uuid:
         raise HTTPException(status_code=401, detail="令牌缺少用户标识")
 

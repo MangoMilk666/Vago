@@ -74,5 +74,7 @@ async def logout(
     authorization: str | None = Header(default=None),
 ) -> ApiResponse[None]:
     """退出登录并让当前 token 失效。"""
-    await service.logout(authorization, payload.refresh_token if payload else None)
+    # 分支条件：请求体存在时携带 refreshToken 一起作废，否则只拉黑 accessToken。
+    refresh_token = payload.refresh_token if payload else None
+    await service.logout(authorization, refresh_token)
     return success(None, "已退出登录")

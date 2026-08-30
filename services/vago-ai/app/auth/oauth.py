@@ -30,6 +30,7 @@ class OAuthUserProfile:
 def normalize_provider(provider: str) -> str:
     """规范化 provider 名称，并限制为当前已迁移的 OAuth provider。"""
     normalized = provider.strip().lower()
+    # 分支条件：当前 Phase 2 只支持 github provider。
     if normalized != "github":
         raise AppException("暂不支持该 OAuth 平台", status_code=400, code="OAUTH_PROVIDER_UNSUPPORTED")
     return normalized
@@ -38,12 +39,14 @@ def normalize_provider(provider: str) -> str:
 async def fetch_oauth_user_profile(provider: str, auth_code: str, redirect_uri: str) -> OAuthUserProfile:
     """根据 provider 获取统一 OAuth 用户资料。"""
     normalized = normalize_provider(provider)
+    # 分支条件：provider 为 github 时走 GitHub OAuth 换码流程。
     if normalized == "github":
         try:
             return await _fetch_github_user_profile(auth_code, redirect_uri)
         except AppException:
             raise
         except httpx.HTTPStatusError as exc:
+            # 分支条件：GitHub 返回认证类错误时，按授权码无效处理。
             if exc.response.status_code in {400, 401, 403}:
                 raise AppException("OAuth 授权码无效或已过期", status_code=400, code="OAUTH_CODE_INVALID")
             raise AppException("OAuth 服务调用失败", status_code=502, code="OAUTH_SERVICE_ERROR")
@@ -54,6 +57,7 @@ async def fetch_oauth_user_profile(provider: str, auth_code: str, redirect_uri: 
 
 async def _fetch_github_user_profile(auth_code: str, redirect_uri: str) -> OAuthUserProfile:
     """GitHub OAuth：auth code -> access token -> user/email profile。"""
+    # 分支条件：GitHub OAuth 凭据未配置时，阻止发起外部换码请求。
     if not settings.github_oauth_client_id or not settings.github_oauth_client_secret:
         raise AppException("GitHub OAuth 未完成配置", status_code=500, code="OAUTH_CONFIG_MISSING")
 
@@ -69,25 +73,30 @@ async def _fetch_github_user_profile(auth_code: str, redirect_uri: str) -> OAuth
             },
             headers=headers,
         )
+        # 分支条件：GitHub 明确拒绝 auth code 时，返回授权码无效。
         if token_response.status_code in {400, 401, 403}:
             raise AppException("OAuth 授权码无效或已过期", status_code=400, code="OAUTH_CODE_INVALID")
         token_response.raise_for_status()
         token_payload = token_response.json()
         access_token = token_payload.get("access_token")
+        # 分支条件：换码响应缺少 access_token 时，视为 auth code 无效。
         if not access_token:
             raise AppException("OAuth 授权码无效或已过期", status_code=400, code="OAUTH_CODE_INVALID")
 
         auth_headers = {**headers, "Authorization": f"Bearer {access_token}"}
         user_response = await client.get(settings.github_oauth_user_url, headers=auth_headers)
+        # 分支条件：access_token 拉用户资料被拒绝时，返回授权码无效。
         if user_response.status_code == 401:
             raise AppException("OAuth 授权码无效或已过期", status_code=400, code="OAUTH_CODE_INVALID")
         user_response.raise_for_status()
         user_payload = user_response.json()
+        # 分支条件：GitHub 用户资料缺少 id 时，视为 provider 响应异常。
         if not user_payload.get("id"):
             raise AppException("OAuth 用户信息为空", status_code=502, code="OAUTH_SERVICE_ERROR")
 
         email = await _resolve_github_email(client, auth_headers, user_payload.get("email"))
         expires_in = token_payload.get("expires_in")
+        # 分支条件：GitHub 返回 expires_in 时记录过期时间，否则保持为空。
         expires_at = (
             datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=expires_in)
             if expires_in
@@ -111,6 +120,7 @@ async def _resolve_github_email(
     primary_email: str | None,
 ) -> str | None:
     """优先使用 /user email；为空时再读取 GitHub verified 邮箱列表。"""
+    # 分支条件：/user 已返回 email 时，无需额外请求邮箱列表。
     if primary_email:
         return primary_email
     try:
@@ -126,13 +136,16 @@ async def _resolve_github_email(
         if item.get("verified") and item.get("email")
     ]
     verified_emails.sort(key=lambda item: not item.get("primary", False))
+    # 分支条件：存在 verified 邮箱时返回优先邮箱，否则保持无邮箱登录。
     return verified_emails[0]["email"] if verified_emails else None
 
 
 def _resolve_github_nickname(user_payload: dict) -> str:
     """昵称策略保持 Java 侧 name > login > 默认名。"""
+    # 分支条件：GitHub 返回 name 时优先用作昵称。
     if user_payload.get("name"):
         return user_payload["name"]
+    # 分支条件：name 为空但 login 存在时，用 login 兜底。
     if user_payload.get("login"):
         return user_payload["login"]
     return f"GitHub用户{user_payload['id']}"
