@@ -1,7 +1,7 @@
 # Vago Remould 迁移盘点
 
-> 最后更新：2026-08-28
-> 当前阶段：Phase 1 — FastAPI 后端地基建设
+> 最后更新：2026-08-30
+> 当前阶段：Phase 2 — Authentication and User Migration
 
 ## 1. 仓库状态
 
@@ -62,6 +62,9 @@
 |------|------|--------------|
 | Routers | `chat.py`、`articles.py`、`ai.py` | 保留 / 整合进目标后端 |
 | Dependencies | `auth.py`、`rate_limit.py` | 保留概念，后续迁入统一 `core` / `auth` |
+| Auth domain | `auth/router.py`、`auth/service.py`、`auth/schemas.py` | Phase 2 已新增，承接短信登录、注册、刷新 token、退出登录 |
+| User domain | `users/models.py`、`users/router.py`、`users/service.py`、`users/schemas.py` | Phase 2 已新增，承接资料与设置读取/更新 |
+| Shared / Core | `core/redis.py`、`shared/responses.py` | Phase 2 已新增，集中 Redis 连接池与 Java 兼容响应 envelope |
 | Models | `models/schemas.py` | 保留，后续按业务域拆分 |
 | RAG 管道 | `cleaner.py`、`chunker.py`、`embedder.py`、`indexer.py`、`metadata_extractor.py`、`vector_store.py` | 保留 |
 | AI 编排 | `rag_chain.py`、`plan_extractor.py`、`llm.py` | 保留 / 重塑为自适应上下文检索 |
@@ -153,13 +156,30 @@ Phase 1 中刻意保留：
 
 - `app.services.chunker` 已改为懒加载 tiktoken encoder，避免导入 FastAPI app 时在 health check 或非 RAG 路由启动前触发网络下载。
 
-## 10. 推荐下一步
+## 10. Phase 2 当前状态
 
-进入 **Phase 2 — Authentication and User Migration**：
+Phase 2 已开始将用户和认证边界迁入 FastAPI，但仍保持渐进式切换：
 
-- 基于当前 MySQL schema 定义 `users`、`user_oauth_bindings`、`user_settings` 的 SQLAlchemy ORM models。
-- 实现 FastAPI `/api/v1/auth` 和 `/api/v1/users` 路由，并先补兼容性测试。
-- 迁移期间保持与当前 Java 后端的 JWT 兼容。
-- 在切换 React `/api/v1/user` client 前，补用户级数据隔离测试。
+- 已基于当前 MySQL schema 定义 `users`、`user_oauth_bindings`、`user_settings` 的 SQLAlchemy ORM models。
+- 已新增 `/api/v1/auth/*` 和 `/api/v1/users/*` 路由。
+- 已同时挂载 `/api/v1/user/*` 兼容前缀，方便未来 React client 从 Java 切到 FastAPI 时降低改动面。
+- 已保持 JWT payload 中 `userUuid`、`userId` 字段，与 Java 侧当前 token 语义兼容。
+- 已将短信验证码、刷新 token、JWT 黑名单使用的 Redis 连接收拢到 `core/redis.py`。
+- 已补用户资料/设置隔离测试和 JWT claim 兼容测试。
+
+Phase 2 暂未迁移：
+
+- OAuth 登录：保留 `/login/oauth` 兼容路径，当前返回 501。
+- 账号注销与撤销注销：保留 `/account`、`/account/cancel-revoke` 兼容路径，当前返回 501。
+- React `apps/vago-web/src/api/user.js` 仍未切换到 FastAPI，由后续兼容验证后再迁。
+
+## 11. 推荐下一步
+
+继续 **Phase 2 — Authentication and User Migration**：
+
+- 为 FastAPI auth/users 路由补 API 层集成测试，覆盖 `/api/v1/user/*` 兼容路径。
+- 用本地 Redis / MySQL 做一次真实登录链路 smoke test。
+- 对齐 Java 与 DDL 中 `fog_unlock_radius_m` 默认值差异，目前 ORM 字段跟随 DDL 默认 300，但 FastAPI 新用户创建逻辑跟随 Java 使用 200。
+- 通过配置开关或前端环境变量，将 React `user.js` 从 Java 后端切到 FastAPI。
 
 在 Auth 兼容性验证前，不建议同时迁移 Trip API。

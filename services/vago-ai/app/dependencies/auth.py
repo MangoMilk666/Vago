@@ -14,56 +14,27 @@ Redis 使用 asyncio 连接池管理连接，避免每次请求新建连接。
 
 import hashlib
 import logging
-from typing import Optional
 
 import jwt
-from fastapi import Depends, Header, HTTPException
-from redis import asyncio as aioredis
+from fastapi import Depends, HTTPException, Request
 
 from app.config import settings
+from app.core.redis import close_redis_pool, get_redis_client
 
 logger = logging.getLogger(__name__)
 
 _BLACKLIST_KEY_PREFIX = "vago:token:bl:"
 
-# ── Redis 异步连接池（模块级单例）───────────────────────────────────────────────
-_redis_pool: Optional[aioredis.ConnectionPool] = None
+
+def _resolve_token(request: Request) -> str | None:
+    """按配置读取 token header，并兼容 Swagger 常见的 Bearer 前缀。"""
+    token = request.headers.get(settings.jwt_token_name) or request.headers.get("authorization")
+    if token and token.lower().startswith("bearer "):
+        return token[7:]
+    return token
 
 
-async def _get_redis() -> aioredis.Redis:
-    """
-    从连接池获取 Redis 客户端实例。
-
-    使用 aioredis.ConnectionPool 管理长连接，
-    避免每次请求都新建 TCP 连接。
-    """
-    global _redis_pool
-    if _redis_pool is None:
-        _redis_pool = aioredis.ConnectionPool(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            db=settings.redis_db,
-            decode_responses=True,
-            socket_connect_timeout=2,
-            max_connections=20,          # 连接池上限
-            retry_on_timeout=True,       # 超时自动重试
-        )
-    return aioredis.Redis(connection_pool=_redis_pool)
-
-
-async def close_redis_pool() -> None:
-    """
-    关闭 Redis 连接池（在应用 shutdown 时调用）。
-    释放所有长连接资源。
-    """
-    global _redis_pool
-    if _redis_pool is not None:
-        await _redis_pool.disconnect()
-        _redis_pool = None
-        logger.info("Redis 连接池已关闭")
-
-
-async def get_current_user_uuid(authorization: str | None = Header(default=None)) -> str:
+async def get_current_user_uuid(request: Request) -> str:
     """
     提取并验证 JWT，返回当前用户 UUID。
 
@@ -78,7 +49,7 @@ async def get_current_user_uuid(authorization: str | None = Header(default=None)
     异常:
         HTTPException(401) — token 缺失 / 签名无效 / 已过期 / 在黑名单中。
     """
-    token = authorization
+    token = _resolve_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="缺少认证令牌")
 
@@ -99,7 +70,7 @@ async def get_current_user_uuid(authorization: str | None = Header(default=None)
     try:
         token_hash = hashlib.md5(token.encode()).hexdigest()
         bl_key = f"{_BLACKLIST_KEY_PREFIX}{token_hash}"
-        r = await _get_redis()
+        r = await get_redis_client()
         if await r.exists(bl_key):
             raise HTTPException(status_code=401, detail="令牌已失效，请重新登录")
     except HTTPException:

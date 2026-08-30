@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     # 迁移期间与旧 Java 后端共享 JWT 校验配置，保证前端直连 Python 的兼容性。
     jwt_secret_key: str = ""
     jwt_token_name: str = "authorization"
+    # ttl: 2 hours
+    jwt_access_token_ttl_seconds: int = 7200
+    # ttl: 720 hours = 30 days
+    jwt_refresh_token_ttl_seconds: int = 2592000
+
+    # 短信验证码参数，先对齐 Java 侧 5 分钟验证码 + 60 秒发送间隔。
+    sms_code_ttl_seconds: int = 300
+    sms_limit_ttl_seconds: int = 60
 
     # Redis 配置，用于 JWT 黑名单、限流等短期状态。
     redis_host: str = "127.0.0.1"
