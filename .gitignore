@@ -113,3 +113,6 @@ docs/.log/
 **/test.txt
 bug-records.md
 local-prompts/
+
+# 启动fastAPI项目的命令脚本
+services/vago-ai/launch.sh

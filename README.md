@@ -49,10 +49,10 @@ RAG / Qdrant 是其中用于检索大量非结构化个人资料的技术能力�
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| 用户与认证 | 当前保留，后续迁移 | 手机号 / OAuth、JWT、用户级数据隔离、个人设置 |
+| 用户与认证 | Phase 2 已迁移 | 手机号 / OAuth、JWT、用户级数据隔离、个人设置 |
 | Personal Travel Knowledge | 当前保留并强化 | 攻略文本 / URL 导入、清洗、分块、Embedding、Qdrant、来源引用 |
 | AI Travel Companion | 当前保留并重定位 | 多轮对话、SSE、Tool Calling、结构化计划输出、用户确认后保存 |
-| Plans / Trips / Itinerary | 当前保留，后续迁移 | 草稿计划、正式行程、每日安排、景点、交通、住宿、预算 |
+| Plans / Trips / Itinerary | Phase 3 核心 CRUD 已迁移 | 草稿计划、正式行程、每日安排、景点、交通、住宿、预算 |
 | Footprints | 后续建设 | GPS 采样、轨迹、打卡、地点统计、地图可视化 |
 | Fog-of-World Map | 后续建设 | 基于真实移动轨迹解锁地图区域 |
 | Photos / Notes | 后续建设 | 拍照、相册选择、EXIF / 时间 / 位置绑定、Trip / Spot 关联 |
@@ -66,16 +66,20 @@ RAG / Qdrant 是其中用于检索大量非结构化个人资料的技术能力�
 
 ```text
 React Web (Vite)
-    ├── /api/v1/ai/chat/**  → FastAPI vago-ai
-    └── /api/v1/**          → Spring Boot vago-backend
+    ├── /api/v1/user/**             → FastAPI vago-ai
+    ├── /api/v1/travel/trips/**     → FastAPI vago-ai
+    ├── /api/v1/travel/plans/**     → FastAPI vago-ai
+    ├── /api/v1/ai/chat/**          → FastAPI vago-ai
+    └── /api/v1/**                  → Spring Boot vago-backend
 
 Spring Boot vago-backend
-    ├── Auth / User
-    ├── Guide / Plan / Trip / Itinerary CRUD
+    ├── Guide / Collection CRUD
     ├── AI structured plan save
     └── Java → Python guide indexing bridge
 
 FastAPI vago-ai
+    ├── Auth / User
+    ├── Trip / Plan / Itinerary CRUD
     ├── AI chat / SSE
     ├── article ingestion
     ├── cleaner / chunker / embedder
@@ -171,13 +175,13 @@ Vago/
 
 ## 迁移状态
 
-当前 remould 进度为 **Phase 2 — Authentication and User Migration**。
+当前 remould 进度为 **Phase 3 — Trip / Plan / Itinerary Migration**。
 
 迁移优先级：
 
 1. 建立统一 FastAPI backend foundation；已完成基础骨架
-2. 迁移 Auth / User；已完成 FastAPI 代码侧迁移，进入本地联调验证
-3. 迁移 Trip / Plan / Itinerary；
+2. 迁移 Auth / User；已完成 FastAPI 迁移并通过本地联调
+3. 迁移 Trip / Plan / Itinerary；已完成核心 CRUD 与 Vite proxy 切换
 4. 整合 Knowledge / RAG / AI Companion；
 5. 清理 legacy community / public-feed 相关能力；
 6. 更新 Web 产品体验；
@@ -194,6 +198,7 @@ Vago/
 - [Remould 迁移盘点](docs/remould-migration-inventory.md)
 - [数据库文档](docs/database/schema.md)
 - [用户服务 API](docs/API/user-service.md)
+- [旅行核心 API](docs/API/travel-service.md)
 
 ## License
 

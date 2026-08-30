@@ -1,17 +1,17 @@
 # Vago Remould 迁移盘点
 
-> 最后更新：2026-08-30
-> 当前阶段：Phase 2 — Authentication and User Migration
+> 最后更新：2026-08-31
+> 当前阶段：Phase 3 — Trip / Plan / Itinerary Migration
 
 ## 1. 仓库状态
 
-执行 `git status --short --untracked-files=all` 时发现一个本轮开始前已经存在的未跟踪文件：
+执行 `git status --short --untracked-files=all` 时发现一个本轮开始前已经存在的工作区改动：
 
 ```text
-?? 登录认证改造prompt.md
+ M .gitignore
 ```
 
-本轮不会修改或删除该 prompt 文档。
+该 `.gitignore` 改动由用户维护，本轮不会修改或回滚。
 
 ## 2. 当前 Web 路由
 
@@ -64,6 +64,7 @@
 | Dependencies | `auth.py`、`rate_limit.py` | 保留概念，后续迁入统一 `core` / `auth` |
 | Auth domain | `auth/router.py`、`auth/service.py`、`auth/schemas.py`、`auth/oauth.py` | Phase 2 已新增，承接短信登录、注册、OAuth、刷新 token、退出登录 |
 | User domain | `users/models.py`、`users/router.py`、`users/service.py`、`users/schemas.py` | Phase 2 已新增，承接资料与设置读取/更新 |
+| Travel domain | `travel/models.py`、`travel/router.py`、`travel/service.py`、`travel/schemas.py` | Phase 3 已新增，承接 Trip / Plan / Itinerary 核心 CRUD |
 | Shared / Core | `core/redis.py`、`shared/responses.py` | Phase 2 已新增，集中 Redis 连接池与 Java 兼容响应 envelope |
 | Models | `models/schemas.py` | 保留，后续按业务域拆分 |
 | RAG 管道 | `cleaner.py`、`chunker.py`、`embedder.py`、`indexer.py`、`metadata_extractor.py`、`vector_store.py` | 保留 |
@@ -95,7 +96,8 @@
 | 文件 | Base path | 当前目标 | 迁移说明 |
 |------|-----------|----------|----------|
 | `apps/vago-web/src/api/user.js` | `/api/v1/user` | Python FastAPI | Phase 2 已通过 Vite proxy 切到 FastAPI auth/users |
-| `apps/vago-web/src/api/travel.js` | `/api/v1/travel` | Java Spring Boot | 逐步迁移 trips/plans/itinerary/knowledge |
+| `apps/vago-web/src/api/travel.js` | `/api/v1/travel/trips`、`/api/v1/travel/plans` | Python FastAPI | Phase 3 已通过 Vite proxy 切换 Trip / Plan / Itinerary |
+| `apps/vago-web/src/api/travel.js` | `/api/v1/travel/guides`、`/api/v1/travel/collections` | Java Spring Boot | 暂留 Java，等待 Knowledge remould |
 | `apps/vago-web/src/api/ai.js` | `/api/v1/ai/chat*` | Python FastAPI | AI 整合期间保持路径稳定 |
 | `apps/vago-web/src/api/ai.js` | `/api/v1/ai/plans/save-*` | Java Spring Boot | Phase 3/4 迁移到 FastAPI trip/plan domain |
 
@@ -120,7 +122,7 @@ Java 当前依赖 Python AI 服务维护攻略向量索引：
 | RAG / Qdrant | 保留 | 作为非结构化个人知识的可选上下文来源 |
 | AI chat / SSE | 保留 | 继续作为 AI Companion 核心能力 |
 | Structured plan extraction | 保留 | 以结构化校验和用户确认为边界 |
-| Plan / Trip / Itinerary | 保留 / 迁移 | 核心业务域 |
+| Plan / Trip / Itinerary | Phase 3 已迁移核心 CRUD | 核心业务域 |
 | Collections | 有条件保留 | 重定位为个人知识组织，而不是社区功能 |
 | Guide likes / discover | 从核心移除 | 除非未来分享能力确实需要，否则不迁入目标后端 |
 | Public feed / follow / comments | 移除 | 当前 Web 路由未发现，不应进入目标架构 |
@@ -156,9 +158,9 @@ Phase 1 中刻意保留：
 
 - `app.services.chunker` 已改为懒加载 tiktoken encoder，避免导入 FastAPI app 时在 health check 或非 RAG 路由启动前触发网络下载。
 
-## 10. Phase 2 当前状态
+## 10. Phase 2 状态
 
-Phase 2 已开始将用户和认证边界迁入 FastAPI，但仍保持渐进式切换：
+Phase 2 已将用户和认证边界迁入 FastAPI，并已完成本地联调：
 
 - 已基于当前 MySQL schema 定义 `users`、`user_oauth_bindings`、`user_settings` 的 SQLAlchemy ORM models。
 - 已新增 `/api/v1/auth/*` 和 `/api/v1/users/*` 路由。
@@ -170,16 +172,32 @@ Phase 2 已开始将用户和认证边界迁入 FastAPI，但仍保持渐进式�
 - 已迁移账号注销与撤销注销，沿用 `vago:cancel:{userUuid}` Redis 宽限期 key。
 - 已补用户资料/设置隔离测试、JWT claim 兼容测试、OAuth 测试、账号生命周期测试，以及 `/api/v1/user/*` 路由层兼容测试。
 
-Phase 2 待切换：
+Phase 2 切换状态：
 
 - React `apps/vago-web/src/api/user.js` 继续使用 `/api/v1/user` 路径，本地 Vite proxy 已将该前缀切到 FastAPI。
-- 真实 GitHub OAuth、短信验证码、Redis refresh token 需要在本地/部署环境配置凭据后做 smoke test。
+- 登录链路前后端联调已完成，暂无问题发现。
 
-## 11. 推荐下一步
+## 11. Phase 3 当前状态
 
-完成 **Phase 2 — Authentication and User Migration** 前的最后验证：
+Phase 3 已开始将 Trip / Plan / Itinerary 核心业务域迁入 FastAPI：
 
-- 用本地 Redis / MySQL 做一次短信登录、GitHub OAuth、注销/撤销注销 smoke test。
-- Phase 2 smoke test 通过后，进入 Phase 3 Trip / Plan / Itinerary 迁移。
+- 已基于当前 MySQL schema 定义 `trips`、`plans`、`itinerary_days`、`itinerary_spots` 的 SQLAlchemy ORM models。
+- 已新增 `/api/v1/travel/trips/*`、`/api/v1/travel/plans/*` 路由，并保持前端当前路径稳定。
+- 已迁移 Trip 创建、列表、历史、详情、更新、软删除。
+- 已迁移 Plan 创建、列表、详情、更新、软删除，以及 Plan 转正式 Trip。
+- 已迁移 Trip / Plan 下的 itinerary days 查询与单日更新。
+- 查询 days 时会按日期范围懒初始化缺失 day；更新 day 时支持 spots 整体替换。
+- 已通过 Vite proxy 将 `/api/v1/travel/trips` 与 `/api/v1/travel/plans` 切到 FastAPI。
+- Guides / Collections / discover / like 等偏社区或知识组织能力暂不迁移，等待 Knowledge remould。
+- 已补 travel service 与 travel API 测试，覆盖用户隔离、计划转换、itinerary 懒初始化与响应 envelope。
 
-在 Auth 兼容性验证前，不建议同时迁移 Trip API。
+## 12. 推荐下一步
+
+完成 **Phase 3 — Trip / Plan / Itinerary Migration** 前的最后验证：
+
+- 用本地 Redis / MySQL 做一次 Trip / Plan / Itinerary 前后端 smoke test。
+- 验证 Plan 转 Trip 后 itinerary days / spots 在真实数据库中保持一致。
+- 验证 Guide / Collection 仍由 Java 提供，未被 FastAPI proxy 误拦截。
+- Phase 3 smoke test 通过后，进入 Phase 4 Knowledge / RAG / AI Companion 整合。
+
+在 Knowledge remould 前，不建议迁移 guide discover / like 等公共社区语义。

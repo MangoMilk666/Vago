@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.auth import router as auth_router
 from app.routers import ai, articles, chat
+from app.travel import router as travel_router
 from app.users import router as users_router
 
 api_v1_router = APIRouter()
@@ -17,3 +18,6 @@ api_v1_router.include_router(auth_router.router, prefix="/auth", tags=["认证"]
 api_v1_router.include_router(auth_router.router, prefix="/user", tags=["认证兼容"])
 api_v1_router.include_router(users_router.router, prefix="/users", tags=["用户"])
 api_v1_router.include_router(users_router.router, prefix="/user", tags=["用户兼容"])
+
+# Phase 3 迁移 Trip / Plan / Itinerary，暂不迁移 Guides / Collections。
+api_v1_router.include_router(travel_router.router, prefix="/travel", tags=["旅行核心"])

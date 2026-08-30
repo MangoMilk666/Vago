@@ -6,6 +6,8 @@ from alembic import context
 
 from app.core.config import settings
 from app.core.database import Base
+from app.travel import models as travel_models  # noqa: F401
+from app.users import models as user_models  # noqa: F401
 
 config = context.config
 

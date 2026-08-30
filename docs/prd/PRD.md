@@ -1,7 +1,7 @@
 # Vago（叠迹）产品需求文档（PRD）
 
 **文档版本**：v0.4-remould
-**最后更新**：2026-08-28
+**最后更新**：2026-08-31
 **状态**：Remould draft，作为后续迁移与实现基准
 
 ## 1. 产品定位
@@ -196,6 +196,8 @@ RAG 要求：
 AI 不应未经确认直接创建正式行程、修改重要计划或覆盖用户记录。
 
 ### 6.3 Plans / Trips / Itinerary
+
+当前 Phase 3 已将核心 Trip / Plan / Itinerary CRUD 从 Spring Boot 迁移到 FastAPI，并保持 `/api/v1/travel/trips`、`/api/v1/travel/plans` 及其每日行程子路径稳定。Guides / Collections 暂留 Java，后续在 Knowledge remould 中重定位。
 
 需求：
 
