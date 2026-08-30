@@ -3,9 +3,17 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings as app_settings
 from app.core.exceptions import AppException
+from app.core.redis import get_redis_client
 from app.users.models import User, UserOauthBinding, UserSettings
-from app.users.schemas import UserProfile, UserProfileUpdate, UserSettingsResponse, UserSettingsUpdate
+from app.users.schemas import (
+    AccountCancelResponse,
+    UserProfile,
+    UserProfileUpdate,
+    UserSettingsResponse,
+    UserSettingsUpdate,
+)
 
 ACTIVE_STATUS = 1
 BANNED_STATUS = 2
@@ -17,6 +25,7 @@ DEFAULT_DEFAULT_VISIBILITY = 0
 DEFAULT_LANGUAGE = "zh-CN"
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_NOTIFICATION_CHECKIN = 1
+CANCEL_KEY_PREFIX = "vago:cancel:"
 
 
 def mask_phone(phone: str | None) -> str | None:
@@ -36,6 +45,11 @@ def get_user_by_phone(db: Session, phone: str) -> User | None:
     return db.scalar(select(User).where(User.phone == phone, User.deleted_at.is_(None)))
 
 
+def get_user_by_email(db: Session, email: str) -> User | None:
+    """按邮箱查找未软删除用户，用于 OAuth 账号合并与资料更新冲突校验。"""
+    return db.scalar(select(User).where(User.email == email, User.deleted_at.is_(None)))
+
+
 def get_user_or_raise(db: Session, user_uuid: str) -> User:
     """获取当前用户，不存在或状态异常时抛出业务异常。"""
     user = get_user_by_uuid(db, user_uuid)
@@ -46,7 +60,7 @@ def get_user_or_raise(db: Session, user_uuid: str) -> User:
 
 
 def ensure_user_can_login(user: User) -> None:
-    """校验账号状态，复用 Java 侧 active/cancelled/banned 语义。"""
+    """校验账号状态，复用 Java 侧 active/banned/cancelling 语义。"""
     if user.status == ACTIVE_STATUS:
         return
     if user.status == BANNED_STATUS:
@@ -150,3 +164,53 @@ def update_settings(db: Session, user_uuid: str, payload: UserSettingsUpdate) ->
     return UserSettingsResponse.model_validate(settings).model_copy(
         update={"notification_checkin": settings.notification_checkin == 1}
     )
+
+
+async def cancel_account(user_uuid: str, sms_code: str, db: Session) -> AccountCancelResponse:
+    """申请注销账号：校验短信后进入 7 天可撤销状态。"""
+    from app.auth.service import validate_sms_code
+
+    user = get_user_by_uuid(db, user_uuid)
+    if user is None:
+        raise AppException("用户不存在", status_code=404, code="USER_NOT_FOUND")
+    if user.status == CANCELLING_STATUS:
+        raise AppException("账号已在注销中", status_code=409, code="ACCOUNT_ALREADY_CANCELLING")
+    if user.status == BANNED_STATUS:
+        raise AppException("账号已被禁用", status_code=403, code="ACCOUNT_BANNED")
+    if not user.phone:
+        raise AppException("当前账号未绑定手机号，无法短信校验", status_code=400, code="PHONE_NOT_BOUND")
+
+    await validate_sms_code(user.phone, sms_code)
+    user.status = CANCELLING_STATUS
+
+    redis = await get_redis_client()
+    # Redis key 过期即代表宽限期结束；后台物理清理任务后续阶段再迁移。
+    from datetime import datetime, timedelta
+
+    deadline = datetime.now() + timedelta(seconds=app_settings.account_cancel_grace_seconds)
+    deadline_text = deadline.strftime("%Y-%m-%d %H:%M:%S")
+    await redis.setex(
+        f"{CANCEL_KEY_PREFIX}{user_uuid}",
+        app_settings.account_cancel_grace_seconds,
+        deadline_text,
+    )
+    db.commit()
+    return AccountCancelResponse(cancelDeadline=deadline_text)
+
+
+async def revoke_cancel_account(user_uuid: str, db: Session) -> None:
+    """撤销账号注销申请：宽限期 Redis key 存在时恢复正常状态。"""
+    user = get_user_by_uuid(db, user_uuid)
+    if user is None:
+        raise AppException("用户不存在", status_code=404, code="USER_NOT_FOUND")
+    if user.status != CANCELLING_STATUS:
+        raise AppException("账号不在注销中", status_code=409, code="ACCOUNT_NOT_CANCELLING")
+
+    redis = await get_redis_client()
+    cancel_key = f"{CANCEL_KEY_PREFIX}{user_uuid}"
+    if not await redis.exists(cancel_key):
+        raise AppException("注销撤销已过期", status_code=409, code="CANCEL_REVOKE_EXPIRED")
+
+    user.status = ACTIVE_STATUS
+    await redis.delete(cancel_key)
+    db.commit()

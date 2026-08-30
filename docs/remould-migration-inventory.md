@@ -5,13 +5,13 @@
 
 ## 1. 仓库状态
 
-执行 `git status --short` 时发现一个本轮开始前已经存在的工作区改动：
+执行 `git status --short --untracked-files=all` 时发现一个本轮开始前已经存在的未跟踪文件：
 
 ```text
- D docs/USAGE.md
+?? 登录认证改造prompt.md
 ```
 
-本盘点文档不会恢复或覆盖该删除。
+本轮不会修改或删除该 prompt 文档。
 
 ## 2. 当前 Web 路由
 
@@ -62,7 +62,7 @@
 |------|------|--------------|
 | Routers | `chat.py`、`articles.py`、`ai.py` | 保留 / 整合进目标后端 |
 | Dependencies | `auth.py`、`rate_limit.py` | 保留概念，后续迁入统一 `core` / `auth` |
-| Auth domain | `auth/router.py`、`auth/service.py`、`auth/schemas.py` | Phase 2 已新增，承接短信登录、注册、刷新 token、退出登录 |
+| Auth domain | `auth/router.py`、`auth/service.py`、`auth/schemas.py`、`auth/oauth.py` | Phase 2 已新增，承接短信登录、注册、OAuth、刷新 token、退出登录 |
 | User domain | `users/models.py`、`users/router.py`、`users/service.py`、`users/schemas.py` | Phase 2 已新增，承接资料与设置读取/更新 |
 | Shared / Core | `core/redis.py`、`shared/responses.py` | Phase 2 已新增，集中 Redis 连接池与 Java 兼容响应 envelope |
 | Models | `models/schemas.py` | 保留，后续按业务域拆分 |
@@ -94,7 +94,7 @@
 
 | 文件 | Base path | 当前目标 | 迁移说明 |
 |------|-----------|----------|----------|
-| `apps/vago-web/src/api/user.js` | `/api/v1/user` | Java Spring Boot | Phase 2 迁移到 FastAPI auth/users |
+| `apps/vago-web/src/api/user.js` | `/api/v1/user` | Python FastAPI | Phase 2 已通过 Vite proxy 切到 FastAPI auth/users |
 | `apps/vago-web/src/api/travel.js` | `/api/v1/travel` | Java Spring Boot | 逐步迁移 trips/plans/itinerary/knowledge |
 | `apps/vago-web/src/api/ai.js` | `/api/v1/ai/chat*` | Python FastAPI | AI 整合期间保持路径稳定 |
 | `apps/vago-web/src/api/ai.js` | `/api/v1/ai/plans/save-*` | Java Spring Boot | Phase 3/4 迁移到 FastAPI trip/plan domain |
@@ -166,20 +166,20 @@ Phase 2 已开始将用户和认证边界迁入 FastAPI，但仍保持渐进式�
 - 已保持 JWT payload 中 `userUuid`、`userId` 字段，与 Java 侧当前 token 语义兼容。
 - 已对齐 Java `LoginVO` 的 `accessToken`、`refreshToken`、`expiresIn`、`isNewUser`、`userInfo` 响应字段。
 - 已将短信验证码、刷新 token、JWT 黑名单使用的 Redis 连接收拢到 `core/redis.py`。
-- 已补用户资料/设置隔离测试、JWT claim 兼容测试，以及 `/api/v1/user/*` 路由层兼容测试。
+- 已迁移 GitHub OAuth 登录，支持按 provider/openId 登录、按 email 绑定老用户、首次 OAuth 自动注册。
+- 已迁移账号注销与撤销注销，沿用 `vago:cancel:{userUuid}` Redis 宽限期 key。
+- 已补用户资料/设置隔离测试、JWT claim 兼容测试、OAuth 测试、账号生命周期测试，以及 `/api/v1/user/*` 路由层兼容测试。
 
-Phase 2 暂未迁移：
+Phase 2 待切换：
 
-- OAuth 登录：保留 `/login/oauth` 兼容路径，当前返回 501。
-- 账号注销与撤销注销：保留 `/account`、`/account/cancel-revoke` 兼容路径，当前返回 501。
-- React `apps/vago-web/src/api/user.js` 仍未切换到 FastAPI，由后续兼容验证后再迁。
+- React `apps/vago-web/src/api/user.js` 继续使用 `/api/v1/user` 路径，本地 Vite proxy 已将该前缀切到 FastAPI。
+- 真实 GitHub OAuth、短信验证码、Redis refresh token 需要在本地/部署环境配置凭据后做 smoke test。
 
 ## 11. 推荐下一步
 
-继续 **Phase 2 — Authentication and User Migration**：
+完成 **Phase 2 — Authentication and User Migration** 前的最后验证：
 
-- 用本地 Redis / MySQL 做一次真实登录链路 smoke test。
-- 对齐 Java 与 DDL 中 `fog_unlock_radius_m` 默认值差异，目前 ORM 字段跟随 DDL 默认 300，但 FastAPI 新用户创建逻辑跟随 Java 使用 200。
-- 通过配置开关或前端环境变量，将 React `user.js` 从 Java 后端切到 FastAPI。
+- 用本地 Redis / MySQL 做一次短信登录、GitHub OAuth、注销/撤销注销 smoke test。
+- Phase 2 smoke test 通过后，进入 Phase 3 Trip / Plan / Itinerary 迁移。
 
 在 Auth 兼容性验证前，不建议同时迁移 Trip API。

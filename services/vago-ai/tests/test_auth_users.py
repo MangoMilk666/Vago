@@ -7,14 +7,20 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.auth import service as auth_service
+from app.auth.oauth import OAuthUserProfile
 from app.auth.schemas import PhoneLoginRequest
 from app.users.models import User, UserOauthBinding, UserSettings
 from app.users.schemas import UserProfileUpdate, UserSettingsUpdate
+from app.users import service as users_service
 from app.users.service import (
+    ACTIVE_STATUS,
+    CANCELLING_STATUS,
     create_default_settings,
     build_profile,
+    cancel_account,
     get_settings_response,
     mask_phone,
+    revoke_cancel_account,
     update_profile,
     update_settings,
 )
@@ -52,6 +58,22 @@ def _seed_user(db: Session, *, user_id: int, uuid: str, phone: str, nickname: st
     db.add(UserSettings(user_id=user_id))
     db.flush()
     return user
+
+
+class FakeRedis:
+    """测试用 Redis stub，只覆盖 Phase 2 账号生命周期所需命令。"""
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    async def setex(self, key: str, ttl: int, value: str) -> None:
+        self.values[key] = value
+
+    async def exists(self, key: str) -> bool:
+        return key in self.values
+
+    async def delete(self, key: str) -> None:
+        self.values.pop(key, None)
 
 
 def test_mask_phone_keeps_java_profile_display_rule():
@@ -162,3 +184,122 @@ def test_token_pair_keeps_legacy_jwt_claim_names(db_session: Session, monkeypatc
     assert access_payload["typ"] == "access"
     assert refresh_payload["typ"] == "refresh"
     assert token_pair.expires_in == 60
+
+
+@pytest.mark.anyio
+async def test_oauth_login_creates_user_and_binding(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+    """测试：OAuth 首次登录应创建用户、默认设置和 provider 绑定。"""
+    monkeypatch.setattr(auth_service.settings, "jwt_secret_key", "test-secret")
+
+    async def fake_fetch_oauth_user_profile(provider: str, auth_code: str, redirect_uri: str):
+        assert provider == "github"
+        assert auth_code == "code"
+        assert redirect_uri == "http://localhost:5173/login"
+        return OAuthUserProfile(
+            provider="github",
+            open_id="10001",
+            email="oauth@example.com",
+            nickname="OAuth User",
+            avatar_url="https://avatar.example.com/u.png",
+            access_token="github-token",
+            expires_at=None,
+        )
+
+    async def fake_store_refresh_token(user_uuid: str, refresh_token: str) -> None:
+        assert user_uuid
+        assert refresh_token
+
+    monkeypatch.setattr(auth_service, "fetch_oauth_user_profile", fake_fetch_oauth_user_profile)
+    monkeypatch.setattr(auth_service, "store_refresh_token", fake_store_refresh_token)
+
+    response = await auth_service.login_by_oauth(
+        db_session,
+        "github",
+        "code",
+        "http://localhost:5173/login",
+    )
+
+    binding = db_session.query(UserOauthBinding).one()
+    assert response.is_new_user is True
+    assert response.user_info.email == "oauth@example.com"
+    assert response.user_info.oauth_providers == ["github"]
+    assert binding.provider == "github"
+    assert binding.open_id == "10001"
+
+
+@pytest.mark.anyio
+async def test_oauth_login_binds_existing_user_by_email(db_session: Session, monkeypatch: pytest.MonkeyPatch):
+    """测试：OAuth 邮箱命中老用户时应绑定老账号，不创建重复用户。"""
+    monkeypatch.setattr(auth_service.settings, "jwt_secret_key", "test-secret")
+    existing = _seed_user(
+        db_session,
+        user_id=20,
+        uuid="email-user-uuid",
+        phone="13500101000",
+        nickname="已存在用户",
+    )
+    existing.email = "same@example.com"
+    db_session.commit()
+
+    async def fake_fetch_oauth_user_profile(provider: str, auth_code: str, redirect_uri: str):
+        return OAuthUserProfile(
+            provider="github",
+            open_id="20002",
+            email="same@example.com",
+            nickname="GitHub Name",
+            avatar_url="https://avatar.example.com/old.png",
+            access_token="github-token",
+            expires_at=None,
+        )
+
+    async def fake_store_refresh_token(user_uuid: str, refresh_token: str) -> None:
+        assert user_uuid == "email-user-uuid"
+
+    monkeypatch.setattr(auth_service, "fetch_oauth_user_profile", fake_fetch_oauth_user_profile)
+    monkeypatch.setattr(auth_service, "store_refresh_token", fake_store_refresh_token)
+
+    response = await auth_service.login_by_oauth(db_session, "github", "code", "redirect")
+
+    assert response.is_new_user is False
+    assert response.user_info.uuid == "email-user-uuid"
+    assert db_session.query(User).count() == 1
+    assert db_session.query(UserOauthBinding).count() == 1
+
+
+@pytest.mark.anyio
+async def test_cancel_and_revoke_account_updates_status_and_cancel_key(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """测试：账号注销与撤销应围绕当前用户状态和 Redis 宽限期 key 流转。"""
+    fake_redis = FakeRedis()
+    user = _seed_user(
+        db_session,
+        user_id=30,
+        uuid="cancel-user-uuid",
+        phone="13400101000",
+        nickname="Cancel User",
+    )
+
+    async def fake_validate_sms_code(phone: str, code: str) -> None:
+        assert phone == "13400101000"
+        assert code == "123456"
+
+    async def fake_get_redis_client():
+        return fake_redis
+
+    monkeypatch.setattr(auth_service, "validate_sms_code", fake_validate_sms_code)
+    monkeypatch.setattr(users_service, "get_redis_client", fake_get_redis_client)
+
+    result = await cancel_account("cancel-user-uuid", "123456", db_session)
+    db_session.refresh(user)
+
+    assert result.cancel_deadline
+    assert user.status == CANCELLING_STATUS
+    assert "vago:cancel:cancel-user-uuid" in fake_redis.values
+
+    await revoke_cancel_account("cancel-user-uuid", db_session)
+    db_session.refresh(user)
+
+    assert user.status == ACTIVE_STATUS
+    assert "vago:cancel:cancel-user-uuid" not in fake_redis.values

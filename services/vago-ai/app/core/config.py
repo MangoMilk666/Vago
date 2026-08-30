@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     """从环境变量或 .env 加载的类型化应用配置。"""
 
     app_name: str = "Vago API"
-    app_version: str = "0.4.0-remould-phase1"
+    app_version: str = "0.4.0-remould-phase2"
     api_v1_prefix: str = "/api/v1"
     environment: str = "local"
     debug: bool = False
@@ -69,6 +69,14 @@ class Settings(BaseSettings):
     # 短信验证码参数，先对齐 Java 侧 5 分钟验证码 + 60 秒发送间隔。
     sms_code_ttl_seconds: int = 300
     sms_limit_ttl_seconds: int = 60
+    account_cancel_grace_seconds: int = 604800
+
+    # GitHub OAuth 配置；Phase 2 先迁移现有 provider，不主动扩大第三方登录范围。
+    github_oauth_client_id: str = ""
+    github_oauth_client_secret: str = ""
+    github_oauth_token_url: str = "https://github.com/login/oauth/access_token"
+    github_oauth_user_url: str = "https://api.github.com/user"
+    github_oauth_emails_url: str = "https://api.github.com/user/emails"
 
     # Redis 配置，用于 JWT 黑名单、限流等短期状态。
     redis_host: str = "127.0.0.1"

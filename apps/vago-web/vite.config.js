@@ -13,6 +13,11 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // Phase 2：用户认证与个人资料已迁移到 FastAPI，保留 /api/v1/user 路径兼容前端 client。
+      '/api/v1/user': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       // 其余所有 API（含 /api/v1/ai/plans/save-* 等业务逻辑接口）走 Java 单体
       '/api/v1': {
         target: 'http://localhost:8080',

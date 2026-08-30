@@ -1,9 +1,11 @@
 # Vago 用户服务接口文档（C 端）
 
-**当前实现**：Spring Boot `vago-backend`，FastAPI `vago-ai` Phase 2 已提供兼容入口
+**当前实现**：Spring Boot `vago-backend`，FastAPI `vago-ai` Phase 2 已提供兼容入口；Auth/User 新实现以 FastAPI 为迁移目标
 **Base URL**：`/api/v1/user`
 **文档版本**：v0.2 | 2026-08-30
 **认证方式**：除登录/注册/发送验证码外，所有接口需在 Header 中携带 `authorization: {accessToken}`；FastAPI 兼容 `Authorization: Bearer {accessToken}`
+
+> 迁移状态：FastAPI 已实现 `/api/v1/auth/*` 与 `/api/v1/users/*` 新路径，并保留 `/api/v1/user/*` 兼容路径；本地 Web 开发代理已将 `/api/v1/user` 切到 FastAPI。
 
 ---
 
@@ -217,16 +219,18 @@ POST /api/v1/user/login/oauth
 
 ```json
 {
-  "provider":  "wechat",
+  "provider":  "github",
   "authCode":  "0a1b2c3d4e5f",
+  "redirectUri": "http://localhost:5173/login",
   "deviceId":  "d1e2f3a4b5c6"
 }
 ```
 
 | 字段 | 类型 | 必须 | 说明 |
 |------|------|------|------|
-| `provider` | String | ✅ | 枚举：`wechat` / `apple` |
+| `provider` | String | ✅ | 当前 FastAPI 已迁移 `github`；其他 provider 暂未迁移 |
 | `authCode` | String | ✅ | OAuth 授权码（客户端从第三方获取） |
+| `redirectUri` | String | ✅ | GitHub OAuth 回调地址，需与授权请求一致 |
 | `deviceId` | String | 否 | 设备唯一标识 |
 
 **响应**（同注册响应结构，含 `isNewUser: true/false` 字段）
@@ -249,9 +253,10 @@ POST /api/v1/user/login/oauth
 
 | code | 说明 |
 |------|------|
-| `4001` | provider 不合法 |
-| `4003` | authCode 无效或已过期 |
-| `5002` | OAuth 服务调用失败 |
+| `OAUTH_PROVIDER_UNSUPPORTED` | provider 未支持 |
+| `OAUTH_CODE_INVALID` | authCode 无效或已过期 |
+| `OAUTH_CONFIG_MISSING` | GitHub OAuth 未配置 |
+| `OAUTH_SERVICE_ERROR` | OAuth 服务调用失败 |
 
 ---
 

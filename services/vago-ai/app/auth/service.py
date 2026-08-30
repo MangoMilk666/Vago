@@ -9,15 +9,17 @@ from uuid import uuid4
 import jwt
 from sqlalchemy.orm import Session
 
+from app.auth.oauth import OAuthUserProfile, fetch_oauth_user_profile, normalize_provider
 from app.auth.schemas import LoginResponse, SmsSendResponse, TokenPair
 from app.core.config import settings
 from app.core.exceptions import AppException
 from app.core.redis import get_redis_client
-from app.users.models import User
+from app.users.models import User, UserOauthBinding
 from app.users.service import (
     build_profile,
     create_default_settings,
     ensure_user_can_login,
+    get_user_by_email,
     get_user_by_phone,
     get_user_by_uuid,
 )
@@ -118,6 +120,101 @@ def _create_user_from_phone(db: Session, phone: str) -> User:
     db.flush()
     create_default_settings(db, user.id)
     return user
+
+
+def _default_oauth_nickname(profile: OAuthUserProfile) -> str:
+    """OAuth 昵称兜底策略，保持 Java 侧默认用户名语义。"""
+    if profile.nickname.strip():
+        return profile.nickname
+    suffix = profile.open_id[-6:] if profile.open_id else uuid4().hex[:6]
+    return f"旅行者{suffix}"
+
+
+def _create_user_from_oauth(db: Session, profile: OAuthUserProfile) -> User:
+    """OAuth 首次登录且无法关联老用户时创建账号。"""
+    user = User(
+        uuid=uuid4().hex,
+        email=profile.email,
+        nickname=_default_oauth_nickname(profile),
+        avatar_oss_key=profile.avatar_url,
+    )
+    db.add(user)
+    db.flush()
+    create_default_settings(db, user.id)
+    return user
+
+
+def _sync_user_profile_from_oauth(db: Session, user: User, profile: OAuthUserProfile) -> None:
+    """只补齐本地空字段，避免覆盖用户手动修改过的资料。"""
+    if not user.nickname and profile.nickname:
+        user.nickname = profile.nickname
+    if not user.avatar_oss_key and profile.avatar_url:
+        user.avatar_oss_key = profile.avatar_url
+    if not user.email and profile.email:
+        email_owner = get_user_by_email(db, profile.email)
+        if email_owner is None or email_owner.id == user.id:
+            user.email = profile.email
+
+
+def _bind_oauth_account(db: Session, user: User, profile: OAuthUserProfile) -> UserOauthBinding:
+    """创建或更新第三方账号绑定关系。"""
+    binding = UserOauthBinding(
+        user_id=user.id,
+        provider=profile.provider,
+        open_id=profile.open_id,
+        access_token=profile.access_token,
+        expires_at=profile.expires_at,
+    )
+    db.add(binding)
+    db.flush()
+    return binding
+
+
+async def login_by_oauth(
+    db: Session,
+    provider: str,
+    auth_code: str,
+    redirect_uri: str,
+) -> LoginResponse:
+    """第三方 OAuth 登录；当前迁移 GitHub provider。"""
+    normalized_provider = normalize_provider(provider)
+    profile = await fetch_oauth_user_profile(normalized_provider, auth_code, redirect_uri)
+
+    binding = db.query(UserOauthBinding).filter(
+        UserOauthBinding.provider == normalized_provider,
+        UserOauthBinding.open_id == profile.open_id,
+    ).one_or_none()
+    is_new_user = False
+
+    # 绑定关系已存在
+    if binding is not None:
+        binding.access_token = profile.access_token
+        binding.expires_at = profile.expires_at
+        user = db.get(User, binding.user_id)
+        if user is None:
+            raise AppException("OAuth 绑定用户不存在", status_code=404, code="USER_NOT_FOUND")
+        ensure_user_can_login(user)
+        _sync_user_profile_from_oauth(db, user, profile)
+    # 绑定关系不存在 - 创建新用户和绑定关系
+    else:
+        user = get_user_by_email(db, profile.email) if profile.email else None
+        if user is None:
+            user = _create_user_from_oauth(db, profile)
+            is_new_user = True
+        else:
+            ensure_user_can_login(user)
+            _sync_user_profile_from_oauth(db, user, profile)
+        _bind_oauth_account(db, user, profile)
+
+    token_pair = create_token_pair(user)
+    await store_refresh_token(user.uuid, token_pair.refresh_token)
+    db.commit()
+    db.refresh(user)
+    return LoginResponse(
+        **token_pair.model_dump(by_alias=True),
+        isNewUser=is_new_user,
+        userInfo=build_profile(db, user),
+    )
 
 
 async def login_by_phone(db: Session, phone: str, code: str) -> LoginResponse:

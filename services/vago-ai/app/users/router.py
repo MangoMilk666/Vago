@@ -1,16 +1,25 @@
 """用户领域 API 路由。"""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user_uuid
 from app.shared.responses import ApiResponse, success
-from app.users.schemas import UserProfile, UserProfileUpdate, UserSettingsResponse, UserSettingsUpdate
+from app.users.schemas import (
+    AccountCancelRequest,
+    AccountCancelResponse,
+    UserProfile,
+    UserProfileUpdate,
+    UserSettingsResponse,
+    UserSettingsUpdate,
+)
 from app.users.service import (
     build_profile,
+    cancel_account as cancel_account_service,
     get_settings_response,
     get_user_or_raise,
+    revoke_cancel_account as revoke_cancel_account_service,
     update_profile,
     update_settings,
 )
@@ -57,13 +66,24 @@ def update_current_settings(
     return success(update_settings(db, user_uuid, payload), "设置已更新")
 
 
-@router.delete("/account", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-def cancel_account() -> ApiResponse[None]:
-    """账号注销仍由 Java 侧承接，Python 暂保留兼容路径。"""
-    return ApiResponse(code=501, message="账号注销尚未迁移到 FastAPI", data=None)
+@router.delete("/account", response_model=ApiResponse[AccountCancelResponse])
+async def cancel_account(
+    payload: AccountCancelRequest,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[AccountCancelResponse]:
+    """申请注销账号。"""
+    return success(
+        await cancel_account_service(user_uuid, payload.sms_code, db),
+        "注销申请已提交，7日内可撤销",
+    )
 
 
-@router.post("/account/cancel-revoke", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-def revoke_cancel_account() -> ApiResponse[None]:
-    """注销撤销仍由 Java 侧承接，Python 暂保留兼容路径。"""
-    return ApiResponse(code=501, message="注销撤销尚未迁移到 FastAPI", data=None)
+@router.post("/account/cancel-revoke", response_model=ApiResponse[None])
+async def revoke_cancel_account(
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[None]:
+    """撤销注销申请。"""
+    await revoke_cancel_account_service(user_uuid, db)
+    return success(None, "注销申请已撤销，账号恢复正常")

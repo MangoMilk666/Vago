@@ -38,6 +38,17 @@ class RegisterRequest(PhoneLoginRequest):
     nickname: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class OAuthLoginRequest(BaseModel):
+    """第三方 OAuth 登录请求。"""
+
+    provider: str = Field(min_length=1, max_length=32)
+    auth_code: str = Field(alias="authCode", min_length=1)
+    redirect_uri: str = Field(alias="redirectUri", min_length=1)
+    device_id: str | None = Field(default=None, alias="deviceId")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class TokenRefreshRequest(BaseModel):
     """刷新 token 请求。"""
 

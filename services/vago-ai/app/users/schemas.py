@@ -67,3 +67,25 @@ class UserSettingsUpdate(BaseModel):
     notification_checkin: bool | None = Field(default=None, alias="notificationCheckin")
 
     model_config = ConfigDict(populate_by_name=True)
+
+
+class AccountCancelRequest(BaseModel):
+    """账号注销申请请求。"""
+
+    sms_code: str = Field(
+        alias="smsCode",
+        min_length=6,
+        max_length=6,
+        pattern=r"^\d{6}$",
+    )
+    reason: str | None = Field(default=None, max_length=200)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class AccountCancelResponse(BaseModel):
+    """账号注销申请响应。"""
+
+    cancel_deadline: str = Field(alias="cancelDeadline")
+
+    model_config = ConfigDict(populate_by_name=True)

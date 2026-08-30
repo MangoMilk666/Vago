@@ -1,11 +1,12 @@
 """认证领域 API 路由。"""
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
 from app.auth import service
 from app.auth.schemas import (
     LoginResponse,
+    OAuthLoginRequest,
     PhoneLoginRequest,
     RegisterRequest,
     SmsSendRequest,
@@ -46,6 +47,18 @@ async def register(
     )
 
 
+@router.post("/login/oauth", response_model=ApiResponse[LoginResponse])
+async def login_oauth(
+    payload: OAuthLoginRequest,
+    db: Session = Depends(get_db),
+) -> ApiResponse[LoginResponse]:
+    """第三方 OAuth 登录。"""
+    return success(
+        await service.login_by_oauth(db, payload.provider, payload.auth_code, payload.redirect_uri),
+        "登录成功",
+    )
+
+
 @router.post("/token/refresh", response_model=ApiResponse[TokenPair])
 async def refresh_token(
     payload: TokenRefreshRequest,
@@ -63,9 +76,3 @@ async def logout(
     """退出登录并让当前 token 失效。"""
     await service.logout(authorization, payload.refresh_token if payload else None)
     return success(None, "已退出登录")
-
-
-@router.post("/login/oauth", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-def login_oauth() -> ApiResponse[None]:
-    """OAuth 登录暂未迁移，保留路径用于前端切流前的显式提示。"""
-    return ApiResponse(code=501, message="OAuth 登录尚未迁移到 FastAPI", data=None)
