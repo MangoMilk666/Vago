@@ -164,8 +164,9 @@ Phase 2 已开始将用户和认证边界迁入 FastAPI，但仍保持渐进式�
 - 已新增 `/api/v1/auth/*` 和 `/api/v1/users/*` 路由。
 - 已同时挂载 `/api/v1/user/*` 兼容前缀，方便未来 React client 从 Java 切到 FastAPI 时降低改动面。
 - 已保持 JWT payload 中 `userUuid`、`userId` 字段，与 Java 侧当前 token 语义兼容。
+- 已对齐 Java `LoginVO` 的 `accessToken`、`refreshToken`、`expiresIn`、`isNewUser`、`userInfo` 响应字段。
 - 已将短信验证码、刷新 token、JWT 黑名单使用的 Redis 连接收拢到 `core/redis.py`。
-- 已补用户资料/设置隔离测试和 JWT claim 兼容测试。
+- 已补用户资料/设置隔离测试、JWT claim 兼容测试，以及 `/api/v1/user/*` 路由层兼容测试。
 
 Phase 2 暂未迁移：
 
@@ -177,7 +178,6 @@ Phase 2 暂未迁移：
 
 继续 **Phase 2 — Authentication and User Migration**：
 
-- 为 FastAPI auth/users 路由补 API 层集成测试，覆盖 `/api/v1/user/*` 兼容路径。
 - 用本地 Redis / MySQL 做一次真实登录链路 smoke test。
 - 对齐 Java 与 DDL 中 `fog_unlock_radius_m` 默认值差异，目前 ORM 字段跟随 DDL 默认 300，但 FastAPI 新用户创建逻辑跟随 Java 使用 200。
 - 通过配置开关或前端环境变量，将 React `user.js` 从 Java 后端切到 FastAPI。

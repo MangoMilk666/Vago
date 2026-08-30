@@ -1,9 +1,9 @@
 # Vago 用户服务接口文档（C 端）
 
-**服务**：`vago-service-user`  
-**Base URL**：`/api/v1/user`  
-**文档版本**：v0.1 | 2026-05-16  
-**认证方式**：除登录/注册/发送验证码外，所有接口需在 Header 中携带 `Authorization: Bearer {accessToken}`
+**当前实现**：Spring Boot `vago-backend`，FastAPI `vago-ai` Phase 2 已提供兼容入口
+**Base URL**：`/api/v1/user`
+**文档版本**：v0.2 | 2026-08-30
+**认证方式**：除登录/注册/发送验证码外，所有接口需在 Header 中携带 `authorization: {accessToken}`；FastAPI 兼容 `Authorization: Bearer {accessToken}`
 
 ---
 
@@ -144,9 +144,10 @@ POST /api/v1/user/register
   "code": 200,
   "message": "注册成功",
   "data": {
-    "accessToken":  "eyJhbGciOiJIUzI1NiJ9...",
+    "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
     "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2gg...",
-    "expiresIn":    7200,
+    "expiresIn": 7200,
+    "isNewUser": true,
     "userInfo": {
       "uuid":       "550e8400-e29b-41d4-a716-446655440000",
       "nickname":   "旅行者小明",
@@ -279,9 +280,9 @@ POST /api/v1/user/token/refresh
   "code": 200,
   "message": "success",
   "data": {
-    "accessToken":  "eyJhbGciOiJIUzI1NiJ9...",
+    "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
     "refreshToken": "bmV3cmVmcmVzaHRva2Vu...",
-    "expiresIn":    7200
+    "expiresIn": 7200
   }
 }
 ```

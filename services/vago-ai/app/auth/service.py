@@ -69,7 +69,6 @@ def create_token_pair(user: User) -> TokenPair:
     return TokenPair(
         accessToken=access_token,
         refreshToken=refresh_token,
-        tokenType="Bearer",
         expiresIn=settings.jwt_access_token_ttl_seconds,
     )
 
@@ -125,6 +124,7 @@ async def login_by_phone(db: Session, phone: str, code: str) -> LoginResponse:
     """手机号验证码登录；不存在的手机号会自动注册。"""
     await validate_sms_code(phone, code)
     user = get_user_by_phone(db, phone)
+    is_new_user = user is None
     if user is None:
         user = _create_user_from_phone(db, phone)
     ensure_user_can_login(user)
@@ -132,7 +132,11 @@ async def login_by_phone(db: Session, phone: str, code: str) -> LoginResponse:
     await store_refresh_token(user.uuid, token_pair.refresh_token)
     db.commit()
     db.refresh(user)
-    return LoginResponse(**token_pair.model_dump(by_alias=True), user=build_profile(db, user))
+    return LoginResponse(
+        **token_pair.model_dump(by_alias=True),
+        isNewUser=is_new_user,
+        userInfo=build_profile(db, user),
+    )
 
 
 async def register_by_phone(
@@ -153,7 +157,11 @@ async def register_by_phone(
     await store_refresh_token(user.uuid, token_pair.refresh_token)
     db.commit()
     db.refresh(user)
-    return LoginResponse(**token_pair.model_dump(by_alias=True), user=build_profile(db, user))
+    return LoginResponse(
+        **token_pair.model_dump(by_alias=True),
+        isNewUser=True,
+        userInfo=build_profile(db, user),
+    )
 
 
 async def refresh_token(db: Session, refresh_token_value: str) -> TokenPair:

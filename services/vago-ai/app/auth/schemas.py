@@ -52,7 +52,6 @@ class TokenPair(BaseModel):
 
     access_token: str = Field(alias="accessToken")
     refresh_token: str = Field(alias="refreshToken")
-    token_type: str = Field(default="Bearer", alias="tokenType")
     expires_in: int = Field(alias="expiresIn")
 
     model_config = ConfigDict(populate_by_name=True)
@@ -61,4 +60,5 @@ class TokenPair(BaseModel):
 class LoginResponse(TokenPair):
     """登录成功响应。"""
 
-    user: UserProfile
+    is_new_user: bool = Field(alias="isNewUser")
+    user_info: UserProfile = Field(alias="userInfo")
