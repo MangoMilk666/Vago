@@ -13,6 +13,11 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // Phase 3/4 交界：AI 结构化计划保存已迁移到 FastAPI travel domain。
+      '/api/v1/ai/plans': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       // Phase 2：用户认证与个人资料已迁移到 FastAPI，保留 /api/v1/user 路径兼容前端 client。
       '/api/v1/user': {
         target: 'http://localhost:8000',

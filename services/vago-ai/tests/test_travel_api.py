@@ -116,3 +116,45 @@ def test_travel_plan_days_and_convert_api(client: TestClient):
 
     assert trip_days_response.status_code == 200
     assert trip_days_response.json()["data"][0]["spots"][0]["name"] == "小樽运河"
+
+
+def test_ai_plan_save_api_returns_legacy_contract(client: TestClient):
+    """测试：AI 保存接口迁入 FastAPI 后仍保持旧 Java 响应 contract。"""
+    payload = {
+        "title": "AI 首尔行",
+        "destination": "Seoul",
+        "start_date": "2026-11-01",
+        "end_date": "2026-11-02",
+        "budget_currency": "CNY",
+        "days": [
+            {
+                "day_index": 1,
+                "transportation": "地铁",
+                "spots": [
+                    {"name": "景福宫", "category": 0, "duration_minutes": 90},
+                    {"name": "明洞晚餐", "category": 1},
+                ],
+            }
+        ],
+    }
+
+    draft_response = client.post("/api/v1/ai/plans/save-draft", json=payload)
+
+    assert draft_response.status_code == 200
+    assert draft_response.json()["code"] == 200
+    assert draft_response.json()["data"]["type"] == "plan"
+
+    trip_response = client.post("/api/v1/ai/plans/save-trip", json=payload)
+
+    assert trip_response.status_code == 200
+    trip_data = trip_response.json()["data"]
+    assert trip_data["type"] == "trip"
+    assert trip_data["uuid"]
+
+    missing_date_response = client.post(
+        "/api/v1/ai/plans/save-trip",
+        json={**payload, "start_date": None},
+    )
+
+    assert missing_date_response.status_code == 400
+    assert missing_date_response.json()["code"] == "PARAM_INVALID"

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.exceptions import AppException
+from app.models.schemas import StructuredDay, StructuredPlan, StructuredSpot
 from app.travel import service
 from app.travel.models import ItineraryDay, ItinerarySpot, Plan, Trip
 from app.travel.schemas import (
@@ -153,3 +154,33 @@ def test_get_itinerary_days_lazy_initializes_missing_dates(db_session: Session):
     assert [item.day_index for item in days] == [1, 2, 3]
     assert days[1].uuid == "day-uuid"
     assert days[1].spots[0].name == "景福宫"
+
+
+def test_ai_structured_plan_save_uses_travel_domain(db_session: Session):
+    """测试：AI 结构化行程应能直接保存到 FastAPI travel domain。"""
+    structured_plan = StructuredPlan(
+        title="AI 京都三日",
+        destination="Kyoto",
+        start_date="2026-10-01",
+        end_date="2026-10-03",
+        budget=3600,
+        days=[
+            StructuredDay(
+                day_index=1,
+                transportation="JR",
+                spots=[
+                    StructuredSpot(name="清水寺", category=0, duration_minutes=120),
+                    StructuredSpot(name="祇园晚餐", category=1),
+                ],
+            ),
+            StructuredDay(day_index=2, day_date="2026-10-02", spots=[]),
+        ],
+    )
+
+    saved = service.save_structured_plan_as_draft(db_session, "user-ai", structured_plan)
+    days = service.get_itinerary_days(db_session, "user-ai", saved.uuid, ItineraryDay.REF_TYPE_PLAN)
+
+    assert saved.type == "plan"
+    assert [day.day_index for day in days] == [1, 2, 3]
+    assert days[0].day_date == date(2026, 10, 1)
+    assert [spot.name for spot in days[0].spots] == ["清水寺", "祇园晚餐"]

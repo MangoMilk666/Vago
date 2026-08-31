@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppException
+from app.models.schemas import AiPlanSaveResponse, StructuredDay, StructuredPlan
 from app.travel.models import ItineraryDay, ItinerarySpot, Plan, Trip, utc_now_naive
 from app.travel.schemas import (
     ItineraryDayResponse,
@@ -26,6 +27,17 @@ TRIP_STATUS_PLANNING = 1
 TRIP_STATUS_COMPLETED = 2
 PLAN_STATUS_DRAFT = 0
 PLAN_STATUS_CONVERTED = 1
+
+
+def _parse_optional_date(value: str | None) -> date | None:
+    """解析 AI structured plan 中的日期字符串，非法或为空时按旧 Java 行为返回 None。"""
+    # 分支条件：AI 没有返回日期时，交由调用方决定 fallback 策略。
+    if value is None or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _new_uuid() -> str:
@@ -257,6 +269,106 @@ def convert_plan_to_trip(db: Session, user_uuid: str, plan_uuid: str) -> TripRes
     db.commit()
     db.refresh(trip)
     return _trip_to_response(trip)
+
+
+def save_structured_plan_as_draft(
+    db: Session,
+    user_uuid: str,
+    payload: StructuredPlan,
+) -> AiPlanSaveResponse:
+    """将 AI 结构化行程保存为 Plan 草稿，并创建对应 days/spots。"""
+    start_date = _parse_optional_date(payload.start_date) or date.today()
+    end_date = _parse_optional_date(payload.end_date) or start_date + timedelta(days=len(payload.days) - 1)
+    plan = Plan(
+        uuid=_new_uuid(),
+        user_uuid=user_uuid,
+        title=payload.title,
+        destination=payload.destination,
+        start_date=start_date,
+        end_date=end_date,
+        budget=payload.budget,
+        budget_currency=payload.budget_currency or "CNY",
+        status=PLAN_STATUS_DRAFT,
+    )
+    db.add(plan)
+    db.flush()
+    _create_days_and_spots_from_structured(db, plan.uuid, ItineraryDay.REF_TYPE_PLAN, payload.days, start_date)
+    db.commit()
+    return AiPlanSaveResponse(uuid=plan.uuid, type="plan")
+
+
+def save_structured_plan_as_trip(
+    db: Session,
+    user_uuid: str,
+    payload: StructuredPlan,
+) -> AiPlanSaveResponse:
+    """将 AI 结构化行程保存为正式 Trip，并创建对应 days/spots。"""
+    start_date = _parse_optional_date(payload.start_date)
+    end_date = _parse_optional_date(payload.end_date)
+    # 分支条件：正式行程必须具备起止日期，缺失或格式非法时拒绝保存。
+    if start_date is None or end_date is None:
+        raise AppException("正式行程必须包含出发日期和返回日期", status_code=400, code="PARAM_INVALID")
+
+    trip = Trip(
+        uuid=_new_uuid(),
+        user_uuid=user_uuid,
+        title=payload.title,
+        destination=payload.destination,
+        start_date=start_date,
+        end_date=end_date,
+        status=TRIP_STATUS_PLANNING,
+    )
+    db.add(trip)
+    db.flush()
+    _create_days_and_spots_from_structured(db, trip.uuid, ItineraryDay.REF_TYPE_TRIP, payload.days, start_date)
+    db.commit()
+    return AiPlanSaveResponse(uuid=trip.uuid, type="trip")
+
+
+def _create_days_and_spots_from_structured(
+    db: Session,
+    ref_uuid: str,
+    ref_type: int,
+    days: list[StructuredDay],
+    base_start_date: date,
+) -> None:
+    """把 AI structured plan 的 days/spots 批量写入 itinerary 表。"""
+    for day_payload in days:
+        day_date = _parse_optional_date(day_payload.day_date)
+        # 分支条件：AI 未给出某天具体日期时，用起始日期 + dayIndex 推导。
+        if day_date is None:
+            day_date = base_start_date + timedelta(days=day_payload.day_index - 1)
+
+        day = ItineraryDay(
+            uuid=_new_uuid(),
+            ref_uuid=ref_uuid,
+            ref_type=ref_type,
+            day_date=day_date,
+            day_index=day_payload.day_index,
+            transportation=day_payload.transportation,
+            accommodation=day_payload.accommodation,
+            meal_breakfast=day_payload.meal_breakfast,
+            meal_lunch=day_payload.meal_lunch,
+            meal_dinner=day_payload.meal_dinner,
+            budget_day=day_payload.budget_day,
+            notes=day_payload.notes,
+        )
+        db.add(day)
+        db.flush()
+
+        for index, spot_payload in enumerate(day_payload.spots):
+            db.add(
+                ItinerarySpot(
+                    uuid=_new_uuid(),
+                    day_uuid=day.uuid,
+                    name=spot_payload.name,
+                    address=spot_payload.address,
+                    category=spot_payload.category,
+                    sort_order=index,
+                    duration_minutes=spot_payload.duration_minutes,
+                    notes=spot_payload.notes,
+                )
+            )
 
 
 def _resolve_date_range(db: Session, ref_uuid: str, ref_type: int, user_uuid: str) -> list[date] | None:

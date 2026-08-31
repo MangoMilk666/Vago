@@ -303,6 +303,15 @@ class StructuredPlan(BaseModel):
     days: list[StructuredDay] = Field(..., min_length=1, description="每日行程")
 
 
+class AiPlanSaveResponse(BaseModel):
+    """AI 结构化行程保存结果，对齐旧 Java AiPlanSaveVO。"""
+
+    # 创建出的 Plan 或 Trip UUID。
+    uuid: str = Field(description="创建出的 plan/trip UUID")
+    # 保存结果类型：plan=草稿计划，trip=正式行程。
+    type: Literal["plan", "trip"] = Field(description="保存结果类型：plan 或 trip")
+
+
 class ChatResponse(BaseModel):
     """AI 对话非流式响应体。"""
 

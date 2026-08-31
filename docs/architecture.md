@@ -1,7 +1,7 @@
 # Vago 架构说明
 
 > 最后更新：2026-08-31
-> 当前状态：Remould Phase 3 — Trip / Plan / Itinerary Migration
+> 当前状态：Remould Phase 4 — Knowledge / RAG / AI Companion Integration
 > 目标架构：FastAPI Modular Monolith + React Web + Native iOS
 
 ## 1. 架构原则
@@ -27,6 +27,7 @@ Vago 的新架构服务于一个更聚焦的产品定位：
 Browser / React SPA (:5173)
     │
     ├── /api/v1/user/**             → FastAPI vago-ai (:8000)
+    ├── /api/v1/ai/plans/**         → FastAPI vago-ai (:8000)
     ├── /api/v1/travel/trips/**     → FastAPI vago-ai (:8000)
     ├── /api/v1/travel/plans/**     → FastAPI vago-ai (:8000)
     ├── /api/v1/ai/chat/**          → FastAPI vago-ai (:8000)
@@ -50,7 +51,7 @@ FastAPI vago-ai
 
 - Web 路由包括 `/login`、`/`、`/trips`、`/plans`、`/guides`、`/ai`、`/profile`、`/trips/:uuid/itinerary`、`/plans/:uuid/itinerary`。
 - AI chat / stream 由前端经 Vite proxy 直连 Python FastAPI。
-- 用户、计划、行程核心 CRUD 已迁移到 FastAPI；攻略、收藏夹、AI 计划保存暂留 Java Spring Boot。
+- 用户、计划、行程核心 CRUD 与 AI 结构化计划保存已迁移到 FastAPI；攻略、收藏夹暂留 Java Spring Boot。
 - 攻略创建 / 删除后由 Java 异步调用 Python `/api/v1/articles/ingest` 和删除接口维护 Qdrant。
 - 数据库当前落地表集中在 `users`、`user_oauth_bindings`、`user_settings`、`trips`、`plans`、`guides`、`itinerary_days`、`itinerary_spots`。
 
@@ -222,8 +223,8 @@ API contract 不应依赖浏览器 cookie、React state 或 Vite proxy。React W
 | 0 | Repository inventory + docs alignment | 已完成 |
 | 1 | 建立 FastAPI backend foundation | 已完成基础骨架 |
 | 2 | 迁移 Auth / User | 已完成并通过本地联调 |
-| 3 | 迁移 Trip / Plan / Itinerary | 核心 CRUD 已迁移 |
-| 4 | 整合 Knowledge / RAG / AI Companion | 待开始 |
+| 3 | 迁移 Trip / Plan / Itinerary | 核心 CRUD 与 AI 保存入口已迁移 |
+| 4 | 整合 Knowledge / RAG / AI Companion | 已开始 |
 | 5 | 清理 legacy community / public-feed 能力 | 待开始 |
 | 6 | 更新 Web 产品体验和导航 | 待开始 |
 | 7 | 建立 SwiftUI iOS foundation | 待开始 |

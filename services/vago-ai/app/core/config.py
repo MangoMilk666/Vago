@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     """从环境变量或 .env 加载的类型化应用配置。"""
 
     app_name: str = "Vago API"
-    app_version: str = "0.4.0-remould-phase3"
+    app_version: str = "0.4.0-remould-phase4"
     api_v1_prefix: str = "/api/v1"
     environment: str = "local"
     debug: bool = False

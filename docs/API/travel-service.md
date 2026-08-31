@@ -45,7 +45,29 @@ Trip 创建时会生成新的业务 `uuid`，默认 `status=1`、`isDeleted=0`�
 
 Plan 创建时默认 `status=0`。转换为 Trip 后会把 plan 下的 itinerary days 和 spots 复制到新 Trip，并将 Plan 标记为已转换。
 
-## 4. Itinerary Days
+## 4. AI Structured Plan Save
+
+| Method | Path | 说明 |
+|--------|------|------|
+| `POST` | `/api/v1/ai/plans/save-draft` | 将 AI 结构化行程保存为草稿 Plan |
+| `POST` | `/api/v1/ai/plans/save-trip` | 将 AI 结构化行程保存为正式 Trip |
+
+这两个接口保持旧 Java `AiPlanSaveVO` contract，成功时返回：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "uuid": "created-plan-or-trip-uuid",
+    "type": "plan"
+  }
+}
+```
+
+保存逻辑已进入 FastAPI travel domain：AI structured plan 的 `days` 和 `spots` 会直接写入 `itinerary_days` / `itinerary_spots`。保存正式 Trip 时要求 `start_date` 与 `end_date` 必填且格式合法。
+
+## 5. Itinerary Days
 
 | Method | Path | 说明 |
 |--------|------|------|
@@ -56,7 +78,7 @@ Plan 创建时默认 `status=0`。转换为 Trip 后会把 plan 下的 itinerary
 
 查询 days 时会根据 Trip / Plan 的日期范围懒初始化缺失的 `itinerary_days`。更新 day 时，如果请求体包含 `spots`，会先删除该天旧 spots，再按请求顺序重建；如果未传 `spots`，则只更新 day 字段并保留原 spots。
 
-## 5. 暂未迁移
+## 6. 暂未迁移
 
 以下 `/api/v1/travel` 子域仍保留在 Spring Boot，等待 Knowledge remould 阶段处理：
 

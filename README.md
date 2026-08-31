@@ -51,7 +51,7 @@ RAG / Qdrant 是其中用于检索大量非结构化个人资料的技术能力�
 |------|------|------|
 | 用户与认证 | Phase 2 已迁移 | 手机号 / OAuth、JWT、用户级数据隔离、个人设置 |
 | Personal Travel Knowledge | 当前保留并强化 | 攻略文本 / URL 导入、清洗、分块、Embedding、Qdrant、来源引用 |
-| AI Travel Companion | 当前保留并重定位 | 多轮对话、SSE、Tool Calling、结构化计划输出、用户确认后保存 |
+| AI Travel Companion | Phase 4 起步整合 | 多轮对话、SSE、Tool Calling、结构化计划输出、用户确认后保存 |
 | Plans / Trips / Itinerary | Phase 3 核心 CRUD 已迁移 | 草稿计划、正式行程、每日安排、景点、交通、住宿、预算 |
 | Footprints | 后续建设 | GPS 采样、轨迹、打卡、地点统计、地图可视化 |
 | Fog-of-World Map | 后续建设 | 基于真实移动轨迹解锁地图区域 |
@@ -74,12 +74,12 @@ React Web (Vite)
 
 Spring Boot vago-backend
     ├── Guide / Collection CRUD
-    ├── AI structured plan save
     └── Java → Python guide indexing bridge
 
 FastAPI vago-ai
     ├── Auth / User
     ├── Trip / Plan / Itinerary CRUD
+    ├── AI structured plan save
     ├── AI chat / SSE
     ├── article ingestion
     ├── cleaner / chunker / embedder
@@ -175,14 +175,14 @@ Vago/
 
 ## 迁移状态
 
-当前 remould 进度为 **Phase 3 — Trip / Plan / Itinerary Migration**。
+当前 remould 进度为 **Phase 4 — Knowledge / RAG / AI Companion Integration 起步**。
 
 迁移优先级：
 
 1. 建立统一 FastAPI backend foundation；已完成基础骨架
 2. 迁移 Auth / User；已完成 FastAPI 迁移并通过本地联调
-3. 迁移 Trip / Plan / Itinerary；已完成核心 CRUD 与 Vite proxy 切换
-4. 整合 Knowledge / RAG / AI Companion；
+3. 迁移 Trip / Plan / Itinerary；已完成核心 CRUD、AI 结构化计划保存与 Vite proxy 切换
+4. 整合 Knowledge / RAG / AI Companion；已开始消除 Java → Python 的 AI 保存代理链路
 5. 清理 legacy community / public-feed 相关能力；
 6. 更新 Web 产品体验；
 7. 建立 SwiftUI iOS foundation；

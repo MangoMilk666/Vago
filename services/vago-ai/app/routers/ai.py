@@ -10,9 +10,14 @@ AI 行程规划路由（AI Router）。
 TODO: 接入 LangChain RAG Chain + OpenAI GPT-4o
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from app.models.schemas import PlanRequest, PlanResponse
+from app.core.database import get_db
+from app.dependencies.auth import get_current_user_uuid
+from app.models.schemas import AiPlanSaveResponse, PlanRequest, PlanResponse, StructuredPlan
+from app.shared.responses import ApiResponse, success
+from app.travel import service as travel_service
 
 router = APIRouter()
 
@@ -62,3 +67,25 @@ async def plan_itinerary(req: PlanRequest) -> PlanResponse:
             "导入更多目的地攻略可获得更个性化的推荐",
         ],
     )
+
+
+@router.post("/plans/save-draft", response_model=ApiResponse[AiPlanSaveResponse])
+def save_structured_plan_as_draft(
+    payload: StructuredPlan,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[AiPlanSaveResponse]:
+    """保存 AI 生成的结构化行程为 Plan 草稿。"""
+    result = travel_service.save_structured_plan_as_draft(db, user_uuid, payload)
+    return success(result)
+
+
+@router.post("/plans/save-trip", response_model=ApiResponse[AiPlanSaveResponse])
+def save_structured_plan_as_trip(
+    payload: StructuredPlan,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[AiPlanSaveResponse]:
+    """保存 AI 生成的结构化行程为正式 Trip。"""
+    result = travel_service.save_structured_plan_as_trip(db, user_uuid, payload)
+    return success(result)

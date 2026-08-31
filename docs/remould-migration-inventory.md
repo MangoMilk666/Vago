@@ -1,7 +1,7 @@
 # Vago Remould 迁移盘点
 
 > 最后更新：2026-08-31
-> 当前阶段：Phase 3 — Trip / Plan / Itinerary Migration
+> 当前阶段：Phase 4 — Knowledge / RAG / AI Companion Integration 起步
 
 ## 1. 仓库状态
 
@@ -99,7 +99,7 @@
 | `apps/vago-web/src/api/travel.js` | `/api/v1/travel/trips`、`/api/v1/travel/plans` | Python FastAPI | Phase 3 已通过 Vite proxy 切换 Trip / Plan / Itinerary |
 | `apps/vago-web/src/api/travel.js` | `/api/v1/travel/guides`、`/api/v1/travel/collections` | Java Spring Boot | 暂留 Java，等待 Knowledge remould |
 | `apps/vago-web/src/api/ai.js` | `/api/v1/ai/chat*` | Python FastAPI | AI 整合期间保持路径稳定 |
-| `apps/vago-web/src/api/ai.js` | `/api/v1/ai/plans/save-*` | Java Spring Boot | Phase 3/4 迁移到 FastAPI trip/plan domain |
+| `apps/vago-web/src/api/ai.js` | `/api/v1/ai/plans/save-*` | Python FastAPI | Phase 3/4 交界已迁移到 FastAPI travel domain |
 
 ## 7. Java 到 Python 依赖
 
@@ -188,16 +188,28 @@ Phase 3 已开始将 Trip / Plan / Itinerary 核心业务域迁入 FastAPI：
 - 已迁移 Trip / Plan 下的 itinerary days 查询与单日更新。
 - 查询 days 时会按日期范围懒初始化缺失 day；更新 day 时支持 spots 整体替换。
 - 已通过 Vite proxy 将 `/api/v1/travel/trips` 与 `/api/v1/travel/plans` 切到 FastAPI。
+- 已将 `/api/v1/ai/plans/save-draft` 与 `/api/v1/ai/plans/save-trip` 切到 FastAPI，使 AI structured plan 可直接进入 travel domain service。
 - Guides / Collections / discover / like 等偏社区或知识组织能力暂不迁移，等待 Knowledge remould。
 - 已补 travel service 与 travel API 测试，覆盖用户隔离、计划转换、itinerary 懒初始化与响应 envelope。
 
-## 12. 推荐下一步
+## 12. Phase 4 当前状态
 
-完成 **Phase 3 — Trip / Plan / Itinerary Migration** 前的最后验证：
+Phase 4 已从 AI 保存链路开始整合：
+
+- AI chat / stream 继续由 FastAPI 提供。
+- AI structured plan save 已由 Java Spring Boot 迁移到 FastAPI，保存时直接写入 Plan / Trip / Itinerary 表。
+- 前端仍调用 `/api/v1/ai/plans/save-*`，但 Vite proxy 已将该前缀切到 FastAPI。
+- Java 仍保留 Guide indexing bridge，后续 Knowledge / RAG remould 时再逐步迁移。
+- 当前仍不迁移 guide discover / like / public ranking。
+
+## 13. 推荐下一步
+
+完成 **Phase 4 — Knowledge / RAG / AI Companion Integration** 的下一步：
 
 - 用本地 Redis / MySQL 做一次 Trip / Plan / Itinerary 前后端 smoke test。
 - 验证 Plan 转 Trip 后 itinerary days / spots 在真实数据库中保持一致。
+- 验证 AI 页面保存草稿 / 保存行程时，数据直接落入 FastAPI travel domain。
 - 验证 Guide / Collection 仍由 Java 提供，未被 FastAPI proxy 误拦截。
-- Phase 3 smoke test 通过后，进入 Phase 4 Knowledge / RAG / AI Companion 整合。
+- 开始把 Guide ingestion / search 的产品语言重定位为 Knowledge source，并逐步移除 Java → Python indexing bridge。
 
 在 Knowledge remould 前，不建议迁移 guide discover / like 等公共社区语义。
