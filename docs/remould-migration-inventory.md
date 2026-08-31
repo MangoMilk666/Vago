@@ -97,7 +97,8 @@
 |------|-----------|----------|----------|
 | `apps/vago-web/src/api/user.js` | `/api/v1/user` | Python FastAPI | Phase 2 已通过 Vite proxy 切到 FastAPI auth/users |
 | `apps/vago-web/src/api/travel.js` | `/api/v1/travel/trips`、`/api/v1/travel/plans` | Python FastAPI | Phase 3 已通过 Vite proxy 切换 Trip / Plan / Itinerary |
-| `apps/vago-web/src/api/travel.js` | `/api/v1/travel/guides`、`/api/v1/travel/collections` | Java Spring Boot | 暂留 Java，等待 Knowledge remould |
+| `apps/vago-web/src/api/travel.js` | `/api/v1/knowledge/guides/*` | Python FastAPI | Phase 4 已迁移我的攻略 / 个人知识源 CRUD 与手动索引 |
+| `apps/vago-web/src/api/travel.js` | `/api/v1/travel/guides/discover`、`/api/v1/travel/guides/*/like`、`/api/v1/travel/collections` | Java Spring Boot | 暂留 Java，等待社区清理或个人知识组织重设计 |
 | `apps/vago-web/src/api/ai.js` | `/api/v1/ai/chat*` | Python FastAPI | AI 整合期间保持路径稳定 |
 | `apps/vago-web/src/api/ai.js` | `/api/v1/ai/plans/save-*` | Python FastAPI | Phase 3/4 交界已迁移到 FastAPI travel domain |
 
@@ -199,7 +200,8 @@ Phase 4 已从 AI 保存链路开始整合：
 - AI chat / stream 继续由 FastAPI 提供。
 - AI structured plan save 已由 Java Spring Boot 迁移到 FastAPI，保存时直接写入 Plan / Trip / Itinerary 表。
 - 前端仍调用 `/api/v1/ai/plans/save-*`，但 Vite proxy 已将该前缀切到 FastAPI。
-- Java 仍保留 Guide indexing bridge，后续 Knowledge / RAG remould 时再逐步迁移。
+- 我的攻略 / 个人知识源 CRUD 已迁移到 `/api/v1/knowledge/guides/*`，创建、更新、手动 index 会由 FastAPI 后台任务调用现有 RAG indexing pipeline。
+- Java 仍保留公开 discover / like / collections，以及兼容期的 Guide indexing bridge。
 - 当前仍不迁移 guide discover / like / public ranking。
 
 ## 13. 推荐下一步
@@ -210,6 +212,6 @@ Phase 4 已从 AI 保存链路开始整合：
 - 验证 Plan 转 Trip 后 itinerary days / spots 在真实数据库中保持一致。
 - 验证 AI 页面保存草稿 / 保存行程时，数据直接落入 FastAPI travel domain。
 - 验证 Guide / Collection 仍由 Java 提供，未被 FastAPI proxy 误拦截。
-- 开始把 Guide ingestion / search 的产品语言重定位为 Knowledge source，并逐步移除 Java → Python indexing bridge。
+- 开始把 Guide discover / like 从核心导航和后端主线剥离，或将 Collections 重设计为个人知识组织能力。
 
 在 Knowledge remould 前，不建议迁移 guide discover / like 等公共社区语义。
