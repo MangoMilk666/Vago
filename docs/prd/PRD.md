@@ -178,7 +178,7 @@ RAG 要求：
 - 支持用户级隔离；
 - 支持来源引用。
 
-当前实现中该能力主要由 Java `guides` 表和 Python `articles` router / RAG pipeline 共同完成。后续应迁入统一 FastAPI 后端。
+当前 Phase 4 已将“我的攻略”重定位为 FastAPI Personal Travel Knowledge，个人资料 CRUD 与手动索引入口已迁入统一后端。公开 discover / like / collections 仍暂留 Java，后续按社区清理或个人知识组织能力重新设计。
 
 ### 6.2 AI Travel Companion
 

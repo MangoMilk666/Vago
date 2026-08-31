@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.auth import router as auth_router
+from app.knowledge import router as knowledge_router
 from app.routers import ai, articles, chat
 from app.travel import router as travel_router
 from app.users import router as users_router
@@ -21,3 +22,6 @@ api_v1_router.include_router(users_router.router, prefix="/user", tags=["用户�
 
 # Phase 3 迁移 Trip / Plan / Itinerary，暂不迁移 Guides / Collections。
 api_v1_router.include_router(travel_router.router, prefix="/travel", tags=["旅行核心"])
+
+# Phase 4 将个人攻略重定位为 Personal Travel Knowledge，discover/like 仍留在 Java。
+api_v1_router.include_router(knowledge_router.router, prefix="/knowledge", tags=["个人旅行知识"])

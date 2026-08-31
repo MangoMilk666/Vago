@@ -18,6 +18,11 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // Phase 4：个人旅行知识源 CRUD 已迁移到 FastAPI。
+      '/api/v1/knowledge': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       // Phase 2：用户认证与个人资料已迁移到 FastAPI，保留 /api/v1/user 路径兼容前端 client。
       '/api/v1/user': {
         target: 'http://localhost:8000',

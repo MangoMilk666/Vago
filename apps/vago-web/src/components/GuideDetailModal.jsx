@@ -39,7 +39,7 @@ export default function GuideDetailModal({ guide, isMine, onClose, onEdit, onDel
     let alive = true
     setFetching(true)
     Promise.all([
-      guideApi.detail(guide.uuid),
+      isMine ? guideApi.mineDetail(guide.uuid) : guideApi.detail(guide.uuid),
       collectionApi.check(guide.uuid),
     ]).then(([detailRes, checkRes]) => {
       if (!alive) return
