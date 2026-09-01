@@ -123,6 +123,27 @@ export const guideApi = {
   index:     (uuid)       => knowledgeHttp.post(`/guides/${uuid}/index`),
 }
 
+// ─── 个人知识源 API ───────────────────────────────────────────────────────────
+// 新 Knowledge Domain 仅管理用户自己的资料，不包含发现、点赞或收藏等社区语义。
+export const knowledgeApi = {
+  list: () => knowledgeHttp.get('/sources'),
+  detail: (uuid) => knowledgeHttp.get(`/sources/${uuid}`),
+  createText: (data) => knowledgeHttp.post('/sources', data),
+  update: (uuid, data) => knowledgeHttp.put(`/sources/${uuid}`, data),
+  delete: (uuid) => knowledgeHttp.delete(`/sources/${uuid}`),
+  index: (uuid) => knowledgeHttp.post(`/sources/${uuid}/index`),
+  uploadFile: (file, fields = {}) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (fields.title) form.append('title', fields.title)
+    if (fields.destination) form.append('destination', fields.destination)
+    if (fields.tags?.length) form.append('tags', JSON.stringify(fields.tags))
+    return knowledgeHttp.post('/sources/files', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+}
+
 // ─── 收藏夹 API ──────────────────────────────────────────────────────────────
 
 export const collectionApi = {

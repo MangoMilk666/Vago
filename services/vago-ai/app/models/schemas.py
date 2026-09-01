@@ -245,10 +245,11 @@ class ChatRequest(BaseModel):
             "前端负责维护历史记录并完整传入，服务端无状态。"
         ),
     )
-    # 是否启用 RAG 私有攻略库检索。
+    # 是否允许 Agent 使用可选的个人知识语义检索。
     use_rag: bool = Field(
         True,
-        description="是否启用 RAG 私有攻略库检索。False 时直接调用 LLM 通用知识。",
+        alias="useRag",
+        description="是否允许使用个人知识语义检索；False 时直接调用 LLM 通用知识。",
     )
     # RAG 检索返回的最大文本块数。
     top_k: int = Field(6, ge=1, le=20, description="RAG 检索返回的最大文本块数")
@@ -260,18 +261,23 @@ class ChatRequest(BaseModel):
         description="RAG 检索相似度阈值，低于此值的结果被过滤",
     )
 
+    # 前端沿用 camelCase，服务层继续使用 Python 的 snake_case 字段名。
+    model_config = {"populate_by_name": True}
+
 
 class SourceCitation(BaseModel):
-    """RAG 检索命中的攻略来源，随回答一同返回，供前端展示引用来源。"""
+    """RAG 检索命中的个人知识来源，随回答一同返回。"""
 
-    # 攻略 UUID。
-    article_id: str
-    # 攻略标题。
-    title: str = Field(description="攻略标题")
+    # KnowledgeSource 的业务 UUID，不再以 Guide/article 语义对外暴露。
+    source_uuid: str = Field(alias="sourceUuid")
+    # 资料标题。
+    title: str = Field(description="知识资料标题")
     # 命中的文本块摘要。
     chunk_text: str = Field(description="命中的文本块摘要（前 300 字）")
     # 相似度得分。
     score: float = Field(description="相似度得分，范围 [0, 1]")
+
+    model_config = {"populate_by_name": True}
 
 
 # ─── AI 结构化行程计划（Structured Plan）─────────────────────────────────────
@@ -351,10 +357,10 @@ class ChatResponse(BaseModel):
 
     # 模型生成的回答文本。
     answer: str = Field(description="模型生成的回答文本")
-    # 本次回答引用的攻略来源列表。
+    # 本次回答引用的个人资料来源列表。
     sources: list[SourceCitation] = Field(
         default_factory=list,
-        description="本次回答引用的攻略来源列表，为空时表示基于通用知识作答",
+        description="本次回答引用的个人资料来源列表，为空时表示基于通用知识作答",
     )
     # 实际使用的模型名称。
     model: str = Field(description="实际使用的模型名称")

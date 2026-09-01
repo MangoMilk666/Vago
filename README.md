@@ -50,7 +50,7 @@ RAG / Qdrant 是其中用于检索大量非结构化个人资料的技术能力�
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | 用户与认证 | Phase 2 已迁移 | 手机号 / OAuth、JWT、用户级数据隔离、个人设置 |
-| Personal Travel Knowledge | Phase 4A–4D 已落地 | 独立 KnowledgeSource、纯文本与 `.md/.txt` 导入、用户隔离、可选语义索引 |
+| Personal Travel Knowledge | Phase 4A–4F 已落地 | 独立 KnowledgeSource、纯文本与 `.md/.txt` 导入、用户隔离、Web 知识库与可选语义索引 |
 | AI Travel Companion | Phase 4 起步整合 | 多轮对话、SSE、Tool Calling、结构化计划输出、用户确认后保存 |
 | Plans / Trips / Itinerary | Phase 3 核心 CRUD 已迁移 | 草稿计划、正式行程、每日安排、景点、交通、住宿、预算 |
 | Footprints | 后续建设 | GPS 采样、轨迹、打卡、地点统计、地图可视化 |
@@ -178,14 +178,14 @@ Vago/
 
 ## 迁移状态
 
-当前 remould 进度为 **Phase 4 — Knowledge / RAG / AI Companion Integration 起步**。
+当前 remould 进度为 **Phase 4 — Knowledge / RAG / AI Companion Integration 已完成 4A–4F**。
 
 迁移优先级：
 
 1. 建立统一 FastAPI backend foundation；已完成基础骨架
 2. 迁移 Auth / User；已完成 FastAPI 迁移并通过本地联调
 3. 迁移 Trip / Plan / Itinerary；已完成核心 CRUD、AI 结构化计划保存与 Vite proxy 切换
-4. 整合 Knowledge / RAG / AI Companion；已完成独立 KnowledgeSource、Guide 回填与可选 indexing capability，待切换 Web 与 Agent
+4. 整合 Knowledge / RAG / AI Companion；已完成独立 KnowledgeSource、Guide 回填、Web 知识库与可选 Agent retrieval
 5. 清理 legacy community / public-feed 相关能力；
 6. 更新 Web 产品体验；
 7. 建立 SwiftUI iOS foundation；

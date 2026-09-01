@@ -12,8 +12,8 @@ AI 对话路由（Chat Router）。
 
 SSE 事件类型说明（流式接口）：
   {"type": "text",      "content": "..."}  — 文本 token，拼接后得到完整回答
-  {"type": "searching", "query":   "..."}  — Agent 正在检索用户攻略库
-  {"type": "sources",   "sources": [...]}  — 回答引用的攻略来源（流结束前发送）
+  {"type": "searching", "query":   "..."}  — Agent 正在检索个人资料
+  {"type": "sources",   "sources": [...]}  — 回答引用的个人资料来源（流结束前发送）
   {"type": "error",     "message": "..."}  — 生成过程中的错误
   data: [DONE]                             — 流结束标记
 """
@@ -38,9 +38,9 @@ logger = logging.getLogger(__name__)
     summary="AI 对话（非流式）",
     description=(
         "发送对话消息，等待 Agent 完整生成后一次性返回 JSON 响应。\n\n"
-        "Agent 会根据问题类型自动决定是否检索用户私有攻略库（RAG）：\n"
-        "- 旅行相关问题 → 检索攻略库 → 结合检索结果生成回答\n"
-        "- 非旅行问题  → 直接调用 LLM 通用知识回答\n\n"
+        "Agent 仅在问题需要个人资料且请求启用检索时，才检索用户知识源（RAG）：\n"
+        "- 个人经验或已导入资料相关问题 → 可选检索后回答\n"
+        "- 普通旅行知识或无关问题 → 直接调用 LLM 通用知识回答\n\n"
         "消息历史由调用方维护并完整传入（`messages` 字段），服务端无状态。"
     ),
 )
@@ -52,14 +52,14 @@ async def chat(
     非流式 AI 对话接口。
 
     调用 RAG Agent（run_agent_chat），阻塞等待 LLM 生成完毕，
-    返回完整的回答文本和引用的攻略来源。
+    返回完整的回答文本和引用的个人资料来源。
 
     参数:
         request: ChatRequest，包含 messages、use_rag 等字段（user_uuid 由 JWT 注入）。
         user_uuid: 从 JWT payload 提取，由 get_current_user_uuid 依赖提供。
 
     返回:
-        ChatResponse，包含 answer（回答文本）、sources（攻略引用）、model（模型名称）。
+        ChatResponse，包含 answer（回答文本）、sources（资料引用）、model（模型名称）。
 
     异常:
         401 — JWT 缺失 / 无效 / 已过期；
@@ -77,6 +77,7 @@ async def chat(
         result = await run_agent_chat(
             user_uuid=user_uuid,
             messages=request.messages,
+            use_rag=request.use_rag,
         )
     except Exception as exc:
         logger.error("[chat] 非流式生成失败 user=%s error=%s", user_uuid, exc, exc_info=True)
@@ -141,6 +142,7 @@ async def chat_stream(
             async for chunk in stream_agent_chat(
                 user_uuid=user_uuid,
                 messages=request.messages,
+                use_rag=request.use_rag,
             ):
                 yield chunk
         except Exception as exc:

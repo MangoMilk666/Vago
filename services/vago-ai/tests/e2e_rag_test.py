@@ -231,8 +231,8 @@ async def phase2_non_streaming() -> dict:
     logger.info("[Phase 2] 引用攻略来源数：%d", len(result["sources"]))
     for i, src in enumerate(result["sources"], 1):
         logger.info(
-            "[Phase 2] 来源[%d]  title=%s  score=%.3f  article_id=%s",
-            i, src.title, src.score, src.article_id,
+            "[Phase 2] 来源[%d]  title=%s  score=%.3f  source_uuid=%s",
+            i, src.title, src.score, src.source_uuid,
         )
 
     # 回答内容以 print 直接输出，便于阅读（不带日志前缀）

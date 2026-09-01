@@ -208,7 +208,14 @@ Phase 4 已从 AI 保存链路开始整合：
 - Java 仍保留公开 discover / like / collections，以及兼容期的 Guide indexing bridge。
 - 当前仍不迁移 guide discover / like / public ranking。
 
-## 13. 推荐下一步
+## 13. Phase 4E–4F 已完成
+
+- React `/guides` 已切换为个人旅行知识库，仅调用 FastAPI `/api/v1/knowledge/sources/*`，不再暴露 discover、点赞、收藏或发布语义。
+- AI 页面不再内嵌 legacy Guide 管理面板；资料整理统一进入个人知识库页面。
+- AI 对话支持 `useRag` 开关；关闭时服务端不会向 Agent 注册个人资料检索工具。开启时也仅在 Agent 判断个人资料确有帮助时检索。
+- Java community API、legacy `/knowledge/guides/*` 与旧 Guide 前端组件仍在兼容窗口保留，但不再属于主导航路径。
+
+## 14. 推荐下一步
 
 完成 **Phase 4 — Knowledge / RAG / AI Companion Integration** 的下一步：
 
