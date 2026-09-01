@@ -83,7 +83,8 @@
 | `user_settings` | 用户设置 | 保留 / 扩展为偏好 |
 | `trips` | 正式行程 | 保留 / 迁移 |
 | `plans` | 草稿计划 | 保留 / 迁移 |
-| `guides` | 旅行攻略 | 保留 / 重塑为 knowledge sources |
+| `guides` | 旅行社区攻略 | 兼容期保留；新个人知识迁至 `knowledge_sources` |
+| `knowledge_sources` | 用户私有知识来源 | 保留 / Phase 4A–4D 已新增 |
 | `itinerary_days` | 每日行程 | 保留 / 迁移 |
 | `itinerary_spots` | 景点 / 活动 | 保留 / 迁移 |
 
@@ -97,7 +98,8 @@
 |------|-----------|----------|----------|
 | `apps/vago-web/src/api/user.js` | `/api/v1/user` | Python FastAPI | Phase 2 已通过 Vite proxy 切到 FastAPI auth/users |
 | `apps/vago-web/src/api/travel.js` | `/api/v1/travel/trips`、`/api/v1/travel/plans` | Python FastAPI | Phase 3 已通过 Vite proxy 切换 Trip / Plan / Itinerary |
-| `apps/vago-web/src/api/travel.js` | `/api/v1/knowledge/guides/*` | Python FastAPI | Phase 4 已迁移我的攻略 / 个人知识源 CRUD 与手动索引 |
+| `apps/vago-web/src/api/travel.js` | `/api/v1/knowledge/guides/*` | Python FastAPI | legacy 兼容；Phase 4E 将切至 `/knowledge/sources` |
+| FastAPI Knowledge API | `/api/v1/knowledge/sources/*` | Python FastAPI | Phase 4A–4D 已完成，暂未切换 React |
 | `apps/vago-web/src/api/travel.js` | `/api/v1/travel/guides/discover`、`/api/v1/travel/guides/*/like`、`/api/v1/travel/collections` | Java Spring Boot | 暂留 Java，等待社区清理或个人知识组织重设计 |
 | `apps/vago-web/src/api/ai.js` | `/api/v1/ai/chat*` | Python FastAPI | AI 整合期间保持路径稳定 |
 | `apps/vago-web/src/api/ai.js` | `/api/v1/ai/plans/save-*` | Python FastAPI | Phase 3/4 交界已迁移到 FastAPI travel domain |
@@ -200,7 +202,9 @@ Phase 4 已从 AI 保存链路开始整合：
 - AI chat / stream 继续由 FastAPI 提供。
 - AI structured plan save 已由 Java Spring Boot 迁移到 FastAPI，保存时直接写入 Plan / Trip / Itinerary 表。
 - 前端仍调用 `/api/v1/ai/plans/save-*`，但 Vite proxy 已将该前缀切到 FastAPI。
-- 我的攻略 / 个人知识源 CRUD 已迁移到 `/api/v1/knowledge/guides/*`，创建、更新、手动 index 会由 FastAPI 后台任务调用现有 RAG indexing pipeline。
+- 新 `KnowledgeSource` 已落地到独立 `knowledge_sources` 表，支持 TEXT 与 `.md/.txt` FILE 来源；创建资料不自动触发 RAG。
+- 首条 Alembic revision 会幂等回填未删除 Guide，保留 UUID 以复用兼容期 Qdrant points；旧 `guides` 与 Java 社区链路不删除。
+- RAG indexing 已重构为可选 capability：新 payload 写入 `source_uuid` 并保留 `article_id` 兼容别名，重建索引前会清理旧 chunks。
 - Java 仍保留公开 discover / like / collections，以及兼容期的 Guide indexing bridge。
 - 当前仍不迁移 guide discover / like / public ranking。
 

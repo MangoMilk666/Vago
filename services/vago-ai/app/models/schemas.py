@@ -86,6 +86,40 @@ class IngestResponse(BaseModel):
     message: str = Field(description="处理结果描述，失败时包含错误原因")
 
 
+class IndexDocumentRequest(BaseModel):
+    """可选语义索引能力的通用文档输入，不绑定 Guide 或社区模型。"""
+
+    # KnowledgeSource 或其他未来知识实体的业务 UUID，用于幂等 upsert。
+    source_uuid: str = Field(..., description="知识来源 UUID，用于幂等 upsert")
+    # 所属用户 UUID，用于向量库命名空间隔离。
+    user_uuid: str = Field(..., description="所属用户 UUID，用于向量库命名空间隔离")
+    # 资料标题。
+    title: str = Field(..., max_length=200, description="知识资料标题")
+    # 原始 URL，可为空。
+    source_url: Optional[str] = Field(None, description="原始来源链接，可为空")
+    # 已解析的原始全文。
+    raw_content: str = Field(..., max_length=50000, description="已解析全文，最多 50000 字")
+    # 可选目的地辅助标签；为空时由元数据提取器处理。
+    destinations: Optional[list[str]] = Field(None, description="可选目的地辅助标签")
+
+
+class IndexDocumentResponse(BaseModel):
+    """通用文档索引结果；旧 articles API 由兼容 wrapper 转换为 IngestResponse。"""
+
+    # 被索引的知识来源 UUID。
+    source_uuid: str
+    # 当前索引状态。
+    status: ArticleStatus
+    # 实际写入的文本块数量。
+    chunk_count: int
+    # 提取或继承的目的地列表。
+    destinations: list[str]
+    # 提取到的内容分类列表。
+    categories: list[str]
+    # 处理结果说明。
+    message: str
+
+
 # ─── 攻略 RAG 检索（Search）──────────────────────────────────────────────────
 
 class SearchRequest(BaseModel):

@@ -53,9 +53,9 @@ FastAPI vago-ai
 
 - Web 路由包括 `/login`、`/`、`/trips`、`/plans`、`/guides`、`/ai`、`/profile`、`/trips/:uuid/itinerary`、`/plans/:uuid/itinerary`。
 - AI chat / stream 由前端经 Vite proxy 直连 Python FastAPI。
-- 用户、计划、行程核心 CRUD、AI 结构化计划保存、个人知识源 CRUD 已迁移到 FastAPI。
+- 用户、计划、行程核心 CRUD、AI 结构化计划保存已迁移到 FastAPI；新的 `KnowledgeSource` CRUD 与 `.md/.txt` 导入已在 FastAPI 落地。
 - 公开攻略发现、点赞、收藏夹暂留 Java Spring Boot；Java 到 Python 的攻略索引桥接链路仍处于兼容窗口。
-- 数据库当前落地表集中在 `users`、`user_oauth_bindings`、`user_settings`、`trips`、`plans`、`guides`、`itinerary_days`、`itinerary_spots`。
+- 数据库当前落地表集中在 `users`、`user_oauth_bindings`、`user_settings`、`trips`、`plans`、`guides`、`knowledge_sources`、`itinerary_days`、`itinerary_spots`。
 
 这套架构是迁移起点，不再作为最终架构描述。
 
@@ -153,7 +153,7 @@ Context Router 应根据用户任务选择上下文来源：
           ┌──────────┼──────────┐
           ▼          ▼          ▼
  Direct Context     SQL        RAG
- selected guides    trips      guides / notes / memories
+ selected sources   trips      sources / notes / memories
           └──────────┼──────────┘
                      ▼
               Preferences
@@ -226,7 +226,7 @@ API contract 不应依赖浏览器 cookie、React state 或 Vite proxy。React W
 | 1 | 建立 FastAPI backend foundation | 已完成基础骨架 |
 | 2 | 迁移 Auth / User | 已完成并通过本地联调 |
 | 3 | 迁移 Trip / Plan / Itinerary | 核心 CRUD 与 AI 保存入口已迁移 |
-| 4 | 整合 Knowledge / RAG / AI Companion | 个人知识 CRUD 已迁移 |
+| 4 | 整合 Knowledge / RAG / AI Companion | 4A–4D 已完成：独立 KnowledgeSource、文本/文件导入、Guide 回填、可选索引 capability |
 | 5 | 清理 legacy community / public-feed 能力 | 待开始 |
 | 6 | 更新 Web 产品体验和导航 | 待开始 |
 | 7 | 建立 SwiftUI iOS foundation | 待开始 |
@@ -245,7 +245,7 @@ API contract 不应依赖浏览器 cookie、React state 或 Vite proxy。React W
 
 - Java 与 Python 共享 JWT secret / Redis 黑名单，迁移 auth 时需保证兼容窗口。
 - Web API client 当前按 `/api/v1/user`、`/api/v1/travel`、`/api/v1/ai` 拆分，切换 FastAPI 时需要逐模块迁移 proxy。
-- `guides` 表含 `view_count`、`like_count`、`status=published` 等社区语义，后续应重新定位为个人知识 / 可分享内容。
+- `guides` 表含 `view_count`、`like_count`、`status=published` 等社区语义，兼容窗口内由 Java 继续维护；新 `knowledge_sources` 不暴露这些字段。
 - 收藏夹能力可作为个人知识组织能力复用，但不应演变为公共社区关系。
 - `docs/database/schema.md` 中有部分未来表设计，`docs/database/db_schema.sql` 是当前较小实现，两者需要在后续 schema remould 中对齐。
 

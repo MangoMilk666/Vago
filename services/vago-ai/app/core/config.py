@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     qdrant_host: str = "127.0.0.1"
     qdrant_port: int = 6333
     qdrant_collection: str = "vago_articles"
+    # 是否启用可选的语义索引能力；关闭后个人知识 CRUD 与文件读取仍可正常工作。
+    rag_enabled: bool = True
 
     # 攻略文本分块参数。
     chunk_size_tokens: int = 512
@@ -54,6 +56,10 @@ class Settings(BaseSettings):
 
     # 内容长度限制，避免单篇攻略过大导致索引链路失控。
     max_content_chars: int = 50000
+
+    # 本地开发阶段的个人知识源原文件存储位置与单文件大小上限。
+    knowledge_storage_path: str = "data/knowledge"
+    knowledge_max_file_bytes: int = 512000
 
     # RAG 默认检索参数。
     rag_top_k: int = 6

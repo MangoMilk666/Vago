@@ -9,8 +9,18 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.exceptions import AppException
-from app.knowledge.models import Guide
-from app.knowledge.schemas import GuideCreateRequest, GuideResponse, GuideUpdateRequest
+from app.knowledge.models import Guide, KnowledgeSource
+from app.knowledge.schemas import (
+    IndexStatus,
+    KnowledgeSourceCreateRequest,
+    KnowledgeSourceResponse,
+    KnowledgeSourceType,
+    KnowledgeSourceUpdateRequest,
+    ParseStatus,
+    GuideCreateRequest,
+    GuideResponse,
+    GuideUpdateRequest,
+)
 from app.models.schemas import ArticleStatus, IngestRequest
 from app.services.indexer import index_article
 from app.services.vector_store import delete_article_chunks
@@ -27,9 +37,198 @@ AI_STATUS_INDEXED = 2
 AI_STATUS_FAILED = 3
 
 
+def _source_to_response(source: KnowledgeSource) -> KnowledgeSourceResponse:
+    """KnowledgeSource ORM -> 不含社区字段的 API response。"""
+    return KnowledgeSourceResponse(
+        uuid=source.uuid,
+        title=source.title,
+        sourceType=source.source_type,
+        originUrl=source.origin_url,
+        originalFilename=source.original_filename,
+        mimeType=source.mime_type,
+        storageKey=source.storage_key,
+        contentText=source.content_text,
+        destination=source.destination,
+        tags=_from_json(source.tags),
+        parseStatus=source.parse_status,
+        parseError=source.parse_error,
+        indexStatus=source.index_status,
+        indexError=source.index_error,
+        createdAt=source.created_at,
+        updatedAt=source.updated_at,
+    )
+
+
+def _get_source_or_raise(db: Session, source_uuid: str) -> KnowledgeSource:
+    """读取未删除的个人知识源。"""
+    source = db.scalar(
+        select(KnowledgeSource).where(
+            KnowledgeSource.uuid == source_uuid,
+            KnowledgeSource.deleted_at.is_(None),
+        )
+    )
+    # 分支条件：资料不存在或已经软删除时，返回新的 Knowledge 领域错误。
+    if source is None:
+        raise AppException("知识源不存在", status_code=404, code="KNOWLEDGE_SOURCE_NOT_FOUND")
+    return source
+
+
+def _ensure_source_owner(source: KnowledgeSource, user_uuid: str) -> None:
+    """校验当前用户拥有该个人知识源。"""
+    # 分支条件：请求用户与资料归属不一致时，禁止跨用户读取或修改。
+    if source.user_uuid != user_uuid:
+        raise AppException("无权访问该知识源", status_code=403, code="FORBIDDEN")
+
+
+def list_sources(db: Session, user_uuid: str) -> list[KnowledgeSourceResponse]:
+    """列出当前用户未删除的个人知识源。"""
+    sources = db.scalars(
+        select(KnowledgeSource)
+        .where(KnowledgeSource.user_uuid == user_uuid, KnowledgeSource.deleted_at.is_(None))
+        .order_by(KnowledgeSource.created_at.desc())
+    ).all()
+    return [_source_to_response(source) for source in sources]
+
+
+def get_source(db: Session, user_uuid: str, source_uuid: str) -> KnowledgeSourceResponse:
+    """读取当前用户自己的个人知识源详情。"""
+    source = _get_source_or_raise(db, source_uuid)
+    _ensure_source_owner(source, user_uuid)
+    return _source_to_response(source)
+
+
+def create_text_source(
+    db: Session,
+    user_uuid: str,
+    payload: KnowledgeSourceCreateRequest,
+) -> KnowledgeSourceResponse:
+    """创建纯文本个人知识源，不自动触发任何 RAG 索引。"""
+    # 分支条件：URL 导入需要独立抓取与解析流程，本轮不接受伪装成已导入内容的 URL 请求。
+    if payload.source_type != KnowledgeSourceType.TEXT:
+        raise AppException("当前仅支持创建纯文本知识源", status_code=400, code="PARAM_INVALID")
+    # 分支条件：纯文本来源必须在创建时提供内容，保证可独立阅读。
+    if not payload.content_text:
+        raise AppException("纯文本知识源不能为空", status_code=400, code="PARAM_INVALID")
+
+    source = KnowledgeSource(
+        uuid=_new_uuid(),
+        user_uuid=user_uuid,
+        title=payload.title,
+        source_type=KnowledgeSourceType.TEXT.value,
+        origin_url=None,
+        mime_type="text/plain",
+        content_text=payload.content_text,
+        destination=payload.destination,
+        tags=_to_json(payload.tags),
+        parse_status=ParseStatus.READY.value,
+        index_status=IndexStatus.NOT_INDEXED.value,
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+    return _source_to_response(source)
+
+
+def create_file_source(
+    db: Session,
+    user_uuid: str,
+    *,
+    source_uuid: str,
+    title: str,
+    original_filename: str,
+    mime_type: str,
+    storage_key: str,
+    content_text: str,
+    destination: str | None = None,
+    tags: list[str] | None = None,
+) -> KnowledgeSourceResponse:
+    """创建已完成本地解析的文件知识源。"""
+    source = KnowledgeSource(
+        uuid=source_uuid,
+        user_uuid=user_uuid,
+        title=title,
+        source_type=KnowledgeSourceType.FILE.value,
+        original_filename=original_filename,
+        mime_type=mime_type,
+        storage_key=storage_key,
+        content_text=content_text,
+        destination=destination,
+        tags=_to_json(tags),
+        parse_status=ParseStatus.READY.value,
+        index_status=IndexStatus.NOT_INDEXED.value,
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+    return _source_to_response(source)
+
+
+def update_source(
+    db: Session,
+    user_uuid: str,
+    source_uuid: str,
+    payload: KnowledgeSourceUpdateRequest,
+) -> KnowledgeSourceResponse:
+    """更新个人知识源，并使旧的可选向量索引失效。"""
+    source = _get_source_or_raise(db, source_uuid)
+    _ensure_source_owner(source, user_uuid)
+    values = payload.model_dump(exclude_unset=True, by_alias=False)
+    for field_name, value in values.items():
+        # 分支条件：标签列表在 MySQL 中以 JSON 字符串保存。
+        if field_name == "tags":
+            source.tags = _to_json(value)
+        else:
+            setattr(source, field_name, value)
+
+    # 内容或展示元数据变化后，不允许旧向量继续作为最新资料被检索。
+    source.index_status = IndexStatus.NOT_INDEXED.value
+    source.index_error = None
+    source.updated_at = utc_now_naive()
+    db.commit()
+    db.refresh(source)
+    return _source_to_response(source)
+
+
+def delete_source(db: Session, user_uuid: str, source_uuid: str) -> str | None:
+    """软删除个人知识源，并返回待异步清理的原文件 storage key。"""
+    source = _get_source_or_raise(db, source_uuid)
+    _ensure_source_owner(source, user_uuid)
+    storage_key = source.storage_key
+    now = utc_now_naive()
+    source.deleted_at = now
+    source.updated_at = now
+    source.index_status = IndexStatus.NOT_INDEXED.value
+    db.commit()
+    return storage_key
+
+
+def mark_source_index_pending(
+    db: Session,
+    user_uuid: str,
+    source_uuid: str,
+) -> KnowledgeSourceResponse:
+    """显式请求将已解析的个人知识源交给可选索引能力处理。"""
+    source = _get_source_or_raise(db, source_uuid)
+    _ensure_source_owner(source, user_uuid)
+    # 分支条件：还没有可用文本的来源不能进入语义索引流程。
+    if source.parse_status != ParseStatus.READY.value or not source.content_text:
+        raise AppException("知识源尚未解析完成，不能加入索引", status_code=400, code="PARAM_INVALID")
+    source.index_status = IndexStatus.PENDING.value
+    source.index_error = None
+    source.updated_at = utc_now_naive()
+    db.commit()
+    db.refresh(source)
+    return _source_to_response(source)
+
+
 def _new_uuid() -> str:
     """生成与旧 Java fastSimpleUUID 兼容的 32 位业务 ID。"""
     return uuid4().hex
+
+
+def new_source_uuid() -> str:
+    """为文件写入 storage 前预分配知识源 UUID。"""
+    return _new_uuid()
 
 
 def _to_json(values: list[str] | None) -> str | None:

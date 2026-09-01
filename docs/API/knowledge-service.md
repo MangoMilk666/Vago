@@ -1,56 +1,39 @@
 # Vago Knowledge API
 
 > 最后更新：2026-08-31
-> 当前阶段：Remould Phase 4 — Knowledge / RAG Integration
+> 当前阶段：Remould Phase 4A–4D
 
-本接口文档描述已迁入 FastAPI 的 Personal Travel Knowledge 能力。Phase 4 先复用旧 `guides` 表，将“我的攻略”重定位为个人旅行知识源，并保留旧前端字段结构。
+`KnowledgeSource` 是用户拥有的一份个人旅行知识来源。它独立于 Qdrant、Embedding 和 RAG：即使未启用语义索引，资料仍可以创建、阅读、编辑和管理。
 
-## 1. 响应 Envelope
+## 1. 响应与鉴权
 
-所有接口继续返回 Java 兼容的统一响应结构：
+所有接口使用 `{ code, message, data }` envelope，并通过 `Authorization: Bearer <accessToken>` 做用户级隔离。
 
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {}
-}
-```
-
-鉴权继续使用 `Authorization: Bearer <accessToken>`，并通过 current user dependency 做用户级数据隔离。
-
-## 2. Personal Guides
+## 2. Personal Knowledge Sources
 
 | Method | Path | 说明 |
 |--------|------|------|
-| `GET` | `/api/v1/knowledge/guides/mine` | 查询当前用户自己的知识源列表 |
-| `GET` | `/api/v1/knowledge/guides/{guideUuid}` | 查询当前用户自己的知识源详情 |
-| `POST` | `/api/v1/knowledge/guides` | 创建知识源 |
-| `PUT` | `/api/v1/knowledge/guides/{guideUuid}` | 更新知识源 |
-| `DELETE` | `/api/v1/knowledge/guides/{guideUuid}` | 软删除知识源 |
-| `POST` | `/api/v1/knowledge/guides/{guideUuid}/index` | 手动触发知识源向量化 |
+| `GET` | `/api/v1/knowledge/sources` | 查询当前用户的知识源列表 |
+| `GET` | `/api/v1/knowledge/sources/{sourceUuid}` | 查询知识源详情 |
+| `POST` | `/api/v1/knowledge/sources` | 创建纯文本知识源 |
+| `POST` | `/api/v1/knowledge/sources/files` | 导入 UTF-8 `.md` / `.txt` 文件 |
+| `PUT` | `/api/v1/knowledge/sources/{sourceUuid}` | 更新知识源并使旧索引失效 |
+| `DELETE` | `/api/v1/knowledge/sources/{sourceUuid}` | 软删除知识源并尽力清理本地原文件/向量 |
+| `POST` | `/api/v1/knowledge/sources/{sourceUuid}/index` | 显式请求语义索引 |
 
-创建或更新为 `status=1` 时，FastAPI 会将 `aiStatus` 置为 `PENDING(0)`，并通过后台任务调用现有 RAG indexing pipeline。更新为 `status=0` 或删除时，会清理对应 Qdrant chunks。
+`sourceType` 仅表示来源方式：`TEXT`、`URL`、`FILE`。文件格式由 `mimeType` 表示；本阶段实际可上传 `text/plain` 和 `text/markdown`。
 
 ## 3. 状态语义
 
 | 字段 | 值 | 说明 |
 |------|----|------|
-| `status` | `0` | 草稿，仅作为 MySQL 资料保存，不进入 RAG |
-| `status` | `1` | 已发布/可索引，可进入个人知识库 |
-| `aiStatus` | `null` | 草稿未索引 |
-| `aiStatus` | `0` | 等待索引 |
-| `aiStatus` | `1` | 正在索引 |
-| `aiStatus` | `2` | 已完成索引 |
-| `aiStatus` | `3` | 索引失败 |
+| `parseStatus` | `PENDING` / `PARSING` / `READY` / `FAILED` | 原始资料能否转为可读文本 |
+| `indexStatus` | `NOT_INDEXED` / `PENDING` / `INDEXING` / `INDEXED` / `FAILED` | 可选语义索引能力状态 |
 
-## 4. 暂未迁移
+创建 TEXT 或成功导入 `.md/.txt` 后，`parseStatus=READY`、`indexStatus=NOT_INDEXED`。只有调用 index 接口后才进入索引队列；关闭 `RAG_ENABLED` 时 CRUD 与文件导入仍可用，索引接口返回不可用。
 
-以下功能仍留在 Spring Boot，等待后续产品重塑或清理：
+新 API 不返回 `like`、`liked`、`likeCount`、`viewCount`、`publish`、作者资料、收藏夹或旧 `status/aiStatus` 字段。
 
-- `/api/v1/travel/guides/discover`
-- `/api/v1/travel/guides/{uuid}/like`
-- `/api/v1/travel/guides/{uuid}/like` 的取消点赞
-- `/api/v1/travel/collections/**`
+## 4. Compatibility Window
 
-这些能力带有公共社区或收藏夹组织语义，暂不进入 FastAPI Knowledge 核心。
+`/api/v1/knowledge/guides/*` 仍保留给现有 React 页面和 legacy `guides` 数据使用，但已不再是新的 Knowledge Domain contract。Java 继续承担 discover、like 和 collections；Phase 5 确认其下线后，才会清理旧表、Java bridge 与 `article_id` 兼容字段。

@@ -10,8 +10,9 @@
 --   4. trips              正式行程
 --   5. plans              旅行计划（草稿）
 --   6. guides             旅游攻略
---   7. itinerary_days     每日行程主表
---   8. itinerary_spots    每日景点/打卡点
+--   7. knowledge_sources  个人知识来源
+--   8. itinerary_days     每日行程主表
+--   9. itinerary_spots    每日景点/打卡点
 -- ============================================================
 
 SET NAMES utf8mb4;
@@ -23,6 +24,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS itinerary_spots;
 DROP TABLE IF EXISTS itinerary_days;
 DROP TABLE IF EXISTS guides;
+DROP TABLE IF EXISTS knowledge_sources;
 DROP TABLE IF EXISTS plans;
 DROP TABLE IF EXISTS trips;
 DROP TABLE IF EXISTS user_settings;
@@ -182,6 +184,37 @@ CREATE TABLE guides (
     INDEX      idx_guides_user_uuid     (user_uuid),
     INDEX      idx_guides_status_ctime  (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='旅游攻略表';
+
+-- ------------------------------------------------------------
+-- 个人知识来源表（knowledge_sources）
+-- 不承载点赞、浏览、发布、发现或收藏夹等社区语义。
+-- ------------------------------------------------------------
+CREATE TABLE knowledge_sources (
+    id                BIGINT          NOT NULL AUTO_INCREMENT      COMMENT '自增主键',
+    uuid              VARCHAR(32)     NOT NULL                     COMMENT '对外业务 ID',
+    user_uuid         VARCHAR(36)     NOT NULL                     COMMENT '归属 users.uuid',
+    title             VARCHAR(100)    NOT NULL                     COMMENT '资料标题',
+    source_type       VARCHAR(16)     NOT NULL                     COMMENT '来源方式：TEXT / URL / FILE',
+    origin_url        VARCHAR(2048)   DEFAULT NULL                 COMMENT 'URL 原始地址',
+    original_filename VARCHAR(255)    DEFAULT NULL                 COMMENT '原始文件名',
+    mime_type         VARCHAR(128)    DEFAULT NULL                 COMMENT '文件或文本 MIME 类型',
+    storage_key       VARCHAR(512)    DEFAULT NULL                 COMMENT '原始文件 storage key',
+    content_text      MEDIUMTEXT      DEFAULT NULL                 COMMENT '当前可阅读/索引的提取文本',
+    destination       VARCHAR(200)    DEFAULT NULL                 COMMENT '旅行目的地辅助标签',
+    tags              TEXT            DEFAULT NULL                 COMMENT '用户标签 JSON 数组',
+    parse_status      VARCHAR(16)     NOT NULL                     COMMENT 'PENDING / PARSING / READY / FAILED',
+    parse_error       VARCHAR(1000)   DEFAULT NULL                 COMMENT '最近解析错误',
+    index_status      VARCHAR(16)     NOT NULL                     COMMENT 'NOT_INDEXED / PENDING / INDEXING / INDEXED / FAILED',
+    index_error       VARCHAR(1000)   DEFAULT NULL                 COMMENT '最近索引错误',
+    created_at        DATETIME(3)     NOT NULL                     COMMENT '创建时间',
+    updated_at        DATETIME(3)     NOT NULL                     COMMENT '更新时间',
+    deleted_at        DATETIME(3)     DEFAULT NULL                 COMMENT '软删除时间',
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_knowledge_sources_uuid (uuid),
+    INDEX      idx_knowledge_sources_user_uuid (user_uuid),
+    INDEX      idx_knowledge_sources_user_ctime (user_uuid, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户个人旅行知识来源';
 
 
 -- ============================================================

@@ -699,9 +699,33 @@ Spring Boot
 FastAPI AI
 ```
 
+## `Phase 4A`
+
+增加第一条正式 Alembic revision，创建 `knowledge_sources`；实现纯 TEXT CRUD，不接触 Qdrant。
+
+## `Phase 4B`
+
+增加 local storage 和 `.md/.txt` 上传、解析；URL 只保留模型能力，暂不实现抓取。
+
+## `Phase 4C`
+
+执行幂等 Guide backfill，保留 UUID；校验用户数、资料数、内容摘要和索引状态映射。
+
+## `Phase 4D`
+
+将索引代码泛化为可选 capability，增加旧 `article_id` 兼容层，修复重新索引残留 chunks。
+
+## `Phase 4E`
+
+React Knowledge 页面和 AI Planning 切换到 `/knowledge/sources`，移除新链路中的社区字段。
+
+## `Phase 4F`
+
+将 Agent 工具改为可选 Personal Knowledge retrieval；暂不实现复杂 Context Router。
+
 ## Phase 5 — Remove Legacy Community
 
-社区模块不迁移。
+社区模块不迁移。冻结并下线 Java community 写链路，再删除 Guide 社区代码、表和旧 Qdrant contract。
 
 在确认核心模块不依赖社区实体后：
 

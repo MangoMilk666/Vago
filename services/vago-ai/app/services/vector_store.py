@@ -8,8 +8,8 @@ Qdrant 向量数据库操作模块（Vector Store）。
   - 通过 payload 字段 user_uuid 严格隔离用户数据，
     所有查询均携带 user_uuid 过滤器，杜绝跨用户数据泄露；
   - 每个文本块（chunk）对应一个 Qdrant Point，
-    Point ID 由 article_id + chunk_index 确定性生成（UUID5），
-    支持幂等 upsert（重复导入同一攻略不会产生重复向量）。
+    Point ID 由 source_uuid + chunk_index 确定性生成（UUID5），
+    支持知识来源的幂等重建，并在兼容窗口保留 article_id payload 别名。
 """
 
 import uuid
@@ -73,22 +73,22 @@ async def init_collection() -> None:
 
 # ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
-def _make_point_id(article_id: str, chunk_index: int) -> str:
+def _make_point_id(source_uuid: str, chunk_index: int) -> str:
     """
     生成确定性 UUID，作为 Qdrant Point 的唯一标识符。
 
-    使用 UUID5（SHA-1 命名空间哈希）将 article_id + chunk_index
+    使用 UUID5（SHA-1 命名空间哈希）将 source_uuid + chunk_index
     映射到固定 UUID，保证同一 chunk 的 ID 在重复导入时不变，
     从而实现幂等 upsert（覆盖更新而非重复插入）。
 
     参数:
-        article_id:   攻略的 UUID 字符串。
+        source_uuid:  知识来源 UUID 字符串。
         chunk_index:  文本块的顺序索引（从 0 开始）。
 
     返回:
         UUID 字符串，格式如 "550e8400-e29b-41d4-a716-446655440000"。
     """
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{article_id}:{chunk_index}"))
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{source_uuid}:{chunk_index}"))
 
 
 def _build_filter(user_uuid: str, article_id: str | None = None) -> qm.Filter:
@@ -112,11 +112,21 @@ def _build_filter(user_uuid: str, article_id: str | None = None) -> qm.Filter:
     return qm.Filter(must=conditions)
 
 
+def _build_source_filter(user_uuid: str, source_uuid: str) -> qm.Filter:
+    """按新 KnowledgeSource payload 字段构造过滤器。"""
+    return qm.Filter(
+        must=[
+            qm.FieldCondition(key="user_uuid", match=qm.MatchValue(value=user_uuid)),
+            qm.FieldCondition(key="source_uuid", match=qm.MatchValue(value=source_uuid)),
+        ]
+    )
+
+
 # ─── 向量库的核心 CRUD ────────────────────────────────────────────────────────────────
 
-async def upsert_article_chunks(
+async def upsert_document_chunks(
     user_uuid: str,
-    article_id: str,
+    source_uuid: str,
     title: str,
     chunks: list[str],
     embeddings: list[list[float]],
@@ -125,14 +135,14 @@ async def upsert_article_chunks(
     source_url: str | None = None,
 ) -> int:
     """
-    将一篇攻略的所有文本块（chunks）批量 upsert 到 Qdrant。
+    将一份个人知识资料的所有文本块（chunks）批量 upsert 到 Qdrant。
 
-    每个 chunk 对应一个 Point，Point ID 由 article_id + chunk_index 确定性生成，
-    支持重复导入时覆盖更新（幂等）。Payload 中存储检索和展示所需的全部元数据。
+    每个 chunk 对应一个 Point，Point ID 由 source_uuid + chunk_index 确定性生成。
+    写入前会删除同一来源的旧点，避免内容变短时残留历史尾部 chunks。
 
     参数:
         user_uuid:    所属用户 UUID，存入 payload 用于查询隔离。
-        article_id:   攻略 UUID。
+        source_uuid:  知识来源 UUID。
         title:        攻略标题。
         chunks:       文本块列表（已分块，顺序与 embeddings 一一对应）。
         embeddings:   对应的 embedding 向量列表。
@@ -148,16 +158,20 @@ async def upsert_article_chunks(
     """
     assert len(chunks) == len(embeddings), "chunks 与 embeddings 长度必须一致"
 
+    # 先清理新旧 payload 形态的同源向量，再写入完整新版本，避免缩短内容产生残留 chunk。
+    await delete_document_chunks(user_uuid=user_uuid, source_uuid=source_uuid)
     client = _get_client()
     now_iso = datetime.now(timezone.utc).isoformat()
 
     points = [
         qm.PointStruct(
-            id=_make_point_id(article_id, idx),
+            id=_make_point_id(source_uuid, idx),
             vector=embedding,
             payload={
                 "user_uuid": user_uuid,
-                "article_id": article_id,
+                "source_uuid": source_uuid,
+                # 兼容旧 Java articles API 与既有前端来源引用，后续 Phase 5 再移除。
+                "article_id": source_uuid,
                 "chunk_index": idx,
                 "chunk_text": chunk,
                 "title": title,
@@ -177,6 +191,29 @@ async def upsert_article_chunks(
     )
 
     return len(points)
+
+
+async def upsert_article_chunks(
+    user_uuid: str,
+    article_id: str,
+    title: str,
+    chunks: list[str],
+    embeddings: list[list[float]],
+    destinations: list[str],
+    categories: list[str],
+    source_url: str | None = None,
+) -> int:
+    """兼容旧 articles API 的命名 wrapper。"""
+    return await upsert_document_chunks(
+        user_uuid=user_uuid,
+        source_uuid=article_id,
+        title=title,
+        chunks=chunks,
+        embeddings=embeddings,
+        destinations=destinations,
+        categories=categories,
+        source_url=source_url,
+    )
 
 
 async def search_by_user(
@@ -217,7 +254,7 @@ async def search_by_user(
         payload = hit.payload or {}
         results.append(
             SearchResultItem(
-                article_id=payload.get("article_id", ""),
+                article_id=payload.get("source_uuid") or payload.get("article_id", ""),
                 chunk_index=payload.get("chunk_index", 0),
                 chunk_text=payload.get("chunk_text", ""),
                 title=payload.get("title", ""),
@@ -228,6 +265,32 @@ async def search_by_user(
         )
 
     return results
+
+
+async def _delete_with_filter(filter_value: qm.Filter) -> int:
+    """按已构造的 Qdrant filter 统计并删除 points。"""
+    client = _get_client()
+    count_result = await client.count(
+        collection_name=settings.qdrant_collection,
+        count_filter=filter_value,
+        exact=True,
+    )
+    count = count_result.count
+    if count == 0:
+        return 0
+    await client.delete(
+        collection_name=settings.qdrant_collection,
+        points_selector=qm.FilterSelector(filter=filter_value),
+        wait=True,
+    )
+    return count
+
+
+async def delete_document_chunks(user_uuid: str, source_uuid: str) -> int:
+    """删除知识来源的新旧两种 payload 形态，支持渐进迁移。"""
+    # 先清理新 payload；写入过渡期的 points 同时含 article_id，第二次删除不会重复计数。
+    deleted = await _delete_with_filter(_build_source_filter(user_uuid, source_uuid))
+    return deleted + await _delete_with_filter(_build_filter(user_uuid, source_uuid))
 
 
 async def delete_article_chunks(user_uuid: str, article_id: str) -> int:
@@ -246,28 +309,7 @@ async def delete_article_chunks(user_uuid: str, article_id: str) -> int:
         删除的 Point 数量（Qdrant 返回的操作结果中读取）。
         若该攻略不存在于向量库，返回 0。
     """
-    client = _get_client()
-
-    # 先查询数量（用于返回值）
-    count_result = await client.count(
-        collection_name=settings.qdrant_collection,
-        count_filter=_build_filter(user_uuid, article_id),
-        exact=True,
-    )
-    count = count_result.count
-
-    if count == 0:
-        return 0
-
-    await client.delete(
-        collection_name=settings.qdrant_collection,
-        points_selector=qm.FilterSelector(
-            filter=_build_filter(user_uuid, article_id)
-        ),
-        wait=True,
-    )
-
-    return count
+    return await delete_document_chunks(user_uuid=user_uuid, source_uuid=article_id)
 
 
 async def count_user_articles(user_uuid: str) -> int:

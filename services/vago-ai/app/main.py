@@ -23,15 +23,19 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """应用生命周期：启动时准备外部资源，关闭时释放连接池。"""
-    logger.info("Vago FastAPI backend starting; initializing Qdrant collection...")
-    try:
-        await init_collection()
-        logger.info("Qdrant collection initialized")
-    except Exception as exc:
-        logger.warning(
-            "Qdrant initialization failed (%s); vector retrieval will be unavailable",
-            exc,
-        )
+    # 分支条件：仅在部署启用 RAG capability 时初始化 Qdrant，个人知识领域不依赖该资源。
+    if settings.rag_enabled:
+        logger.info("Vago FastAPI backend starting; initializing Qdrant collection...")
+        try:
+            await init_collection()
+            logger.info("Qdrant collection initialized")
+        except Exception as exc:
+            logger.warning(
+                "Qdrant initialization failed (%s); vector retrieval will be unavailable",
+                exc,
+            )
+    else:
+        logger.info("Vago FastAPI backend starting with RAG capability disabled")
 
     yield
 

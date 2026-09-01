@@ -101,7 +101,7 @@ Vago 需要帮助这类用户：
 | 功能 | 说明 |
 |------|------|
 | User / Auth | 用户账户、JWT、用户级数据隔离、个人设置 |
-| Knowledge Base | 攻略文本 / URL 导入、清洗、元数据、分块、Embedding、Qdrant、来源引用 |
+| Knowledge Base | 独立 KnowledgeSource、纯文本 / `.md` / `.txt` 导入、资料整理；RAG 仅作为可选语义检索能力 |
 | AI Companion | 多轮问答、SSE、Tool Calling、结构化行程输出、用户确认保存 |
 | Plan / Trip / Itinerary | 草稿计划、正式行程、每日安排、景点、交通、住宿、预算 |
 | Personal Profile / Preferences | 旅行偏好、节奏、兴趣、预算倾向、历史目的地信号 |
@@ -178,7 +178,7 @@ RAG 要求：
 - 支持用户级隔离；
 - 支持来源引用。
 
-当前 Phase 4 已将“我的攻略”重定位为 FastAPI Personal Travel Knowledge，个人资料 CRUD 与手动索引入口已迁入统一后端。公开 discover / like / collections 仍暂留 Java，后续按社区清理或个人知识组织能力重新设计。
+当前 Phase 4A–4D 已新增独立 `KnowledgeSource`，支持纯文本与 `.md/.txt` 资料导入、用户隔离和显式语义索引。`guides`、公开 discover / like / collections 仍暂留 Java 兼容窗口；KnowledgeSource 不以发布、点赞或收藏表达生命周期。
 
 ### 6.2 AI Travel Companion
 
