@@ -7,7 +7,7 @@ const NAV_LINKS = [
   { to: '/',            label: '首页'   },
   { to: '/trips',       label: '行程'   },
   { to: '/plans',       label: '计划'   },
-  { to: '/guides', label: '攻略'   },
+  { to: '/guides', label: '知识库' },
   { to: '/ai',     label: 'AI 规划' },
 ]
 

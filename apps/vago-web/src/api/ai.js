@@ -36,7 +36,7 @@ export const aiApi = {
    * 非流式对话：等待完整回答后返回。
    * @param {Array<{role: string, content: string}>} messages 完整消息历史
    */
-  chat: (messages) => http.post('/chat', { messages }),
+  chat: (messages, useRag = true) => http.post('/chat', { messages, useRag }),
 
   /**
    * 保存 AI 生成的结构化行程为草稿计划。
@@ -66,7 +66,7 @@ export const aiApi = {
    * @param {AbortSignal} [signal] 可选：用于超时/取消的 AbortSignal
    * @returns {Promise<Response>} fetch Response，body 为 SSE 流
    */
-  chatStream: (messages, signal) => {
+  chatStream: (messages, signal, useRag = true) => {
     const token = getAuth()?.accessToken
     return fetch('/api/v1/ai/chat/stream', {
       method: 'POST',
@@ -74,7 +74,7 @@ export const aiApi = {
         'Content-Type': 'application/json',
         ...(token ? { authorization: token } : {}),
       },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, useRag }),
       ...(signal ? { signal } : {}),
     })
   },

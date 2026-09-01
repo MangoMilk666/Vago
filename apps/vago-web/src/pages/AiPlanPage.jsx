@@ -1,8 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
-import GuideViewModal from '../components/GuideDetailModal'
-import { guideApi } from '../api/travel'
 import { aiApi } from '../api/ai'
 
 // ── 工具：格式化日期 ──────────────────────────────────────────────────────────
@@ -436,32 +434,26 @@ function GuideSidebarCard({ guide, onView, onEdit }) {
 // ── 右侧：AI 聊天面板 ──────────────────────────────────────────────────────────
 
 /**
- * 单条来源引用卡片（可折叠 + 点击标题查看原帖）
- * onOpenGuide(articleId) — 由父组件处理弹窗逻辑
+ * 单条个人资料引用卡片，可展开查看命中文本摘要。
  */
-function SourceCard({ source, onOpenGuide }) {
+function SourceCard({ source }) {
   const [expanded, setExpanded] = useState(false)
-  const articleId = source.article_id || source.articleId
-  const title     = source.title || articleId
+  const sourceUuid = source.source_uuid || source.sourceUuid
+  const title = source.title || sourceUuid
 
   return (
     <div className="rounded-lg border border-gray-100 overflow-hidden text-xs">
-      <div className="flex items-center bg-gray-50 hover:bg-gray-100 transition-colors">
-        {/* 标题：点击查看原帖 */}
-        <button
-          onClick={() => onOpenGuide?.(articleId)}
-          className="flex-1 flex items-center gap-1.5 px-3 py-2 text-left min-w-0"
-          title="点击查看原帖"
-        >
+      <div className="flex items-center bg-gray-50">
+        <div className="flex-1 flex items-center gap-1.5 px-3 py-2 min-w-0">
           <svg className="w-3 h-3 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0
                  01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
           </svg>
-          <span className="text-gray-600 font-medium truncate hover:text-indigo-600 transition-colors">
+          <span className="text-gray-600 font-medium truncate">
             {title}
           </span>
-        </button>
+        </div>
 
         {/* 相似度 */}
         {source.score != null && (
@@ -740,7 +732,7 @@ function StructuredPlanCard({ plan }) {
 }
 
 /** 单条消息气泡 */
-function ChatMessage({ msg, onOpenGuide }) {
+function ChatMessage({ msg }) {
   const isUser = msg.role === 'user'
 
   if (isUser) {
@@ -786,9 +778,9 @@ function ChatMessage({ msg, onOpenGuide }) {
           {/* 引用来源 */}
           {msg.sources?.length > 0 && (
             <div className="space-y-1">
-              <p className="text-xs text-gray-400 px-1">参考攻略：</p>
+              <p className="text-xs text-gray-400 px-1">参考资料：</p>
               {msg.sources.map((s, i) => (
-                <SourceCard key={i} source={s} onOpenGuide={onOpenGuide} />
+                <SourceCard key={i} source={s} />
               ))}
             </div>
           )}
@@ -818,7 +810,7 @@ function SearchingIndicator({ query }) {
         </div>
         <div className="px-4 py-2.5 rounded-2xl rounded-tl-sm bg-indigo-50 border border-indigo-100
                         text-xs text-indigo-600 flex items-center gap-1.5">
-          <span>正在检索攻略库</span>
+          <span>正在检索个人资料</span>
           {query && <span className="opacity-70 truncate max-w-[150px]">「{query}」</span>}
         </div>
       </div>
@@ -853,19 +845,12 @@ function ChatPanel() {
   const [messages,       setMessages]       = useState([])
   const [input,          setInput]          = useState('')
   const [streaming,      setStreaming]      = useState(false)
+  const [useRag,         setUseRag]         = useState(true)
   const [searchingQuery, setSearchingQuery] = useState(null)
   const [extractingPlan, setExtractingPlan] = useState(false)
-  // 点击引用来源卡片时展示对应攻略详情
-  const [sourceGuide,    setSourceGuide]    = useState(null)
   const bottomRef  = useRef(null)
   const inputRef   = useRef(null)
   const abortRef   = useRef(null)   // AbortController 引用，用于超时取消
-
-  // 通过 articleId（即 guide UUID）拉取攻略详情并弹窗展示
-  const handleOpenGuide = useCallback((articleId) => {
-    if (!articleId) return
-    setSourceGuide({ uuid: articleId })
-  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -927,7 +912,7 @@ function ChatPanel() {
     const timeoutId   = setTimeout(() => controller.abort(), 120000)
 
     try {
-      const response = await aiApi.chatStream(historyForApi, controller.signal)
+      const response = await aiApi.chatStream(historyForApi, controller.signal, useRag)
 
       if (!response.ok) {
         throw new Error(`服务响应异常（HTTP ${response.status}）`)
@@ -1075,10 +1060,14 @@ function ChatPanel() {
             </span>
             旅行规划助手
           </h2>
-          <p className="text-xs text-gray-400 mt-0.5">基于你的攻略库，为你定制行程建议</p>
+          <p className="text-xs text-gray-400 mt-0.5">按当前问题选择通用知识或个人旅行资料</p>
         </div>
-        {messages.length > 0 && (
-          <button onClick={clearChat} disabled={streaming}
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1 text-xs text-gray-400">
+            <input type="checkbox" checked={useRag} onChange={(event) => setUseRag(event.target.checked)} disabled={streaming} />
+            使用个人资料
+          </label>
+          {messages.length > 0 && (<button onClick={clearChat} disabled={streaming}
             className="text-xs text-gray-400 hover:text-red-400 disabled:opacity-40
                        transition-colors flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-red-50">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1087,8 +1076,8 @@ function ChatPanel() {
                    4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
             </svg>
             清空对话
-          </button>
-        )}
+          </button>)}
+        </div>
       </div>
 
       {/* 消息列表 */}
@@ -1105,7 +1094,7 @@ function ChatPanel() {
             </div>
             <p className="text-gray-600 font-medium mb-2">你好！我是叠迹旅行规划助手</p>
             <p className="text-sm text-gray-400 max-w-xs leading-relaxed mb-6">
-              我会基于你的攻略库为你提供个性化的旅行建议，试着问我：
+              我会根据当前问题选择通用知识或个人旅行资料，试着问我：
             </p>
             <div className="flex flex-col gap-2 w-full max-w-xs">
               {[
@@ -1126,7 +1115,7 @@ function ChatPanel() {
         )}
 
         {messages.map((msg, i) => (
-          <ChatMessage key={i} msg={msg} onOpenGuide={handleOpenGuide} />
+          <ChatMessage key={i} msg={msg} />
         ))}
         {searchingQuery !== null && <SearchingIndicator query={searchingQuery} />}
         {extractingPlan && <ExtractingIndicator />}
@@ -1174,141 +1163,25 @@ function ChatPanel() {
         </p>
       </div>
 
-      {/* 点击引用来源时弹出攻略详情（只读，不展示编辑/删除） */}
-      {sourceGuide && (
-        <GuideViewModal
-          guide={sourceGuide}
-          isMine={false}
-          onClose={() => setSourceGuide(null)}
-        />
-      )}
     </section>
   )
 }
 
 // ── 主页面 ────────────────────────────────────────────────────────────────────
 export default function AiPlanPage() {
-  const [guides,    setGuides]    = useState([])
-  const [loading,   setLoading]   = useState(true)
-  const [modal,     setModal]     = useState(null)    // null | 'create' | guide obj
-  const [viewGuide, setViewGuide] = useState(null)
-  const [deleting,  setDeleting]  = useState(null)
-
-  const loadGuides = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await guideApi.listMine()
-      setGuides(res.data ?? [])
-    } catch (_) {
-      // 静默失败
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  // 初始加载
-  useEffect(() => { loadGuides() }, [loadGuides])
-
-  // ── Fix #3: 仅在"有待处理攻略"这一布尔值变化时才重建轮询 interval ──────────
-  // 使用派生的布尔值作为 dep，而非整个 guides 数组（避免每次 loadGuides 返回就重建计时器）
-  // 只有已发布（status=1）且 AI 尚未完成（PENDING/INDEXING）的攻略才需要轮询。
-  // 草稿（status=0）的 aiStatus 可能因 MyBatis null 写入问题残留为 0，不应触发轮询。
-  const hasPendingGuides = guides.some((g) => g.status === 1 && (g.aiStatus === 0 || g.aiStatus === 1))
-
-  useEffect(() => {
-    if (!hasPendingGuides) return
-    // 有 PENDING(0) 或 INDEXING(1) 的攻略时，每 5 秒刷新一次状态
-    const timer = setInterval(loadGuides, 5000)
-    return () => clearInterval(timer)
-  }, [hasPendingGuides, loadGuides])
-  // ── Fix #3 end ───────────────────────────────────────────────────────────────
-
-  const handleDelete = async (guide) => {
-    try {
-      await guideApi.delete(guide.uuid)
-      setDeleting(null)
-      loadGuides()
-    } catch (err) {
-      alert(err.message)
-    }
-  }
-
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        <div className="flex gap-4 h-[calc(100vh-7.5rem)]">
-
-          {/* ── 左侧攻略库 ────────────────────────────────────────────────── */}
-          <div className="w-72 lg:w-80 shrink-0 bg-white rounded-2xl border border-gray-100
-                          shadow-sm flex flex-col overflow-hidden">
-            <GuideSidebar
-              guides={guides}
-              loading={loading}
-              onRefresh={loadGuides}
-              onView={(g)  => setViewGuide(g)}
-              onEdit={(g)  => setModal(g)}
-              onAdd={()    => setModal('create')}
-            />
-          </div>
-
-          {/* ── 右侧 AI 聊天 ───────────────────────────────────────────────── */}
-          <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-100
+        <div className="h-[calc(100vh-7.5rem)]">
+          {/* AI 仅在 Agent 判断资料确有帮助时才触发可选语义检索。 */}
+          <div className="h-full min-w-0 bg-white rounded-2xl border border-gray-100
                           shadow-sm flex flex-col overflow-hidden">
             <ChatPanel />
           </div>
         </div>
       </main>
-
-      {/* 攻略详情弹窗 */}
-      {viewGuide && (
-        <GuideDetailModal
-          guide={viewGuide}
-          onClose={() => setViewGuide(null)}
-          onEdit={(g)   => { setViewGuide(null); setModal(g) }}
-          onDelete={(g) => { setViewGuide(null); setDeleting(g) }}
-          onIndexed={loadGuides}   // 触发后刷新侧边栏状态
-        />
-      )}
-
-      {/* 创建/编辑 Modal */}
-      {modal !== null && (
-        <GuideFormModal
-          guide={modal === 'create' ? null : modal}
-          onClose={() => setModal(null)}
-          onSaved={() => { setModal(null); loadGuides() }}
-        />
-      )}
-
-      {/* 删除确认 */}
-      {deleting && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl p-6">
-            <h3 className="font-semibold text-gray-900 mb-2">确认删除</h3>
-            <p className="text-sm text-gray-500 mb-1">
-              确定要删除攻略「{deleting.title}」吗？
-            </p>
-            {deleting.aiStatus === 2 && (
-              <p className="text-xs text-amber-500 mb-2">
-                此攻略已加入 AI 知识库，删除后将同步从知识库中移除。
-              </p>
-            )}
-            <div className="flex gap-3 mt-4">
-              <button onClick={() => setDeleting(null)}
-                className="flex-1 py-2 rounded-xl border border-gray-200 text-sm text-gray-600
-                           hover:bg-gray-50 transition-colors">
-                取消
-              </button>
-              <button onClick={() => handleDelete(deleting)}
-                className="flex-1 py-2 rounded-xl bg-red-500 text-white text-sm font-medium
-                           hover:bg-red-600 transition-colors">
-                确认删除
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
