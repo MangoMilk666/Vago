@@ -227,7 +227,7 @@ API contract 不应依赖浏览器 cookie、React state 或 Vite proxy。React W
 | 2 | 迁移 Auth / User | 已完成并通过本地联调 |
 | 3 | 迁移 Trip / Plan / Itinerary | 核心 CRUD 与 AI 保存入口已迁移 |
 | 4 | 整合 Knowledge / RAG / AI Companion | 4A–4D 已完成：独立 KnowledgeSource、文本/文件导入、Guide 回填、可选索引 capability |
-| 5 | 清理 legacy community / public-feed 能力 | 待开始 |
+| 5 | 清理 legacy community / public-feed 能力 | 已完成代码与 API 下线；旧表暂保留 |
 | 6 | 更新 Web 产品体验和导航 | 待开始 |
 | 7 | 建立 SwiftUI iOS foundation | 待开始 |
 | 8 | 实现 iOS Travel Tracking | 待开始 |

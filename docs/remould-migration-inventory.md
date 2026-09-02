@@ -1,7 +1,7 @@
 # Vago Remould 迁移盘点
 
 > 最后更新：2026-08-31
-> 当前阶段：Phase 4 — Knowledge / RAG / AI Companion Integration 起步
+> 当前阶段：Phase 5 — Legacy Community Removal
 
 ## 1. 仓库状态
 
@@ -215,7 +215,14 @@ Phase 4 已从 AI 保存链路开始整合：
 - AI 对话支持 `useRag` 开关；关闭时服务端不会向 Agent 注册个人资料检索工具。开启时也仅在 Agent 判断个人资料确有帮助时检索。
 - Java community API、legacy `/knowledge/guides/*` 与旧 Guide 前端组件仍在兼容窗口保留，但不再属于主导航路径。
 
-## 14. 推荐下一步
+## 14. Phase 5 已完成
+
+- Java Guide、点赞、收藏夹及其 Redis 点赞刷盘任务已下线，不再提供 community 写链路。
+- Java 到 Python 的 Guide indexing bridge 与 `/api/v1/articles/*` 兼容入口已移除。
+- React 主路径已不使用社区 API；旧社区组件已删除。
+- `guides`、`guide_likes`、`collections`、`collection_items` 仍作为 legacy 数据保留，暂不执行 destructive DROP；新功能仅使用 `knowledge_sources`。
+
+## 15. 推荐下一步
 
 完成 **Phase 4 — Knowledge / RAG / AI Companion Integration** 的下一步：
 
