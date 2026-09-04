@@ -165,8 +165,9 @@ def test_legacy_register_api_accepts_sms_code_and_nickname(
         assert phone == "13700101000"
         assert code == "123456"
 
-    async def fake_store_refresh_token(user_uuid: str, refresh_token: str) -> None:
+    async def fake_store_refresh_token(user_uuid: str, session_id: str, refresh_token: str) -> None:
         assert user_uuid
+        assert session_id
         assert refresh_token
 
     monkeypatch.setattr(auth_service, "validate_sms_code", fake_validate_sms_code)
@@ -205,8 +206,9 @@ def test_legacy_oauth_api_returns_login_vo_shape(
             expires_at=None,
         )
 
-    async def fake_store_refresh_token(user_uuid: str, refresh_token: str) -> None:
+    async def fake_store_refresh_token(user_uuid: str, session_id: str, refresh_token: str) -> None:
         assert user_uuid
+        assert session_id
 
     monkeypatch.setattr(auth_service, "fetch_oauth_user_profile", fake_fetch_oauth_user_profile)
     monkeypatch.setattr(auth_service, "store_refresh_token", fake_store_refresh_token)

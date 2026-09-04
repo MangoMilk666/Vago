@@ -233,7 +233,7 @@ Phase 4 已从 AI 保存链路开始整合：
 
 ## 16. 推荐下一步
 
-- 开始 Phase 7：建立 SwiftUI iOS 基础工程，并接入当前 FastAPI 的登录、个人资料和行程查看能力。
+- Phase 7 已完成：`apps/vago-ios` 使用 SwiftUI 直连 FastAPI，提供手机号登录、Keychain 令牌存储、当前行程/日程查看与基础个人资料。刷新令牌已调整为 Redis 设备级会话，避免 iOS 与 Web 登录互相覆盖。
 - 在 Phase 8 实现真实的足迹采集与同步后，再将 Web 足迹入口替换为可浏览的领域页面。
 - 在 Phase 9 有足够的真实行程、足迹与笔记数据后，再实现 AI 旅行回忆生成与编辑。
 

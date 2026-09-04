@@ -53,7 +53,7 @@ def _strip_bearer_prefix(token: str) -> str:
     return token
 
 
-def _sign_token(user: User, expires_in: int, token_kind: str) -> str:
+def _sign_token(user: User, expires_in: int, token_kind: str, session_id: str | None = None) -> str:
     """签发与 Java payload 兼容的 HS256 JWT。"""
     now = _utc_now()
     payload = {
@@ -63,25 +63,30 @@ def _sign_token(user: User, expires_in: int, token_kind: str) -> str:
         "iat": now,
         "exp": now + timedelta(seconds=expires_in),
     }
+    # 分支条件：设备级会话存在时写入 sid，供刷新和注销精确定位会话。
+    if session_id:
+        payload["sid"] = session_id
     return jwt.encode(payload, _require_jwt_secret(), algorithm="HS256")
 
 
-def create_token_pair(user: User) -> TokenPair:
+def create_token_pair(user: User, session_id: str | None = None) -> TokenPair:
     """为用户签发 access/refresh token 对。"""
-    access_token = _sign_token(user, settings.jwt_access_token_ttl_seconds, "access")
-    refresh_token = _sign_token(user, settings.jwt_refresh_token_ttl_seconds, "refresh")
+    session_id = session_id or uuid4().hex
+    access_token = _sign_token(user, settings.jwt_access_token_ttl_seconds, "access", session_id)
+    refresh_token = _sign_token(user, settings.jwt_refresh_token_ttl_seconds, "refresh", session_id)
     return TokenPair(
         accessToken=access_token,
         refreshToken=refresh_token,
         expiresIn=settings.jwt_access_token_ttl_seconds,
+        sessionId=session_id,
     )
 
 
-async def store_refresh_token(user_uuid: str, refresh_token: str) -> None:
-    """保存 refresh token，保持 Java 侧单用户单刷新 token 语义。"""
+async def store_refresh_token(user_uuid: str, session_id: str, refresh_token: str) -> None:
+    """保存设备级 refresh token，避免同一用户跨端登录互相覆盖。"""
     redis = await get_redis_client()
     await redis.setex(
-        f"{REFRESH_TOKEN_PREFIX}{user_uuid}",
+        f"{REFRESH_TOKEN_PREFIX}{user_uuid}:{session_id}",
         settings.jwt_refresh_token_ttl_seconds,
         refresh_token,
     )
@@ -221,7 +226,7 @@ async def login_by_oauth(
         _bind_oauth_account(db, user, profile)
 
     token_pair = create_token_pair(user)
-    await store_refresh_token(user.uuid, token_pair.refresh_token)
+    await store_refresh_token(user.uuid, token_pair.session_id or uuid4().hex, token_pair.refresh_token)
     db.commit()
     db.refresh(user)
     return LoginResponse(
@@ -231,7 +236,13 @@ async def login_by_oauth(
     )
 
 
-async def login_by_phone(db: Session, phone: str, code: str) -> LoginResponse:
+async def login_by_phone(
+    db: Session,
+    phone: str,
+    code: str,
+    client_type: str = "web",
+    device_id: str | None = None,
+) -> LoginResponse:
     """手机号验证码登录；不存在的手机号会自动注册。"""
     await validate_sms_code(phone, code)
     user = get_user_by_phone(db, phone)
@@ -240,8 +251,10 @@ async def login_by_phone(db: Session, phone: str, code: str) -> LoginResponse:
     if user is None:
         user = _create_user_from_phone(db, phone)
     ensure_user_can_login(user)
-    token_pair = create_token_pair(user)
-    await store_refresh_token(user.uuid, token_pair.refresh_token)
+    # 原生端以稳定设备标识复用会话；Web 未提供设备标识时每次登录生成独立会话。
+    session_id = device_id or uuid4().hex
+    token_pair = create_token_pair(user, session_id)
+    await store_refresh_token(user.uuid, token_pair.session_id or session_id, token_pair.refresh_token)
     db.commit()
     db.refresh(user)
     return LoginResponse(
@@ -268,7 +281,7 @@ async def register_by_phone(
     if nickname:
         user.nickname = nickname
     token_pair = create_token_pair(user)
-    await store_refresh_token(user.uuid, token_pair.refresh_token)
+    await store_refresh_token(user.uuid, token_pair.session_id or uuid4().hex, token_pair.refresh_token)
     db.commit()
     db.refresh(user)
     return LoginResponse(
@@ -297,7 +310,14 @@ async def refresh_token(db: Session, refresh_token_value: str) -> TokenPair:
         raise AppException("刷新令牌缺少用户标识", status_code=401, code="REFRESH_TOKEN_INVALID")
 
     redis = await get_redis_client()
-    stored = await redis.get(f"{REFRESH_TOKEN_PREFIX}{user_uuid}")
+    session_id = payload.get("sid")
+    # 分支条件：新 token 带会话标识时按设备会话读取；旧 token 保留用户级 key 兼容。
+    refresh_key = (
+        f"{REFRESH_TOKEN_PREFIX}{user_uuid}:{session_id}"
+        if session_id
+        else f"{REFRESH_TOKEN_PREFIX}{user_uuid}"
+    )
+    stored = await redis.get(refresh_key)
     # 分支条件：Redis 中存储的 refresh token 与请求不一致时，拒绝重放。
     if stored != refresh_token_value:
         raise AppException("刷新令牌已失效", status_code=401, code="REFRESH_TOKEN_REVOKED")
@@ -308,8 +328,8 @@ async def refresh_token(db: Session, refresh_token_value: str) -> TokenPair:
         raise AppException("用户不存在", status_code=404, code="USER_NOT_FOUND")
     ensure_user_can_login(user)
 
-    token_pair = create_token_pair(user)
-    await store_refresh_token(user.uuid, token_pair.refresh_token)
+    token_pair = create_token_pair(user, session_id)
+    await store_refresh_token(user.uuid, token_pair.session_id or session_id or uuid4().hex, token_pair.refresh_token)
     return token_pair
 
 
@@ -347,8 +367,11 @@ async def logout(access_token: str | None, refresh_token_value: str | None = Non
                 options={"verify_exp": False},
             )
             user_uuid = payload.get("userUuid")
-            # 分支条件：refresh token 中包含 userUuid 时，删除对应 Redis key。
-            if user_uuid:
+            session_id = payload.get("sid")
+            # 分支条件：新 refresh token 包含 sid 时只删除当前设备会话；旧 token 保持原注销行为。
+            if user_uuid and session_id:
+                await redis.delete(f"{REFRESH_TOKEN_PREFIX}{user_uuid}:{session_id}")
+            elif user_uuid:
                 await redis.delete(f"{REFRESH_TOKEN_PREFIX}{user_uuid}")
         except jwt.InvalidTokenError:
             logger.debug("退出登录时忽略无效 refresh token")

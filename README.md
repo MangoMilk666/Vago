@@ -58,7 +58,7 @@ RAG / Qdrant 是其中用于检索大量非结构化个人资料的技术能力�
 | Photos / Notes | 后续建设 | 拍照、相册选择、EXIF / 时间 / 位置绑定、Trip / Spot 关联 |
 | Travel Memory | 后续建设 | 基于事实数据生成可编辑旅行总结、timeline、highlights、分享卡片 |
 | Public Community | 停止作为主线 | Feed、点赞、关注、陌生人社交不迁移到目标后端；分享能力可保留 |
-| Native iOS | 后续建设 | SwiftUI 客户端，聚焦当前行程、GPS、地图、照片、轻量 AI |
+| Native iOS | Phase 7 基础已完成 | SwiftUI 登录、Keychain 会话、当前行程、日程与基础个人资料；GPS/地图后续建设 |
 
 ## 当前架构
 

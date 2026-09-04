@@ -32,6 +32,10 @@ class PhoneLoginRequest(BaseModel):
         max_length=8,
         validation_alias=AliasChoices("code", "smsCode"),
     )
+    # 客户端类型，用于区分 Web 与原生端的登录会话。
+    client_type: str = Field(default="web", alias="clientType", max_length=32)
+    # 设备安装标识；原生端传入后可维持独立登录状态。
+    device_id: str | None = Field(default=None, alias="deviceId", max_length=128)
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -77,6 +81,8 @@ class TokenPair(BaseModel):
     refresh_token: str = Field(alias="refreshToken")
     # access token 有效期，单位为秒。
     expires_in: int = Field(alias="expiresIn")
+    # 设备级会话标识，客户端仅用于定位当前登录会话。
+    session_id: str | None = Field(default=None, alias="sessionId")
 
     model_config = ConfigDict(populate_by_name=True)
 

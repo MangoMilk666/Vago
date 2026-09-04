@@ -32,7 +32,16 @@ async def login_phone(
     db: Session = Depends(get_db),
 ) -> ApiResponse[LoginResponse]:
     """手机号验证码登录。"""
-    return success(await service.login_by_phone(db, payload.phone, payload.code), "登录成功")
+    return success(
+        await service.login_by_phone(
+            db,
+            payload.phone,
+            payload.code,
+            payload.client_type,
+            payload.device_id,
+        ),
+        "登录成功",
+    )
 
 
 @router.post("/register", response_model=ApiResponse[LoginResponse])

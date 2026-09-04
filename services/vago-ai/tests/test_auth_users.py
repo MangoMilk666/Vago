@@ -187,6 +187,41 @@ def test_token_pair_keeps_legacy_jwt_claim_names(db_session: Session, monkeypatc
 
 
 @pytest.mark.anyio
+async def test_phone_logins_keep_refresh_tokens_for_separate_devices(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """测试：同一账号的 Web 与 iOS 登录应保留各自独立的刷新会话。"""
+    fake_redis = FakeRedis()
+    monkeypatch.setattr(auth_service.settings, "jwt_secret_key", "test-secret")
+
+    async def fake_validate_sms_code(phone: str, code: str) -> None:
+        assert phone == "13800101000"
+        assert code == "123456"
+
+    async def fake_get_redis_client() -> FakeRedis:
+        return fake_redis
+
+    monkeypatch.setattr(auth_service, "validate_sms_code", fake_validate_sms_code)
+    monkeypatch.setattr(auth_service, "get_redis_client", fake_get_redis_client)
+
+    ios_response = await auth_service.login_by_phone(
+        db_session, "13800101000", "123456", "ios", "ios-installation-id"
+    )
+    web_response = await auth_service.login_by_phone(
+        db_session, "13800101000", "123456", "web", "web-browser-id"
+    )
+
+    assert ios_response.session_id == "ios-installation-id"
+    assert web_response.session_id == "web-browser-id"
+    assert {key.rsplit(":", maxsplit=1)[-1] for key in fake_redis.values} == {
+        "ios-installation-id",
+        "web-browser-id",
+    }
+    assert len(fake_redis.values) == 2
+
+
+@pytest.mark.anyio
 async def test_oauth_login_creates_user_and_binding(db_session: Session, monkeypatch: pytest.MonkeyPatch):
     """测试：OAuth 首次登录应创建用户、默认设置和 provider 绑定。"""
     monkeypatch.setattr(auth_service.settings, "jwt_secret_key", "test-secret")
@@ -205,8 +240,9 @@ async def test_oauth_login_creates_user_and_binding(db_session: Session, monkeyp
             expires_at=None,
         )
 
-    async def fake_store_refresh_token(user_uuid: str, refresh_token: str) -> None:
+    async def fake_store_refresh_token(user_uuid: str, session_id: str, refresh_token: str) -> None:
         assert user_uuid
+        assert session_id
         assert refresh_token
 
     monkeypatch.setattr(auth_service, "fetch_oauth_user_profile", fake_fetch_oauth_user_profile)
@@ -252,8 +288,9 @@ async def test_oauth_login_binds_existing_user_by_email(db_session: Session, mon
             expires_at=None,
         )
 
-    async def fake_store_refresh_token(user_uuid: str, refresh_token: str) -> None:
+    async def fake_store_refresh_token(user_uuid: str, session_id: str, refresh_token: str) -> None:
         assert user_uuid == "email-user-uuid"
+        assert session_id
 
     monkeypatch.setattr(auth_service, "fetch_oauth_user_profile", fake_fetch_oauth_user_profile)
     monkeypatch.setattr(auth_service, "store_refresh_token", fake_store_refresh_token)
