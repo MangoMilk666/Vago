@@ -99,3 +99,4 @@ def test_checkin_requires_an_in_progress_trip(db_session: Session):
 
     assert checkin.location_name == "滨海湾花园"
     assert db_session.query(Checkin).count() == 1
+    assert [item.uuid for item in service.list_trip_checkins(db_session, "user-a", "trip-not-started")] == [checkin.uuid]

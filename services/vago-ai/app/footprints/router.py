@@ -38,6 +38,16 @@ def list_trip_locations(
     return success(service.list_trip_locations(db, user_uuid, trip_uuid))
 
 
+@router.get("/trips/{trip_uuid}/checkins", response_model=ApiResponse[list[CheckinResponse]])
+def list_trip_checkins(
+    trip_uuid: str,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[list[CheckinResponse]]:
+    """读取指定行程的已保存手动打卡，用于客户端地图渲染。"""
+    return success(service.list_trip_checkins(db, user_uuid, trip_uuid))
+
+
 @router.post("/checkins", response_model=ApiResponse[CheckinResponse])
 def create_checkin(
     payload: CheckinCreateRequest,

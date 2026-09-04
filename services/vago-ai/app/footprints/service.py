@@ -95,6 +95,17 @@ def list_trip_locations(db: Session, user_uuid: str, trip_uuid: str) -> list[Loc
     return [LocationSampleResponse.model_validate(sample) for sample in samples]
 
 
+def list_trip_checkins(db: Session, user_uuid: str, trip_uuid: str) -> list[CheckinResponse]:
+    """按打卡时间读取行程中的用户主动记录，供地图恢复标记。"""
+    _get_owned_trip(db, user_uuid, trip_uuid)
+    checkins = db.scalars(
+        select(Checkin)
+        .where(Checkin.user_uuid == user_uuid, Checkin.trip_uuid == trip_uuid)
+        .order_by(Checkin.checked_at.asc())
+    ).all()
+    return [CheckinResponse.model_validate(checkin) for checkin in checkins]
+
+
 def create_checkin(db: Session, user_uuid: str, payload: CheckinCreateRequest) -> CheckinResponse:
     """为进行中的行程新增一条用户主动确认的打卡。"""
     trip = _get_owned_trip(db, user_uuid, payload.trip_uuid)

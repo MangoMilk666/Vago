@@ -18,6 +18,8 @@ struct RootView: View {
             }
         }
         .tint(.indigo)
+        // 根容器始终占用 WindowGroup 提供的完整可用区域，避免首屏内容的固有尺寸压缩 TabView。
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -32,5 +34,7 @@ private struct MainTabView: View {
             ProfileView()
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }
         }
+        // TabView 显式扩展到安全区域内的最大尺寸，适配不同 iPhone 的屏幕高度。
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
