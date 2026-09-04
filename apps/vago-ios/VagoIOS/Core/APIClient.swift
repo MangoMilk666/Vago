@@ -100,7 +100,27 @@ final class APIClient {
     // URLSession 自身不会占用主线程等待网络返回。
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        // FastAPI datetime 通常是完整 ISO 8601，而 Python date 会输出 yyyy-MM-dd；两者都需兼容。
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            // 格式化器限定在 Sendable 解码闭包内，避免 Swift 6 的 Actor 隔离警告。
+            if let timestamp = ISO8601DateFormatter().date(from: value) {
+                return timestamp
+            }
+            let calendarDateFormatter = DateFormatter()
+            // 固定 POSIX locale 与 UTC，避免设备语言或时区导致 yyyy-MM-dd 被解析成不同日期。
+            calendarDateFormatter.locale = Locale(identifier: "en_US_POSIX")
+            calendarDateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+            calendarDateFormatter.dateFormat = "yyyy-MM-dd"
+            if let calendarDate = calendarDateFormatter.date(from: value) {
+                return calendarDate
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "不支持的日期格式：\(value)"
+            )
+        }
         return decoder
     }()
 
