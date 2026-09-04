@@ -184,6 +184,10 @@ def test_get_itinerary_days_lazy_initializes_missing_dates(db_session: Session):
     assert days[1].uuid == "day-uuid"
     assert days[1].spots[0].name == "景福宫"
 
+    # 分支条件：重复读取同一日期范围时，唯一约束与懒初始化逻辑都不能重复创建日程。
+    reread_days = service.get_itinerary_days(db_session, "user-a", "trip-uuid", ItineraryDay.REF_TYPE_TRIP)
+    assert [item.uuid for item in reread_days] == [item.uuid for item in days]
+
 
 def test_ai_structured_plan_save_uses_travel_domain(db_session: Session):
     """测试：AI 结构化行程应能直接保存到 FastAPI travel domain。"""

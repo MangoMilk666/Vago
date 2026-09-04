@@ -791,6 +791,8 @@ apps/vago-ios/
 
 不要第一天就实现完整地图。
 
+目前既然要做ios+web双端，需要考虑重塑登陆校验机制链路，可以参考文档[登陆认证改造prompt](/Users/henrysang/Documents/Vago/local-prompts/登陆认证改造prompt.md)
+
 ## Phase 8 — iOS Travel Tracking
 
 随后实现：

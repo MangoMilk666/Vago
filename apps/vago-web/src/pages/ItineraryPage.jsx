@@ -98,7 +98,7 @@ function SpotRow({ spot, index, total, onEdit, onDelete, onMoveUp, onMoveDown })
 }
 
 // ── 单日卡片 ──────────────────────────────────────────────────────────────────
-function DayCard({ day, onSave, saving }) {
+function DayCard({ day, onSave, saving, readOnly }) {
   const [open,    setOpen]    = useState(false)
   const [editing, setEditing] = useState(false)
   const [form,    setForm]    = useState(null)
@@ -225,7 +225,7 @@ function DayCard({ day, onSave, saving }) {
         </div>
 
         <div className="flex items-center gap-2">
-          {!editing && (
+          {!editing && !readOnly && (
             <button onClick={(e) => { e.stopPropagation(); startEdit() }}
               className="px-3 py-1 rounded-lg text-xs text-indigo-600 bg-indigo-50
                          hover:bg-indigo-100 transition-colors">
@@ -483,6 +483,8 @@ export default function ItineraryPage() {
   // type: 'trip' | 'plan'
   const type = searchParams.get('type') ?? 'trip'
   const title = searchParams.get('title') ?? (type === 'trip' ? '行程规划' : '计划规划')
+  // 分支条件：从历史行程进入时仅展示日程，不开放编辑入口。
+  const readOnly = type === 'trip' && searchParams.get('readonly') === 'true'
 
   const [days,    setDays]    = useState([])
   const [loading, setLoading] = useState(true)
@@ -552,7 +554,7 @@ export default function ItineraryPage() {
           </button>
           <h1 className="text-xl font-bold text-gray-900">{title}</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            点击每一天展开规划，可填写出行方式、住宿、三餐和景点
+            {readOnly ? '该历史行程仅供回顾，不支持修改。' : '点击每一天展开规划，可填写出行方式、住宿、三餐和景点'}
           </p>
         </div>
 
@@ -602,6 +604,7 @@ export default function ItineraryPage() {
                 day={day}
                 onSave={handleSaveDay}
                 saving={saving}
+                readOnly={readOnly}
               />
             ))}
           </div>

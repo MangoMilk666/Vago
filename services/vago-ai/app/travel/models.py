@@ -6,7 +6,7 @@ Phase 3 先按现有 MySQL DDL 建模，保证 Java 侧历史数据可以被 Fas
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Numeric, String, Text
+from sqlalchemy import Date, DateTime, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -99,6 +99,8 @@ class ItineraryDay(Base):
     """每日行程主表。"""
 
     __tablename__ = "itinerary_days"
+    # 同一行程或计划在同一日期只保留一份日程，避免并发懒初始化产生重复 UI。
+    __table_args__ = (UniqueConstraint("ref_uuid", "ref_type", "day_date", name="uk_itinerary_days_ref_date"),)
 
     # 关联对象类型：正式行程。
     REF_TYPE_TRIP = 1

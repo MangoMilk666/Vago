@@ -106,7 +106,7 @@ CREATE TABLE user_settings (
 
 -- ------------------------------------------------------------
 -- 正式行程表（trips）
--- status: 1=计划中 2=已完成 3=已取消
+-- status: 1=未开始 2=进行中 3=已结束
 -- ------------------------------------------------------------
 CREATE TABLE trips (
     id              BIGINT          NOT NULL AUTO_INCREMENT      COMMENT '自增主键',
@@ -117,7 +117,7 @@ CREATE TABLE trips (
     cover_image_key VARCHAR(500)    DEFAULT NULL                 COMMENT '封面图 OSS Key',
     start_date      DATE            NOT NULL                     COMMENT '出发日期',
     end_date        DATE            NOT NULL                     COMMENT '返回日期',
-    status          TINYINT         NOT NULL DEFAULT 1           COMMENT '状态：1=计划中 2=已完成 3=已取消',
+    status          TINYINT         NOT NULL DEFAULT 1           COMMENT '状态：1=未开始 2=进行中 3=已结束',
     created_at      DATETIME(3)     NOT NULL                     COMMENT '创建时间',
     updated_at      DATETIME(3)     NOT NULL                     COMMENT '更新时间',
     deleted_at      DATETIME(3)     DEFAULT NULL                 COMMENT '软删除时间（NULL=未删除）',
@@ -227,9 +227,7 @@ CREATE TABLE knowledge_sources (
 -- ref_type: 1=行程(trip)  2=计划(plan)
 -- ref_uuid: 对应 trips.uuid 或 plans.uuid
 --
--- 注意：同一 ref 下同一日期允许存在多条记录（不设唯一约束），
--- 支持用户在同一日期创建多个分段（如：上午段/下午段，
--- 或两段旅程之间的交通中转日）。
+-- 同一 ref 下同一日期只保留一条记录；当天的景点、交通和备注均归入该日程。
 -- ------------------------------------------------------------
 CREATE TABLE itinerary_days (
     id              BIGINT          NOT NULL AUTO_INCREMENT      COMMENT '自增主键',
@@ -250,6 +248,7 @@ CREATE TABLE itinerary_days (
 
     PRIMARY KEY (id),
     UNIQUE KEY uk_day_uuid  (uuid),
+    UNIQUE KEY uk_day_ref_date (ref_uuid, ref_type, day_date),
     INDEX      idx_day_ref  (ref_uuid, ref_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='每日行程主表';
 

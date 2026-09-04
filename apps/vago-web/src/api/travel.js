@@ -73,6 +73,8 @@ export const tripApi = {
   detail:  (uuid)       => http.get(`/trips/${uuid}`),
   create:  (data)       => http.post('/trips', data),
   update:  (uuid, data) => http.put(`/trips/${uuid}`, data),
+  start:   (uuid)       => http.post(`/trips/${uuid}/start`),
+  finish:  (uuid)       => http.post(`/trips/${uuid}/finish`),
   delete:  (uuid)       => http.delete(`/trips/${uuid}`),
 }
 

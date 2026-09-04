@@ -505,13 +505,13 @@ def get_itinerary_days(
         if not days_for_date:
             all_days.append(_create_empty_day(db, ref_uuid, ref_type, day_date, index))
         else:
-            # 分支条件：某日期已有 day 记录时，复用现有记录并检查 dayIndex。
-            for day in days_for_date:
-                # 分支条件：日期区间变化导致 dayIndex 不一致时，自动修正。
-                if day.day_index != index:
-                    day.day_index = index
-                    day.updated_at = utc_now_naive()
-            all_days.extend(days_for_date)
+            # 分支条件：历史数据存在同日重复记录时，只使用最早创建的一条，避免前端重复展示。
+            day = days_for_date[0]
+            # 分支条件：日期区间变化导致 dayIndex 不一致时，自动修正。
+            if day.day_index != index:
+                day.day_index = index
+                day.updated_at = utc_now_naive()
+            all_days.append(day)
 
     db.flush()
     spots = db.scalars(
