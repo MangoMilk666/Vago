@@ -276,10 +276,10 @@ export default function PlanPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="app-page">
       <Navbar />
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      <main className="app-main">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-xl font-bold text-gray-900">旅行计划</h1>

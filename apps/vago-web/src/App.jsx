@@ -8,6 +8,7 @@ import GuidePage      from './pages/GuidePage'
 import ItineraryPage  from './pages/ItineraryPage'
 import AiPlanPage     from './pages/AiPlanPage'
 import ProfilePage    from './pages/ProfilePage'
+import FuturePage     from './pages/FuturePage'
 import { isLoggedIn } from './stores/auth'
 
 // 受保护路由：未登录跳转到 /login
@@ -37,6 +38,12 @@ export default function App() {
       } />
       <Route path="/profile" element={
         <ProtectedRoute><ProfilePage /></ProtectedRoute>
+      } />
+      <Route path="/footprints" element={
+        <ProtectedRoute><FuturePage type="footprints" /></ProtectedRoute>
+      } />
+      <Route path="/memories" element={
+        <ProtectedRoute><FuturePage type="memories" /></ProtectedRoute>
       } />
       {/* 每日行程规划：/trips/:uuid/itinerary?type=trip&title=xxx */}
       <Route path="/trips/:uuid/itinerary" element={

@@ -1,7 +1,7 @@
 # Vago Remould 迁移盘点
 
-> 最后更新：2026-08-31
-> 当前阶段：Phase 5 — Legacy Community Removal
+> 最后更新：2026-09-02
+> 当前阶段：Phase 6 — Web Product Experience
 
 ## 1. 仓库状态
 
@@ -25,6 +25,8 @@
 | `/plans` | `PlanPage` | 保留 / 迁移 |
 | `/guides` | `GuidePage` | 保留 / 重塑为 Knowledge |
 | `/ai` | `AiPlanPage` | 保留 / 重塑为 AI Companion |
+| `/footprints` | `FuturePage` | 新增产品入口 / 等待数据域实现 |
+| `/memories` | `FuturePage` | 新增产品入口 / 等待数据域实现 |
 | `/profile` | `ProfilePage` | 保留 / 迁移 |
 | `/trips/:uuid/itinerary` | `ItineraryPage` | 保留 / 迁移 |
 | `/plans/:uuid/itinerary` | `ItineraryPage` | 保留 / 迁移 |
@@ -222,14 +224,15 @@ Phase 4 已从 AI 保存链路开始整合：
 - React 主路径已不使用社区 API；旧社区组件已删除。
 - `guides`、`guide_likes`、`collections`、`collection_items` 仍作为 legacy 数据保留，暂不执行 destructive DROP；新功能仅使用 `knowledge_sources`。
 
-## 15. 推荐下一步
+## 15. Phase 6 已完成
 
-完成 **Phase 4 — Knowledge / RAG / AI Companion Integration** 的下一步：
+- 固定 Web 顶部导航收敛为首页、知识库、AI 搭子、计划、行程、足迹、回忆和个人资料，不再出现社区入口。
+- 首页保留简洁的多入口卡片布局，并以新版个人旅行领域名称进入对应模块。
+- 新增足迹与回忆的稳定路由入口；在对应 FastAPI 数据域、iOS 采集链路尚未落地前，它们不会伪装成已可用功能。
+- 行程、计划、知识库、AI 和个人资料页使用统一的页面背景、内容宽度和面板样式，保留既有紫色色调。
 
-- 用本地 Redis / MySQL 做一次 Trip / Plan / Itinerary 前后端 smoke test。
-- 验证 Plan 转 Trip 后 itinerary days / spots 在真实数据库中保持一致。
-- 验证 AI 页面保存草稿 / 保存行程时，数据直接落入 FastAPI travel domain。
-- 验证 Guide / Collection 仍由 Java 提供，未被 FastAPI proxy 误拦截。
-- 开始把 Guide discover / like 从核心导航和后端主线剥离，或将 Collections 重设计为个人知识组织能力。
+## 16. 推荐下一步
 
-在 Knowledge remould 前，不建议迁移 guide discover / like 等公共社区语义。
+- 开始 Phase 7：建立 SwiftUI iOS 基础工程，并接入当前 FastAPI 的登录、个人资料和行程查看能力。
+- 在 Phase 8 实现真实的足迹采集与同步后，再将 Web 足迹入口替换为可浏览的领域页面。
+- 在 Phase 9 有足够的真实行程、足迹与笔记数据后，再实现 AI 旅行回忆生成与编辑。

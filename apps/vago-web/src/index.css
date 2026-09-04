@@ -13,9 +13,13 @@
   }
 
   body {
-    @apply bg-gray-50 text-gray-900;
+    @apply bg-violet-50/40 text-gray-900;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
       'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  }
+
+  button, input, textarea, select {
+    font: inherit;
   }
 }
 
@@ -53,5 +57,27 @@
   .edit-input {
     @apply w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white
            focus:outline-none focus:ring-2 focus:ring-indigo-300 transition-all;
+  }
+
+  /* Phase 6：统一个人旅行工作台的页面留白与信息面板。 */
+  .app-page {
+    @apply min-h-screen bg-violet-50/40;
+  }
+
+  .app-main {
+    @apply mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8;
+  }
+
+  .app-surface {
+    @apply border border-violet-100 bg-white shadow-sm;
+    border-radius: 8px;
+  }
+
+  .app-action {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-violet-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .app-secondary-action {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-violet-200 bg-white px-3 py-2 text-sm font-medium text-violet-700 transition-colors hover:bg-violet-50;
   }
 }

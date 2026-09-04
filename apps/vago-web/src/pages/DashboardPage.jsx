@@ -1,65 +1,52 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import { getProfile } from '../api/user'
 import { getAuth } from '../stores/auth'
 
+const ENTRIES = [
+  { icon: '✈️', title: '我的行程', description: '查看、创建和管理旅行行程', to: '/trips' },
+  { icon: '📋', title: '旅行计划', description: '先记下想去的地方，再慢慢完善', to: '/plans' },
+  { icon: '📖', title: '个人知识库', description: '整理自己的旅行资料与笔记', to: '/guides' },
+  { icon: '🤖', title: 'AI 搭子', description: '结合个人资料生成旅行计划草案', to: '/ai' },
+  { icon: '🗺️', title: '旅行足迹', description: '回顾每一段真实走过的旅程', to: '/footprints' },
+  { icon: '✦', title: '旅行回忆', description: '将旅途中的记录沉淀为长期回忆', to: '/memories' },
+]
+
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const [user, setUser] = useState(null)
+  const [user, setUser] = useState(() => getAuth()?.user ?? null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // 先读缓存，再请求最新个人资料。
-    const cached = getAuth()
-    if (cached?.user) setUser(cached.user)
-
     getProfile()
-      .then((res) => {
-        if (res.code === 200) setUser(res.data)
+      .then((response) => {
+        if (response.code === 200) setUser(response.data)
       })
       .catch(() => navigate('/login'))
       .finally(() => setLoading(false))
   }, [navigate])
 
   if (loading && !user) {
-    return <div className="min-h-screen bg-gray-50"><Navbar /><div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" /></div></div>
+    return <div className="app-page"><Navbar /><div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-violet-500 border-t-transparent" /></div></div>
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar />
-      <main className="mx-auto max-w-5xl px-6 py-12">
-        <div className="relative mb-8 overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-8 text-white">
-          <div className="absolute -right-12 -top-12 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
-          <div className="relative z-10">
-            <p className="mb-1 text-sm text-indigo-100">欢迎回来</p>
-            <h1 className="mb-3 text-3xl font-bold">{user?.nickname ?? '旅行者'} 👋</h1>
-            <p className="text-indigo-100">你的叠迹之旅正在继续，记录每一个精彩瞬间</p>
-          </div>
-        </div>
+  return <div className="app-page"><Navbar />
+    <main className="app-main max-w-6xl py-12">
+      <section className="mb-8 border-b border-violet-100 pb-7">
+        <p className="mb-2 text-sm font-medium text-violet-700">PERSONAL TRAVEL INTELLIGENCE</p>
+        <h1 className="text-3xl font-semibold text-slate-900">你好，{user?.nickname ?? '旅行者'}</h1>
+        <p className="mt-3 text-sm text-slate-500">从一条资料、一个计划或一段行程开始，留下属于自己的旅行脉络。</p>
+      </section>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[
-            { emoji: '✈️', title: '我的行程', desc: '查看、创建和管理旅行行程', to: '/trips' },
-            { emoji: '📋', title: '旅行计划', desc: '草稿计划，一键转为正式行程', to: '/plans' },
-            { emoji: '📖', title: '个人知识库', desc: '整理自己的旅行资料与笔记', to: '/guides' },
-            { emoji: '🗺️', title: '足迹地图', desc: '查看你走过的每一个地方', to: null },
-            { emoji: '🤖', title: 'AI 行程规划', desc: '结合个人资料生成专属旅行计划', to: '/ai' },
-            { emoji: '🌫️', title: '迷雾探索', desc: '解锁未曾踏足的区域', to: null },
-          ].map((card) => {
-            const inner = <div className="group relative cursor-pointer rounded-2xl border border-gray-100 bg-white p-6 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
-              {!card.to && <span className="absolute right-3 top-3 text-xs font-medium text-gray-300">即将上线</span>}
-              <div className="mb-3 text-3xl">{card.emoji}</div>
-              <h2 className="mb-1 font-semibold text-gray-900 transition-colors group-hover:text-indigo-600">{card.title}</h2>
-              <p className="text-sm text-gray-500">{card.desc}</p>
-            </div>
-            return card.to ? <Link key={card.title} to={card.to}>{inner}</Link> : <div key={card.title}>{inner}</div>
-          })}
-        </div>
-
-        <div className="mt-8 text-center text-sm text-gray-400">足迹地图 · 迷雾探索 正在开发中，敬请期待</div>
-      </main>
-    </div>
-  )
+      {/* 首页保留简单明确的功能入口，避免堆叠过多数据面板。 */}
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {ENTRIES.map((entry) => <Link key={entry.to} to={entry.to} className="group app-surface flex min-h-44 flex-col p-5 transition-all hover:-translate-y-0.5 hover:border-violet-300 hover:shadow-md">
+          <span className="mb-5 text-3xl" aria-hidden="true">{entry.icon}</span>
+          <h2 className="text-base font-semibold text-slate-900 transition-colors group-hover:text-violet-700">{entry.title}</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">{entry.description}</p>
+        </Link>)}
+      </section>
+    </main>
+  </div>
 }

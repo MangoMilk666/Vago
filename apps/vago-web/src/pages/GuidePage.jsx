@@ -90,15 +90,15 @@ export default function GuidePage() {
     catch (requestError) { setError(requestError.message) }
   }
 
-  return <div className="min-h-screen bg-gray-50"><Navbar />
-    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+  return <div className="app-page"><Navbar />
+    <main className="app-main">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div><h1 className="text-xl font-bold text-gray-900">个人旅行知识库</h1><p className="mt-1 text-sm text-gray-500">沉淀自己的旅行资料，按需提供给 AI 作为上下文。</p></div>
         <div className="flex shrink-0 gap-2"><label className="cursor-pointer rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600">{uploading ? '导入中…' : '导入 .md/.txt'}<input type="file" accept=".md,.txt,text/plain,text/markdown" onChange={upload} disabled={uploading} className="hidden" /></label><button onClick={() => setModal('create')} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">新建资料</button></div>
       </div>
       {error && <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
       {loading ? <div className="py-20 text-center text-sm text-gray-400">加载中…</div> : sources.length === 0 ? <div className="py-20 text-center text-sm text-gray-400">还没有个人旅行资料</div> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {sources.map((source) => <article key={source.uuid} className="flex min-h-44 flex-col rounded-lg border border-gray-200 bg-white p-4">
+        {sources.map((source) => <article key={source.uuid} className="app-surface flex min-h-44 flex-col p-4">
           <div className="flex items-start justify-between gap-3"><h2 className="font-semibold text-gray-900">{source.title}</h2><span className="shrink-0 text-xs text-gray-400">{source.sourceType === 'FILE' ? '文件' : '文本'}</span></div>
           {source.destination && <p className="mt-1 text-xs text-indigo-600">{source.destination}</p>}
           <p className="mt-3 line-clamp-3 flex-1 whitespace-pre-wrap text-sm text-gray-600">{source.contentText}</p>

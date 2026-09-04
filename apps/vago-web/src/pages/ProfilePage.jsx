@@ -95,10 +95,10 @@ export default function ProfilePage() {
     : <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">免费版</span>
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="app-page">
       <Navbar />
 
-      <div className="max-w-5xl mx-auto px-6 py-10">
+      <div className="app-main max-w-5xl py-10">
 
         {/* 页头 */}
         <div className="flex items-center gap-3 mb-8">
@@ -114,10 +114,10 @@ export default function ProfilePage() {
         </div>
 
         {/* 双栏主体 */}
-        <div className="flex gap-6 items-start">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
 
           {/* ── 左栏：头像 + 账号只读信息 ── */}
-          <div className="w-72 shrink-0 space-y-5">
+          <div className="w-full shrink-0 space-y-5 lg:w-72">
 
             {/* 头像卡片 */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex flex-col items-center gap-4">

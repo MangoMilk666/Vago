@@ -1170,10 +1170,10 @@ function ChatPanel() {
 // ── 主页面 ────────────────────────────────────────────────────────────────────
 export default function AiPlanPage() {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="app-page">
       <Navbar />
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+      <main className="app-main py-6">
         <div className="h-[calc(100vh-7.5rem)]">
           {/* AI 仅在 Agent 判断资料确有帮助时才触发可选语义检索。 */}
           <div className="h-full min-w-0 bg-white rounded-2xl border border-gray-100
