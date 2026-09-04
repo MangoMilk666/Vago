@@ -75,6 +75,19 @@ def test_travel_trip_api_returns_java_compatible_envelope(client: TestClient):
     assert list_response.status_code == 200
     assert list_response.json()["code"] == 200
     assert list_response.json()["data"][0]["title"] == "大阪行"
+    assert created["status"] == 1
+
+    start_response = client.post(f"/api/v1/travel/trips/{created['uuid']}/start")
+    assert start_response.status_code == 200
+    assert start_response.json()["data"]["status"] == 2
+
+    finish_response = client.post(f"/api/v1/travel/trips/{created['uuid']}/finish")
+    assert finish_response.status_code == 200
+    assert finish_response.json()["data"]["status"] == 3
+
+    history_response = client.get("/api/v1/travel/trips/history")
+    assert history_response.status_code == 200
+    assert history_response.json()["data"][0]["uuid"] == created["uuid"]
 
 
 def test_travel_plan_days_and_convert_api(client: TestClient):

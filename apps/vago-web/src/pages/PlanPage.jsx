@@ -82,7 +82,7 @@ function PlanCard({ plan, onEdit, onDelete, onConvert, onPlan }) {
             <button onClick={() => onEdit(plan)}
               className="py-1.5 px-3 rounded-xl border border-gray-200 text-sm text-gray-600
                          hover:border-indigo-400 hover:text-indigo-600 transition-colors">
-              编辑
+              编辑计划
             </button>
             <button onClick={() => onConvert(plan)}
               className="py-1.5 px-3 rounded-xl bg-green-50 text-green-600 text-sm font-medium

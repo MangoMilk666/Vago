@@ -23,8 +23,12 @@ from app.travel.schemas import (
     TripUpdateRequest,
 )
 
-TRIP_STATUS_PLANNING = 1
-TRIP_STATUS_COMPLETED = 2
+# 未开始
+TRIP_STATUS_NOT_STARTED = 1
+# 进行中
+TRIP_STATUS_IN_PROGRESS = 2
+# 已结束
+TRIP_STATUS_ENDED = 3
 PLAN_STATUS_DRAFT = 0
 PLAN_STATUS_CONVERTED = 1
 
@@ -98,6 +102,13 @@ def _trip_to_response(trip: Trip) -> TripResponse:
     return TripResponse.model_validate(trip)
 
 
+def _ensure_trip_editable(trip: Trip) -> None:
+    """已结束行程仅供回顾，禁止再修改其业务数据。"""
+    # 分支条件：历史行程已结束时，拒绝修改、删除及每日安排编辑。
+    if trip.status == TRIP_STATUS_ENDED:
+        raise AppException("已结束的历史行程不允许修改", status_code=409, code="TRIP_ENDED")
+
+
 def _plan_to_response(plan: Plan) -> PlanResponse:
     """Plan ORM -> API response。"""
     return PlanResponse.model_validate(plan)
@@ -113,7 +124,7 @@ def create_trip(db: Session, user_uuid: str, payload: TripCreateRequest) -> Trip
         cover_image_key=payload.cover_image_key,
         start_date=payload.start_date,
         end_date=payload.end_date,
-        status=TRIP_STATUS_PLANNING,
+        status=TRIP_STATUS_NOT_STARTED,
     )
     db.add(trip)
     db.commit()
@@ -133,12 +144,12 @@ def list_trips(db: Session, user_uuid: str) -> list[TripResponse]:
 
 
 def list_history_trips(db: Session, user_uuid: str) -> list[TripResponse]:
-    """列出当前用户已完成行程。"""
+    """列出当前用户已结束的历史行程。"""
     trips = db.scalars(
         select(Trip)
         .where(
             Trip.user_uuid == user_uuid,
-            Trip.status == TRIP_STATUS_COMPLETED,
+            Trip.status == TRIP_STATUS_ENDED,
             Trip.deleted_at.is_(None),
         )
         .order_by(Trip.end_date.desc())
@@ -159,6 +170,7 @@ def update_trip(
 ) -> TripResponse:
     """局部更新行程。"""
     trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
+    _ensure_trip_editable(trip)
     values = payload.model_dump(exclude_unset=True, by_alias=False)
     for field_name, value in values.items():
         setattr(trip, field_name, value)
@@ -171,10 +183,54 @@ def update_trip(
 def delete_trip(db: Session, user_uuid: str, trip_uuid: str) -> None:
     """软删除行程。"""
     trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
+    _ensure_trip_editable(trip)
     now = utc_now_naive()
     trip.deleted_at = now
     trip.updated_at = now
     db.commit()
+
+
+def start_trip(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
+    """开始未开始的行程；每位用户同一时间最多只能进行一个行程。"""
+    trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
+    # 分支条件：仅未开始行程可以切换到进行中，避免重复开始或重开历史行程。
+    if trip.status != TRIP_STATUS_NOT_STARTED:
+        raise AppException("仅未开始的行程可以开始", status_code=409, code="TRIP_NOT_STARTABLE")
+
+    active_trip = db.scalar(
+        select(Trip).where(
+            Trip.user_uuid == user_uuid,
+            Trip.status == TRIP_STATUS_IN_PROGRESS,
+            Trip.deleted_at.is_(None),
+        )
+    )
+    # 分支条件：已有进行中行程时，要求用户先结束该行程，保证当前旅行上下文唯一。
+    if active_trip is not None:
+        raise AppException(
+            f"当前已有进行中的行程「{active_trip.title}」",
+            status_code=409,
+            code="TRIP_ALREADY_IN_PROGRESS",
+        )
+
+    trip.status = TRIP_STATUS_IN_PROGRESS
+    trip.updated_at = utc_now_naive()
+    db.commit()
+    db.refresh(trip)
+    return _trip_to_response(trip)
+
+
+def finish_trip(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
+    """结束进行中的行程，并将其归入历史行程。"""
+    trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
+    # 分支条件：未开始或已结束行程不能直接结束，避免产生无效历史记录。
+    if trip.status != TRIP_STATUS_IN_PROGRESS:
+        raise AppException("仅进行中的行程可以结束", status_code=409, code="TRIP_NOT_FINISHABLE")
+
+    trip.status = TRIP_STATUS_ENDED
+    trip.updated_at = utc_now_naive()
+    db.commit()
+    db.refresh(trip)
+    return _trip_to_response(trip)
 
 
 def create_plan(db: Session, user_uuid: str, payload: PlanCreateRequest) -> PlanResponse:
@@ -255,7 +311,7 @@ def convert_plan_to_trip(db: Session, user_uuid: str, plan_uuid: str) -> TripRes
         destination=plan.destination,
         start_date=plan.start_date,
         end_date=plan.end_date,
-        status=TRIP_STATUS_PLANNING,
+        status=TRIP_STATUS_NOT_STARTED,
     )
     db.add(trip)
     db.flush()
@@ -316,7 +372,7 @@ def save_structured_plan_as_trip(
         destination=payload.destination,
         start_date=start_date,
         end_date=end_date,
-        status=TRIP_STATUS_PLANNING,
+        status=TRIP_STATUS_NOT_STARTED,
     )
     db.add(trip)
     db.flush()
@@ -482,6 +538,9 @@ def update_itinerary_day(
 ) -> ItineraryDayResponse:
     """更新单日行程；spots 不为 None 时采用全量替换策略。"""
     get_itinerary_days(db, user_uuid, ref_uuid, ref_type)
+    # 分支条件：正式行程已结束时，日程仅供回顾，不允许继续编辑。
+    if ref_type == ItineraryDay.REF_TYPE_TRIP:
+        _ensure_trip_editable(_get_trip_or_raise(db, ref_uuid, user_uuid))
 
     day = db.scalar(
         select(ItineraryDay).where(

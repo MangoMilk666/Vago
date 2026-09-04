@@ -87,7 +87,7 @@ export default function GuidePage() {
 
   const requestIndex = async (source) => {
     try { await knowledgeApi.index(source.uuid); await loadSources() }
-    catch (requestError) { setError(requestError.message) }
+    catch (requestError) { setError(`索引「${source.title}」失败：${requestError.message}`) }
   }
 
   return <div className="app-page"><Navbar />
@@ -102,6 +102,8 @@ export default function GuidePage() {
           <div className="flex items-start justify-between gap-3"><h2 className="font-semibold text-gray-900">{source.title}</h2><span className="shrink-0 text-xs text-gray-400">{source.sourceType === 'FILE' ? '文件' : '文本'}</span></div>
           {source.destination && <p className="mt-1 text-xs text-indigo-600">{source.destination}</p>}
           <p className="mt-3 line-clamp-3 flex-1 whitespace-pre-wrap text-sm text-gray-600">{source.contentText}</p>
+          {/* 分支条件：后台索引失败时，直接展示服务端回写的原因，方便用户决定重试或关闭 RAG。 */}
+          {source.indexStatus === 'FAILED' && source.indexError && <p className="mt-2 line-clamp-2 text-xs leading-5 text-red-500">索引失败：{source.indexError}</p>}
           <div className="mt-3 flex items-center justify-between gap-2 border-t border-gray-100 pt-3"><span className="text-xs text-gray-400">{INDEX_STATUS[source.indexStatus] ?? '未知状态'}</span><div className="flex gap-2 text-xs"><button onClick={() => setModal(source)} className="text-indigo-600">编辑</button>{source.indexStatus !== 'INDEXED' && <button onClick={() => requestIndex(source)} className="text-indigo-600">索引</button>}<button onClick={async () => { if (window.confirm(`删除「${source.title}」吗？`)) { await knowledgeApi.delete(source.uuid); loadSources() } }} className="text-red-500">删除</button></div></div>
         </article>)}
       </div>}

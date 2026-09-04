@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import { tripApi } from '../api/travel'
 
-const STATUS_MAP = { 1: '计划中', 2: '已完成', 3: '已取消' }
+const STATUS_MAP = { 1: '未开始', 2: '进行中', 3: '已结束' }
 const STATUS_COLOR = {
-  1: 'bg-blue-50 text-blue-600',
-  2: 'bg-green-50 text-green-600',
-  3: 'bg-gray-100 text-gray-500',
+  1: 'bg-violet-50 text-violet-700',
+  2: 'bg-emerald-50 text-emerald-700',
+  3: 'bg-slate-100 text-slate-500',
 }
 
 // ── 空状态 ──────────────────────────────────────────────────────────────────
@@ -26,7 +26,8 @@ function EmptyState({ onAdd }) {
 }
 
 // ── 行程卡片 ─────────────────────────────────────────────────────────────────
-function TripCard({ trip, onEdit, onDelete, onPlan }) {
+function TripCard({ trip, onEdit, onDelete, onPlan, onStart, onFinish }) {
+  const ended = trip.status === 3
   const nights = trip.startDate && trip.endDate
     ? Math.max(0,
         (new Date(trip.endDate) - new Date(trip.startDate)) / 86400000
@@ -77,18 +78,21 @@ function TripCard({ trip, onEdit, onDelete, onPlan }) {
         <button onClick={() => onPlan(trip)}
           className="flex-1 min-w-[80px] py-1.5 rounded-xl bg-indigo-50 text-indigo-600 text-sm
                      font-medium hover:bg-indigo-100 transition-colors">
-          规划行程
+          {ended ? '查看行程' : '编辑行程安排'}
         </button>
-        <button onClick={() => onEdit(trip)}
+        {!ended && <button onClick={() => onEdit(trip)}
           className="py-1.5 px-3 rounded-xl border border-gray-200 text-sm text-gray-600
                      hover:border-indigo-400 hover:text-indigo-600 transition-colors">
-          编辑
-        </button>
-        <button onClick={() => onDelete(trip)}
+          编辑行程
+        </button>}
+        {/* 分支条件：未开始行程可开始，进行中行程可结束，历史行程仅允许查看。 */}
+        {trip.status === 1 && <button onClick={() => onStart(trip)} className="py-1.5 px-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm font-medium hover:bg-emerald-100 transition-colors">开始</button>}
+        {trip.status === 2 && <button onClick={() => onFinish(trip)} className="py-1.5 px-3 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 transition-colors">结束行程</button>}
+        {!ended && <button onClick={() => onDelete(trip)}
           className="py-1.5 px-3 rounded-xl border border-gray-200 text-sm text-gray-600
                      hover:border-red-300 hover:text-red-500 transition-colors">
           删除
-        </button>
+        </button>}
       </div>
     </div>
   )
@@ -102,7 +106,6 @@ function TripModal({ trip, onClose, onSaved }) {
     destination: trip?.destination ?? '',
     startDate:  trip?.startDate  ?? '',
     endDate:    trip?.endDate    ?? '',
-    status:     trip?.status     ?? 1,
   })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
@@ -169,18 +172,6 @@ function TripModal({ trip, onClose, onSaved }) {
                            focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
             </div>
           </div>
-          {isEdit && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">状态</label>
-              <select value={form.status} onChange={set('status')}
-                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm
-                           focus:outline-none focus:ring-2 focus:ring-indigo-400">
-                <option value={1}>计划中</option>
-                <option value={2}>已完成</option>
-                <option value={3}>已取消</option>
-              </select>
-            </div>
-          )}
           {error && <p className="text-red-500 text-sm">{error}</p>}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
@@ -228,6 +219,17 @@ export default function TripPage() {
     try {
       await tripApi.delete(deleting.uuid)
       setDeleting(null)
+      load()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  const changeTripState = async (trip, action) => {
+    try {
+      // 分支条件：点击开始或结束时，分别调用后端受约束的状态转换接口。
+      if (action === 'start') await tripApi.start(trip.uuid)
+      else await tripApi.finish(trip.uuid)
       load()
     } catch (err) {
       alert(err.message)
@@ -284,8 +286,10 @@ export default function TripPage() {
                 onEdit={(t) => setModal(t)}
                 onDelete={(t) => setDeleting(t)}
                 onPlan={(t) => navigate(
-                  `/trips/${t.uuid}/itinerary?type=trip&title=${encodeURIComponent(t.title)}`
+                  `/trips/${t.uuid}/itinerary?type=trip&title=${encodeURIComponent(t.title)}&readonly=${t.status === 3}`
                 )}
+                onStart={(t) => changeTripState(t, 'start')}
+                onFinish={(t) => changeTripState(t, 'finish')}
               />
             ))}
           </div>

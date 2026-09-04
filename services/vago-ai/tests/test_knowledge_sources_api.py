@@ -124,6 +124,28 @@ def test_text_source_crud_keeps_community_fields_out_of_contract(
     assert index_response.json()["data"]["indexStatus"] == "PENDING"
 
 
+def test_index_unavailable_returns_displayable_message(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """测试：RAG 关闭时，前端可直接使用统一错误消息提示用户。"""
+    _seed_current_user(db_session)
+    source_response = client.post(
+        "/api/v1/knowledge/sources",
+        json={"title": "曼谷笔记", "sourceType": "TEXT", "contentText": "建议避开雨季。"},
+    )
+    monkeypatch.setattr(settings, "rag_enabled", False)
+
+    index_response = client.post(
+        f"/api/v1/knowledge/sources/{source_response.json()['data']['uuid']}/index"
+    )
+
+    assert index_response.status_code == 503
+    assert index_response.json()["code"] == "RAG_UNAVAILABLE"
+    assert index_response.json()["message"] == "当前环境未启用语义索引能力"
+
+
 def test_markdown_upload_creates_file_source_and_delete_removes_asset(
     client: TestClient,
     db_session: Session,

@@ -71,6 +71,26 @@ def update_trip(
     return success(service.update_trip(db, user_uuid, trip_uuid, payload), "行程更新成功")
 
 
+@router.post("/trips/{trip_uuid}/start", response_model=ApiResponse[TripResponse])
+def start_trip(
+    trip_uuid: str,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[TripResponse]:
+    """开始正式行程。"""
+    return success(service.start_trip(db, user_uuid, trip_uuid), "行程已开始")
+
+
+@router.post("/trips/{trip_uuid}/finish", response_model=ApiResponse[TripResponse])
+def finish_trip(
+    trip_uuid: str,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[TripResponse]:
+    """结束正式行程并归档至历史行程。"""
+    return success(service.finish_trip(db, user_uuid, trip_uuid), "行程已结束")
+
+
 @router.delete("/trips/{trip_uuid}", response_model=ApiResponse[None])
 def delete_trip(
     trip_uuid: str,

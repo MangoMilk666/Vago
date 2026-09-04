@@ -55,16 +55,45 @@ def test_trip_crud_is_scoped_by_current_user(db_session: Session):
         db_session,
         "user-a",
         trip.uuid,
-        TripUpdateRequest(title="东京秋日行", status=2),
+        TripUpdateRequest(title="东京秋日行"),
     )
 
     assert updated.title == "东京秋日行"
-    assert service.list_history_trips(db_session, "user-a")[0].uuid == trip.uuid
+    assert updated.status == service.TRIP_STATUS_NOT_STARTED
 
     with pytest.raises(AppException) as exc_info:
         service.get_trip_detail(db_session, "user-b", trip.uuid)
 
     assert exc_info.value.code == "FORBIDDEN"
+
+
+def test_trip_lifecycle_allows_one_active_trip_and_locks_history(db_session: Session):
+    """测试：正式行程只能依次未开始、进行中、已结束，历史行程不可编辑。"""
+    first_trip = service.create_trip(
+        db_session,
+        "user-a",
+        TripCreateRequest(title="东京行", startDate=date(2026, 9, 1), endDate=date(2026, 9, 3)),
+    )
+    second_trip = service.create_trip(
+        db_session,
+        "user-a",
+        TripCreateRequest(title="大阪行", startDate=date(2026, 10, 1), endDate=date(2026, 10, 3)),
+    )
+
+    started = service.start_trip(db_session, "user-a", first_trip.uuid)
+    assert started.status == service.TRIP_STATUS_IN_PROGRESS
+
+    with pytest.raises(AppException) as active_exc:
+        service.start_trip(db_session, "user-a", second_trip.uuid)
+    assert active_exc.value.code == "TRIP_ALREADY_IN_PROGRESS"
+
+    ended = service.finish_trip(db_session, "user-a", first_trip.uuid)
+    assert ended.status == service.TRIP_STATUS_ENDED
+    assert service.list_history_trips(db_session, "user-a")[0].uuid == first_trip.uuid
+
+    with pytest.raises(AppException) as update_exc:
+        service.update_trip(db_session, "user-a", first_trip.uuid, TripUpdateRequest(title="不应更新"))
+    assert update_exc.value.code == "TRIP_ENDED"
 
 
 def test_plan_convert_copies_itinerary_days_and_spots(db_session: Session):

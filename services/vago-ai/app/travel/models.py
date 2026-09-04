@@ -38,7 +38,7 @@ class Trip(Base):
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     # 行程结束日期。
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
-    # 行程状态，1 表示规划中，2 表示已完成。
+    # 行程状态，1=未开始，2=进行中，3=已结束。
     status: Mapped[int] = mapped_column(default=1, nullable=False)
     # 行程创建时间。
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
