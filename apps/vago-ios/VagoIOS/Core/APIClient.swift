@@ -3,15 +3,19 @@ import UIKit
 
 @MainActor
 final class SessionStore: ObservableObject {
+    // @MainActor 将整个对象隔离到主线程；UI 状态修改不必额外 DispatchQueue.main.async。
     // ObservableObject 发布的属性变化会驱动依赖它的 SwiftUI 视图更新。
     enum State { case launching, signedOut, signedIn }
 
+    // @Published 是 Combine 的发布属性；private(set) 允许页面读取，但只允许 Store 自己改变状态。
     @Published private(set) var state: State = .launching
     @Published private(set) var profile: UserProfile?
+    // token 不发布到 UI，避免令牌变化无意义地触发视图重绘。
     private(set) var tokens: TokenPair?
     private let client = APIClient()
 
     func restoreSession() async {
+        // async 函数可在 await 处挂起，网络请求期间不会阻塞主线程和首屏动画。
         do {
             guard let tokens = try KeychainStore.load() else {
                 state = .signedOut
@@ -30,6 +34,7 @@ final class SessionStore: ObservableObject {
     }
 
     func login(phone: String, code: String) async throws {
+        // throws 把网络或 Keychain 错误交给 LoginView 展示，Store 不在这里决定 UI 文案。
         // identifierForVendor 在同一供应商的应用安装周期内稳定，可作为 iOS 设备会话标识。
         let deviceID = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
         let payload = PhoneLoginRequest(phone: phone, code: code, clientType: "ios", deviceId: deviceID)
@@ -41,6 +46,7 @@ final class SessionStore: ObservableObject {
     }
 
     func sendSMSCode(to phone: String) async throws {
+        // let _: 忽略成功响应中的 expireSeconds，只关心请求是否成功。
         let _: SMSCodeResponse = try await client.request(
             path: "auth/sms/send",
             method: "POST",
@@ -49,6 +55,7 @@ final class SessionStore: ObservableObject {
     }
 
     func logout() async {
+        // 先复制 Optional token，避免 await 期间状态更新造成对属性的非预期读取。
         let currentTokens = tokens
         if let currentTokens {
             try? await client.requestWithoutResponse(
@@ -65,6 +72,7 @@ final class SessionStore: ObservableObject {
     }
 
     fileprivate func validAccessToken() async throws -> String {
+        // fileprivate 使 APIClient 可访问此方法，但其他文件无法直接读取 token。
         guard let tokens else { throw APIError.unauthorized }
         return tokens.accessToken
     }
@@ -84,18 +92,21 @@ final class SessionStore: ObservableObject {
 }
 
 private struct PhoneLoginRequest: Encodable {
+    // private 限制请求 DTO 只在本文件使用，避免网络实现细节泄漏到功能视图。
     let phone: String
     let code: String
     let clientType: String
     let deviceId: String
 }
 
+// 单行 struct 适合只有一个字段的小型请求体；与 FastAPI Pydantic request schema 对应。
 private struct RefreshRequest: Encodable { let refreshToken: String }
 private struct SMSCodeRequest: Encodable { let phone: String }
 private struct SMSCodeResponse: Decodable { let expireSeconds: Int }
 
 @MainActor
 final class APIClient {
+    // APIClient 是全部 HTTP 调用的统一入口，类似 Web 项目中的 axios client / request interceptor。
     // 该客户端与 SessionStore 均固定在主 Actor，避免 Swift 6 下会话状态跨线程读写。
     // URLSession 自身不会占用主线程等待网络返回。
     private let decoder: JSONDecoder = {
@@ -136,20 +147,24 @@ final class APIClient {
     }()
 
     func request<Value: Decodable>(path: String, tokenProvider: SessionStore? = nil) async throws -> Value {
+        // Value 是泛型占位符；调用处声明 [Trip]、UserProfile 等类型即可推断 JSON data 的目标类型。
         let token = try await tokenProvider?.validAccessToken()
         return try await perform(path: path, method: "GET", body: nil, accessToken: token, tokenProvider: tokenProvider)
     }
 
     func request<Value: Decodable, Body: Encodable>(path: String, method: String, body: Body) async throws -> Value {
+        // 此重载用于无需登录的请求，例如发送短信验证码。
         try await perform(path: path, method: method, body: try encode(body), accessToken: nil, tokenProvider: nil)
     }
 
     func request<Value: Decodable, Body: Encodable>(path: String, method: String, body: Body, tokenProvider: SessionStore) async throws -> Value {
+        // 此重载要求 SessionStore，编译期明确提醒调用方该接口必须携带 JWT。
         let token = try await tokenProvider.validAccessToken()
         return try await perform(path: path, method: method, body: try encode(body), accessToken: token, tokenProvider: tokenProvider)
     }
 
     func requestWithoutResponse<Body: Encodable>(path: String, method: String, body: Body, accessToken: String) async throws {
+        // 用 EmptyResponse 占位复用统一解析流程，适合 data 为 null 的退出登录接口。
         let _: EmptyResponse = try await perform(path: path, method: method, body: try encode(body), accessToken: accessToken, tokenProvider: nil)
     }
 
@@ -166,6 +181,7 @@ final class APIClient {
         body: Data?,
         accessToken: String?,
         tokenProvider: SessionStore?,
+        // 默认参数让首次调用省略 retried；401 刷新后递归重放时传 true，限制最多一次重试。
         retried: Bool = false
     ) async throws -> Value {
         // URLRequest 类似 axios 的单次请求配置；body 已在上层编码为 JSON Data。
@@ -175,6 +191,7 @@ final class APIClient {
         if let accessToken { request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization") }
         if let body { request.httpBody = body }
 
+        // 元组解包同时取得响应 body 与元数据；URLSession 会在后台执行实际 I/O。
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         // 分支条件：access token 首次失效时刷新一次并重放原请求，防止循环刷新。
@@ -194,13 +211,29 @@ final class APIClient {
     }
 
     private func decodeMessage(from data: Data) -> String {
-        (try? decoder.decode(APIEnvelope<EmptyResponse>.self, from: data).message) ?? "请求失败，请稍后重试"
+        // 先尝试项目统一 envelope；try? 失败返回 nil，而不是把错误继续抛给错误处理路径。
+        if let envelope = try? decoder.decode(APIEnvelope<EmptyResponse>.self, from: data) {
+            return envelope.message
+        }
+        // FastAPI 中间件的 429 响应使用 detail 字段，保留它才能让页面展示实际失败原因。
+        if let error = try? decoder.decode(APIErrorResponse.self, from: data) {
+            return error.detail ?? error.message ?? "请求失败，请稍后重试"
+        }
+        return "请求失败，请稍后重试"
     }
 }
 
+// 空结构体满足泛型 Decodable 约束，用于不包含 data 的成功响应。
 private struct EmptyResponse: Decodable {}
 
+private struct APIErrorResponse: Decodable {
+    // FastAPI 中间件原生错误采用 detail，业务异常 envelope 则通常使用 message。
+    let detail: String?
+    let message: String?
+}
+
 enum APIError: LocalizedError {
+    // enum 将有限的网络失败类型建模为穷举分支，switch 会要求后续新增类型时补全展示文案。
     case unauthorized
     case invalidResponse
     case server(message: String, statusCode: Int)

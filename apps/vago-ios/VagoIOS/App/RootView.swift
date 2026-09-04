@@ -24,15 +24,29 @@ struct RootView: View {
 }
 
 private struct MainTabView: View {
+    // 内部枚举避免用容易写错的字符串表示 Tab；Hashable 是 TabView(selection:) 的绑定值要求。
+    private enum Tab: Hashable {
+        case trip
+        case footprint
+        case profile
+    }
+
+    // 显式保存选中标签，避免子视图加载状态变化时 TabView 恢复到默认页。
+    @State private var selectedTab: Tab = .trip
+
     var body: some View {
-        TabView {
+        // $selectedTab 是 @State 的 Binding 投影值，TabView 可通过它读写当前选中项。
+        TabView(selection: $selectedTab) {
             // TabView 是 iOS 原生底部标签导航，移动端只保留旅行中的高频入口。
             CurrentTripView()
                 .tabItem { Label("行程", systemImage: "map") }
+                .tag(Tab.trip)
             TrackingView()
                 .tabItem { Label("记录", systemImage: "location") }
+                .tag(Tab.footprint)
             ProfileView()
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }
+                .tag(Tab.profile)
         }
         // TabView 显式扩展到安全区域内的最大尺寸，适配不同 iPhone 的屏幕高度。
         .frame(maxWidth: .infinity, maxHeight: .infinity)

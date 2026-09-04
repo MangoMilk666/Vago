@@ -9,8 +9,11 @@
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundleVersion</key><string>1</string>
-    <!-- 指定API请求的发送地址 -->
-    <key>VAGO_API_BASE_URL</key><string>http://127.0.0.1:8000/api/v1</string>
+    <!-- 使用系统原生启动屏，避免自定义 plist 缺少启动屏配置时出现不一致的首屏过渡。 -->
+    <key>UILaunchScreen</key><dict/>
+    <!-- 指定API请求的发送地址 本机simulator调试可用127.0.0.1 -->
+    <!-- 真机调试iOS端需要用Mac局域网ip 172.20.10.7 手机热点-->
+    <key>VAGO_API_BASE_URL</key><string>http://172.20.10.7:8000/api/v1</string>
     <!-- 仅在用户进入“记录”页并开始记录时申请定位权限。 -->
     <key>NSLocationWhenInUseUsageDescription</key><string>Vago 使用你的位置记录当前旅行的足迹，并支持在当前位置打卡。</string>
     <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>

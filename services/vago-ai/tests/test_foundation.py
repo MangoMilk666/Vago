@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.core.exceptions import AppException
+from app.dependencies.rate_limit import should_rate_limit_path
 from app.main import create_app
 
 
@@ -71,3 +72,12 @@ def test_app_exception_handler_returns_stable_envelope():
         "code": "PHASE1_TEST",
         "message": "phase1 test",
     }
+
+
+def test_rate_limiter_only_protects_expensive_capability_paths():
+    """测试：旅行与足迹读取不应与 AI、向量索引共用严格限流窗口。"""
+    assert should_rate_limit_path("/api/v1/ai/chat") is True
+    assert should_rate_limit_path("/api/v1/ai/chat/stream") is True
+    assert should_rate_limit_path("/api/v1/knowledge/sources/source-uuid/index") is True
+    assert should_rate_limit_path("/api/v1/travel/trips") is False
+    assert should_rate_limit_path("/api/v1/footprints/trips/trip-uuid/locations") is False

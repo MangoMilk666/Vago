@@ -4,134 +4,119 @@ import SwiftUI
 
 /// 旅行中记录页：以地图作为主画布，叠加定位控制与手动打卡入口。
 struct TrackingView: View {
+    // 此 View 组合现有定位 Store 与 FastAPI 数据，不在这里实现 Core Location 或持久化细节。
     @EnvironmentObject private var session: SessionStore
+    // @StateObject 由此视图创建并持有一次；body 重算或地图状态更新不会重新创建定位管理器。
     @StateObject private var tracking = LocationTrackingStore()
     @State private var trip: Trip?
     @State private var serverLocations: [FootprintLocation] = []
     @State private var checkins: [Checkin] = []
     @State private var isLoading = true
+    @State private var isRefreshing = false
     @State private var isCheckingIn = false
+    @State private var isTrackingSheetPresented = false
     @State private var isCheckinSheetPresented = false
     @State private var message = ""
+    @State private var loadError = ""
+    @State private var checkinError = ""
+    @State private var loadedUserUuid: String?
+    // 保存提示的异步任务，以便连续打卡或离开页面时取消旧的三秒计时。
+    @State private var messageDismissTask: Task<Void, Never>?
     private let client = APIClient()
 
     var body: some View {
         Group {
-            // 分支条件：初次读取数据时展示加载状态；完成后再依据是否有进行中行程选择内容。
+            //分支条件：初次读取数据时展示加载状态；完成后再依据是否有进行中行程选择内容。
             if isLoading {
                 ProgressView("正在读取旅行记录")
             } else if let trip {
                 mapContent(for: trip)
+            } else if !loadError.isEmpty {
+                ContentUnavailableView {
+                    Label("暂时无法读取旅行记录", systemImage: "exclamationmark.icloud")
+                } description: {
+                    Text(loadError)
+                } actions: {
+                    Button("重新读取") { Task { await refreshMap() } }
+                        .buttonStyle(.borderedProminent)
+                }
             } else {
                 ContentUnavailableView("暂无进行中的行程", systemImage: "location.slash", description: Text("行程开始后可以记录足迹。"))
             }
         }
         // 让 Tab 内的每一种状态都按屏幕可用空间布局，而不是跟随内容高度收缩。
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task { await load() }
-        .onDisappear { tracking.stopTracking() }
+        // 用户切换后才重新初始读取；地图局部状态变化不应再次触发旅行接口请求。
+        .task(id: session.profile?.uuid) { await loadInitially() }
+        .onDisappear {
+            tracking.stopTracking()
+            messageDismissTask?.cancel()
+        }
         .sheet(isPresented: $isCheckinSheetPresented) {
-            CheckinSheet(isSubmitting: isCheckingIn) { locationName, note in
+            CheckinSheet(isSubmitting: isCheckingIn, errorMessage: $checkinError) { locationName, note in
                 guard let trip else { return }
                 Task { await createCheckin(for: trip, locationName: locationName, note: note) }
             }
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
     }
 
     private func mapContent(for trip: Trip) -> some View {
+        // 返回 some View 是不透明返回类型：调用者不需知道复杂的 ZStack 具体组合类型。
         ZStack {
             // 地图延伸至屏幕边缘并位于 TabBar 下方，保持 Apple Maps 式的连续地图画布。
-            TrackingMap(locations: serverLocations, checkins: checkins, latestSample: tracking.latestSample)
+            TravelMapCanvas(locations: serverLocations, checkins: checkins, latestSample: tracking.latestSample)
                 .ignoresSafeArea()
 
-            VStack(spacing: 16) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(trip.title).font(.headline)
-                        Text(tracking.isTracking ? "正在记录位置" : "尚未开始记录")
-                            .font(.caption)
-                            .foregroundStyle(tracking.isTracking ? .green : .secondary)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-
-                    Spacer()
-
-                    Button { Task { await load() } } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityLabel("刷新足迹数据")
+            TravelMapControls(
+                trip: trip,
+                isTracking: tracking.isTracking,
+                isRefreshing: isRefreshing,
+                hasLocationSample: tracking.latestSample != nil,
+                message: message,
+                syncError: tracking.syncError,
+                onShowTrackingControls: { isTrackingSheetPresented = true },
+                onRefresh: { Task { await refreshMap() } },
+                onCheckIn: {
+                    checkinError = ""
+                    isCheckinSheetPresented = true
                 }
-
-                Spacer()
-
-                VStack(spacing: 10) {
-                    if !message.isEmpty {
-                        Text(message)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 9)
-                            .background(.ultraThinMaterial, in: Capsule())
-                    }
-                    if let syncError = tracking.syncError {
-                        Text("同步未完成：\(syncError)")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 9)
-                            .background(.ultraThinMaterial, in: Capsule())
-                    }
-                    HStack(spacing: 12) {
-                        Button {
-                            // 分支条件：记录已开启时停止定位，否则为当前正式行程申请权限并开始采样。
-                            if tracking.isTracking {
-                                tracking.stopTracking()
-                            } else if let userUuid = session.profile?.uuid {
-                                tracking.startTracking(tripUuid: trip.uuid, userUuid: userUuid, session: session)
-                            }
-                        } label: {
-                            Label(tracking.isTracking ? "停止记录" : "开始记录", systemImage: tracking.isTracking ? "stop.fill" : "location.fill")
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button { Task { await syncAndReload() } } label: {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityLabel("同步待传记录")
-
-                        Button { isCheckinSheetPresented = true } label: {
-                            Label("打卡", systemImage: "mappin.and.ellipse")
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(tracking.latestSample == nil)
-                    }
-                    if tracking.pendingCount > 0 {
-                        Text("本机待同步 \(tracking.pendingCount) 条位置记录")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(.horizontal)
-            .padding(.top, 12)
-            .padding(.bottom, 74)
+            )
+        }
+        // Map 画布可延伸到 TabBar 下方，但浮层保持在系统计算的安全区内。
+        .safeAreaPadding(.horizontal)
+        .safeAreaPadding(.vertical, 12)
+        .sheet(isPresented: $isTrackingSheetPresented) {
+            TrackingControlSheet(
+                trip: trip,
+                tracking: tracking,
+                userUuid: session.profile?.uuid,
+                session: session,
+                onSync: { Task { await syncAndReload() } }
+            )
+            .presentationDetents([.height(300), .medium])
+            .presentationDragIndicator(.visible)
         }
     }
 
-    private func load() async {
-        isLoading = true
-        defer { isLoading = false }
+    private func load(showLoading: Bool) async {
+        // 参数区分首屏加载与手动刷新，后者应保留用户正在看的地图而不闪回 ProgressView。
+        if showLoading {
+            isLoading = true
+            loadError = ""
+        }
+        defer {
+            if showLoading {
+                isLoading = false
+            }
+        }
         do {
             let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session)
             trip = trips.first(where: { $0.status == 2 })
             // 分支条件：存在进行中行程时才读取其轨迹与打卡，并恢复该用户的待传队列。
             if let trip {
+                // async let 并行启动两个独立请求；分别 await 时才汇合结果，比串行读取更快。
                 async let loadedLocations: [FootprintLocation] = client.request(path: "footprints/trips/\(trip.uuid)/locations", tokenProvider: session)
                 async let loadedCheckins: [Checkin] = client.request(path: "footprints/trips/\(trip.uuid)/checkins", tokenProvider: session)
                 serverLocations = try await loadedLocations
@@ -142,19 +127,43 @@ struct TrackingView: View {
                 }
             }
         } catch {
-            message = error.localizedDescription
+            // 分支条件：首次加载无可展示地图时展示独立错误页；已有数据刷新失败则保留原地图。
+            if trip == nil {
+                loadError = error.localizedDescription
+            } else {
+                messageDismissTask?.cancel()
+                message = "刷新失败：\(error.localizedDescription)"
+            }
         }
     }
 
+    private func refreshMap() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+        // 用户主动刷新时保留已显示地图，避免刷新过程重新创建地图视图。
+        await load(showLoading: false)
+    }
+
+    private func loadInitially() async {
+        guard let userUuid = session.profile?.uuid, loadedUserUuid != userUuid else { return }
+        // 请求开始前记录用户，阻止相同页面生命周期内的并发重复读取。
+        loadedUserUuid = userUuid
+        await load(showLoading: true)
+    }
+
     private func syncAndReload() async {
+        // 同步本地队列后只重新拉轨迹点，避免为一个按钮重复读取行程与打卡数据。
         await tracking.syncPendingSamples()
         guard let trip else { return }
         serverLocations = (try? await client.request(path: "footprints/trips/\(trip.uuid)/locations", tokenProvider: session)) ?? serverLocations
     }
 
     private func createCheckin(for trip: Trip, locationName: String, note: String) async {
+        // guard let 确保没有有效 GPS 样本时不会构造坐标为 0 的无效打卡请求。
         guard let sample = tracking.latestSample else { return }
         isCheckingIn = true
+        checkinError = ""
         defer { isCheckingIn = false }
         do {
             let payload = CheckinRequest(
@@ -167,118 +176,86 @@ struct TrackingView: View {
             )
             let checkin: Checkin = try await client.request(path: "footprints/checkins", method: "POST", body: payload, tokenProvider: session)
             checkins.append(checkin)
-            message = "已记录本次打卡"
+            showCheckinSuccessMessage()
             // 仅在服务端写入成功后收起输入 sheet，保留失败时用户已填写的内容。
             isCheckinSheetPresented = false
         } catch {
-            message = error.localizedDescription
-        }
-    }
-}
-
-private struct TrackingMap: View {
-    let locations: [FootprintLocation]
-    let checkins: [Checkin]
-    let latestSample: PendingLocationSample?
-
-    var body: some View {
-        Map(initialPosition: .region(initialRegion)) {
-            // 分支条件：至少两个轨迹点才绘制连线，单点仅作为位置标记展示。
-            if locations.count > 1 {
-                MapPolyline(coordinates: locations.map(coordinate(for:)))
-                    .stroke(.indigo, lineWidth: 4)
-            }
-            ForEach(locations) { location in
-                Marker("轨迹", coordinate: coordinate(for: location))
-                    .tint(.indigo)
-            }
-            ForEach(checkins) { checkin in
-                Annotation(checkin.locationName, coordinate: coordinate(for: checkin)) {
-                    Image(systemName: "mappin.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.orange)
-                        .shadow(radius: 2)
-                }
-            }
-            if let latestSample {
-                Marker("当前位置", coordinate: CLLocationCoordinate2D(latitude: latestSample.latitude, longitude: latestSample.longitude))
-                    .tint(.red)
-            }
-        }
-        .mapStyle(.standard(elevation: .realistic))
-        .mapControls {
-            MapCompass()
-            MapScaleView()
+            // 打卡失败应留在弹层内，用户可以保留已填写内容后再次提交。
+            checkinError = error.localizedDescription
         }
     }
 
-    private func coordinate(for location: FootprintLocation) -> CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
-    }
-
-    private func coordinate(for checkin: Checkin) -> CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: checkin.latitude, longitude: checkin.longitude)
-    }
-
-    private var initialRegion: MKCoordinateRegion {
-        let center: CLLocationCoordinate2D
-        // 分支条件：优先以最新本地样本居中；没有时使用已同步轨迹或打卡，最后才显示默认位置。
-        if let latestSample {
-            center = CLLocationCoordinate2D(latitude: latestSample.latitude, longitude: latestSample.longitude)
-        } else if let location = locations.last {
-            center = coordinate(for: location)
-        } else if let checkin = checkins.last {
-            center = coordinate(for: checkin)
-        } else {
-            center = CLLocationCoordinate2D(latitude: 1.3521, longitude: 103.8198)
+    private func showCheckinSuccessMessage() {
+        let successMessage = "已记录本次打卡"
+        messageDismissTask?.cancel()
+        message = successMessage
+        // 新一次打卡会取消旧任务，且仅在提示文本未被错误消息替换时才自动收起。
+        messageDismissTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, message == successMessage else { return }
+            message = ""
         }
-        return MKCoordinateRegion(center: center, latitudinalMeters: 1_000, longitudinalMeters: 1_000)
     }
 }
 
 private struct CheckinSheet: View {
+    // Sheet 将输入流程与地图主画布隔离，避免键盘或表单永久遮挡地图。
     private enum InputField {
         case locationName
         case note
     }
 
     let isSubmitting: Bool
+    // Binding 指向父视图状态，子 Sheet 可以读取更新后的错误而不复制一份数据。
+    @Binding var errorMessage: String
     let submit: (String, String) -> Void
+    @Environment(\.dismiss) private var dismiss
     @State private var locationName = ""
     @State private var note = ""
     // 弹层单独维护焦点，使用户可通过键盘完成键或点击输入区外主动收起键盘。
     @FocusState private var focusedField: InputField?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("在当前位置打卡")
-                .font(.title3.bold())
-            Text("保存这一刻的地点和感受，它会显示在本次旅行地图中。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            TextField("地点名称", text: $locationName)
-                .textFieldStyle(.roundedBorder)
-                .focused($focusedField, equals: .locationName)
-                .submitLabel(.next)
-                .onSubmit { focusedField = .note }
-            TextField("记录一点感受（可选）", text: $note, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(2...4)
-                .focused($focusedField, equals: .note)
-                .submitLabel(.done)
-                .onSubmit { focusedField = nil }
-            Button(isSubmitting ? "打卡中" : "确认打卡") {
-                focusedField = nil
-                submit(
-                    locationName.trimmingCharacters(in: .whitespacesAndNewlines),
-                    note.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
+        // ScrollView 使较小屏幕、横屏或键盘弹出时仍能滚动到确认按钮。
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("在当前位置打卡")
+                        .font(.title3.bold())
+                    Spacer()
+                    Button("取消") { dismiss() }
+                }
+                Text("保存这一刻的地点和感受，它会显示在本次旅行地图中。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                TextField("地点名称", text: $locationName)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focusedField, equals: .locationName)
+                    .submitLabel(.next)
+                    .onSubmit { focusedField = .note }
+                TextField("记录一点感受（可选）", text: $note, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                    .focused($focusedField, equals: .note)
+                    .submitLabel(.done)
+                    .onSubmit { focusedField = nil }
+                if !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+                Button(isSubmitting ? "打卡中" : "确认打卡") {
+                    focusedField = nil
+                    submit(
+                        locationName.trimmingCharacters(in: .whitespacesAndNewlines),
+                        note.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+                .disabled(isSubmitting || locationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .frame(maxWidth: .infinity)
-            .disabled(isSubmitting || locationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Spacer()
         }
         .padding(24)
         .contentShape(Rectangle())

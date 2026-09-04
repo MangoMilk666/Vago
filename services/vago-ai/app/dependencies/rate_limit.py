@@ -2,11 +2,11 @@
 请求频率限制中间件（Rate Limiting Middleware）。
 
 基于 Redis + 滑动窗口（固定窗口简化版）实现 IP 级别和用户级别的请求限流，
-保护 AI 对话接口不被滥用。
+保护 AI 对话与语义索引等高成本接口不被滥用。
 
 限流策略：
-  - IP 级别：每 IP 每分钟最多 60 次请求（已登录 + 未登录合计）
-  - 用户级别：每用户每分钟最多 30 次请求（仅已登录用户）
+  - IP 级别：每 IP 每分钟最多 60 次受保护接口请求
+  - 用户级别：每用户每分钟最多 30 次受保护接口请求（仅已登录用户）
   - 限流超标时返回 HTTP 429（Too Many Requests）
 """
 
@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 IP_RATE_LIMIT = 60       # 每分钟每 IP
 USER_RATE_LIMIT = 30     # 每分钟每用户
 WINDOW_SECONDS = 60      # 时间窗口（秒）
+
+
+def should_rate_limit_path(path: str) -> bool:
+    """仅对会消耗模型或向量服务资源的接口执行通用限流。"""
+    normalized_path = path.rstrip("/") or "/"
+    # 分支条件：AI 对话会直接占用 LLM，需限制频率以保护外部模型配额。
+    if normalized_path.startswith("/api/v1/ai/chat"):
+        return True
+    # 分支条件：仅知识源的显式索引动作依赖 embedding 与 Qdrant，普通资料 CRUD 不限流。
+    return normalized_path.startswith("/api/v1/knowledge/sources/") and normalized_path.endswith("/index")
 
 # ── 全局连接池（与 auth.py 共享同一 Redis）─────────────────────────────────────
 _redis_pool: aioredis.ConnectionPool | None = None
@@ -68,11 +78,15 @@ async def rate_limit_middleware(request: Request, call_next):
     """
     请求频率限制中间件。
 
-    作为 FastAPI HTTP Middleware 使用，同时校验 IP 级别和用户级别限流。
+    作为 FastAPI HTTP Middleware 使用，仅校验高成本接口的 IP 与用户级别限流。
     限流超标时返回 HTTP 429（Too Many Requests），否则继续处理请求。
 
     Redis 不可用时自动降级放行，不中断业务。
     """
+    # 分支条件：普通业务读取由鉴权和业务校验保护，不与 AI 配额共用严格窗口。
+    if not should_rate_limit_path(request.url.path):
+        return await call_next(request)
+
     # ── IP 级别限流 ─────────────────────────────────────────────────────────
     client_ip = request.client.host if request.client else "unknown"
     ip_key = _rate_limit_key("ip", client_ip)

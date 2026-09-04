@@ -1,12 +1,15 @@
 import SwiftUI
 
 struct LoginView: View {
+    // View 是值类型描述，body 每次重算都可能产生新值；持久可变数据必须放在 @State 等属性包装器中。
     private enum InputField {
+        // 枚举比 Bool 更适合表达“当前具体聚焦哪个输入框”。
         case phone
         case verificationCode
     }
 
     // @State 是页面私有的可变状态；输入变化时 SwiftUI 自动更新对应控件。
+    // @EnvironmentObject 读取 App 根节点注入的共享会话，不需要逐层作为参数传递。
     @EnvironmentObject private var session: SessionStore
     @State private var phone = ""
     @State private var code = ""
@@ -18,6 +21,7 @@ struct LoginView: View {
     @FocusState private var focusedField: InputField?
 
     var body: some View {
+        // NavigationStack 负责 iOS 原生导航栏与后续 push 栈；登录页当前只使用其容器能力。
         NavigationStack {
             VStack(alignment: .leading, spacing: 28) {
                 Spacer()
@@ -30,6 +34,7 @@ struct LoginView: View {
                     .font(.title3)
                     .foregroundStyle(.secondary)
                 VStack(spacing: 14) {
+                    // $phone 把 @State 投影为 Binding<String>，TextField 修改内容会反向写入 phone。
                     TextField("手机号", text: $phone)
                         .keyboardType(.phonePad)
                         .textContentType(.telephoneNumber)
@@ -50,6 +55,7 @@ struct LoginView: View {
                         .buttonStyle(.bordered)
                         .disabled(phone.isEmpty || isSendingCode)
                     }
+                    // 分支条件：仅在请求成功或失败后渲染状态文案，首屏不预留空白区域。
                     if !message.isEmpty {
                         Text(message).font(.footnote).foregroundStyle(messageIsError ? .red : .secondary)
                     }
@@ -86,6 +92,7 @@ struct LoginView: View {
     }
 
     private func signIn() async {
+        // 页面层负责 loading 与错误提示，实际登录、存储 token、切换根状态由 SessionStore 负责。
         focusedField = nil
         isSubmitting = true
         message = ""
@@ -101,6 +108,7 @@ struct LoginView: View {
     }
 
     private func sendCode() async {
+        // 验证码发送与登录分别维护 loading，避免一个按钮的状态错误禁用另一个操作。
         focusedField = nil
         isSendingCode = true
         message = ""
