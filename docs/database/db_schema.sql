@@ -1,7 +1,8 @@
 -- ============================================================
--- Vago (叠迹) — 全量数据库 DDL
+-- Vago (叠迹) — 当前 Phase 8 全量数据库 DDL
 -- 数据库：MySQL 8.0+  字符集：utf8mb4_unicode_ci
--- 一键重建：mysql -u root -p <password> vago < db_schema.sql
+-- 一键重建：mysql -u <user> -p <database> < docs/database/db_schema.sql
+-- 注意：本脚本会 DROP 并重建下列所有表，仅用于全新本地数据库。
 --
 -- 表创建顺序：
 --   1. users              用户主表
@@ -12,7 +13,9 @@
 --   6. guides             旅游攻略
 --   7. knowledge_sources  个人知识来源
 --   8. itinerary_days     每日行程主表
---   9. itinerary_spots    每日景点/打卡点
+--   9. itinerary_spots    每日景点/活动
+--  10. location_samples   iOS GPS 位置样本
+--  11. checkins           用户手动打卡
 -- ============================================================
 
 SET NAMES utf8mb4;
@@ -21,6 +24,8 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- ------------------------------------------------------------
 -- 清空旧表（按依赖逆序 DROP，重建时幂等）
 -- ------------------------------------------------------------
+DROP TABLE IF EXISTS checkins;
+DROP TABLE IF EXISTS location_samples;
 DROP TABLE IF EXISTS itinerary_spots;
 DROP TABLE IF EXISTS itinerary_days;
 DROP TABLE IF EXISTS guides;
@@ -274,7 +279,60 @@ CREATE TABLE itinerary_spots (
     PRIMARY KEY (id),
     UNIQUE KEY uk_spot_uuid (uuid),
     INDEX      idx_spot_day (day_uuid, sort_order)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='每日景点/打卡点表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='每日景点/活动表';
+
+
+-- ============================================================
+-- 模块四：旅行足迹（Phase 8）
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- GPS 位置样本（location_samples）
+-- iOS 先在本地缓存，随后按 user_uuid + client_uuid 幂等同步。
+-- 不建立外键：当前 Trip / User 跨迁移阶段仍由业务层做归属校验。
+-- ------------------------------------------------------------
+CREATE TABLE location_samples (
+    id              INT             NOT NULL AUTO_INCREMENT      COMMENT '自增主键',
+    uuid            VARCHAR(32)     NOT NULL                     COMMENT '服务端位置记录 UUID',
+    client_uuid     VARCHAR(64)     NOT NULL                     COMMENT '设备本地生成的幂等 UUID',
+    user_uuid       VARCHAR(32)     NOT NULL                     COMMENT '归属用户 UUID',
+    trip_uuid       VARCHAR(32)     NOT NULL                     COMMENT '关联正式行程 UUID',
+    latitude        FLOAT           NOT NULL                     COMMENT 'WGS-84 纬度',
+    longitude       FLOAT           NOT NULL                     COMMENT 'WGS-84 经度',
+    accuracy_m      FLOAT           DEFAULT NULL                 COMMENT '水平定位精度（米）',
+    speed_mps       FLOAT           DEFAULT NULL                 COMMENT '移动速度（米/秒）',
+    recorded_at     DATETIME        NOT NULL                     COMMENT '设备实际采样时间（UTC）',
+    created_at      DATETIME        NOT NULL                     COMMENT '服务端持久化时间（UTC）',
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_location_samples_uuid        (uuid),
+    UNIQUE KEY uk_location_samples_user_client (user_uuid, client_uuid),
+    INDEX      idx_location_samples_user_uuid  (user_uuid),
+    INDEX      idx_location_samples_trip_uuid  (trip_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='移动端 GPS 位置样本';
+
+
+-- ------------------------------------------------------------
+-- 用户手动打卡（checkins）
+-- 仅进行中 Trip 允许创建；已结束行程保持只读。
+-- ------------------------------------------------------------
+CREATE TABLE checkins (
+    id              INT             NOT NULL AUTO_INCREMENT      COMMENT '自增主键',
+    uuid            VARCHAR(32)     NOT NULL                     COMMENT '打卡业务 UUID',
+    user_uuid       VARCHAR(32)     NOT NULL                     COMMENT '归属用户 UUID',
+    trip_uuid       VARCHAR(32)     NOT NULL                     COMMENT '关联正式行程 UUID',
+    location_name   VARCHAR(256)    NOT NULL                     COMMENT '用户填写的地点名称',
+    latitude        FLOAT           NOT NULL                     COMMENT '打卡纬度',
+    longitude       FLOAT           NOT NULL                     COMMENT '打卡经度',
+    note            TEXT            DEFAULT NULL                 COMMENT '用户补充的旅行笔记',
+    checked_at      DATETIME        NOT NULL                     COMMENT '用户触发打卡时间（UTC）',
+    created_at      DATETIME        NOT NULL                     COMMENT '服务端持久化时间（UTC）',
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_checkins_uuid       (uuid),
+    INDEX      idx_checkins_user_uuid (user_uuid),
+    INDEX      idx_checkins_trip_uuid (trip_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户旅行手动打卡';
 
 
 SET FOREIGN_KEY_CHECKS = 1;

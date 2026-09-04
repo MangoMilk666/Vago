@@ -73,6 +73,12 @@ React Web (Vite)
     ├── /api/v1/ai/chat/**          → FastAPI vago-ai
     └── /api/v1/**                  → Spring Boot vago-backend
 
+SwiftUI iOS
+    ├── /api/v1/auth/**             → FastAPI vago-ai
+    ├── /api/v1/users/**            → FastAPI vago-ai
+    ├── /api/v1/travel/**           → FastAPI vago-ai
+    └── /api/v1/footprints/**       → FastAPI vago-ai
+
 Spring Boot vago-backend
     ├── Public Guide discover / like
     ├── Collection CRUD
@@ -88,7 +94,8 @@ FastAPI vago-ai
     ├── cleaner / chunker / embedder
     ├── Qdrant vector store
     ├── RAG / Tool-Calling Agent
-    └── structured plan extraction
+    ├── structured plan extraction
+    └── Footprints：GPS 同步、轨迹读取、手动打卡
 ```
 
 当前架构是迁移起点，不是最终目标。
@@ -145,7 +152,7 @@ services/vago-api/
 | 层次 | 当前 | 目标 |
 |------|------|------|
 | Web | React + Vite + Tailwind CSS | 保留 |
-| iOS | 未实现 | Swift + SwiftUI + MapKit + Core Location |
+| iOS | Swift + SwiftUI + URLSession + Keychain | 已完成登录、当前行程、前台 GPS 采集、离线同步、MapKit 点位与手动打卡 |
 | Backend | Spring Boot + FastAPI AI | 逐步迁移为 FastAPI Modular Monolith |
 | Relational DB | MySQL | 保留 |
 | Cache | Redis | 保留 |
@@ -160,7 +167,8 @@ services/vago-api/
 ```text
 Vago/
 ├── apps/
-│   └── vago-web/                 # React Web
+│   ├── vago-web/                 # React Web
+│   └── vago-ios/                 # SwiftUI iOS：旅行中查看、采集与打卡
 ├── services/
 │   ├── vago-backend/             # 当前 Spring Boot 后端，后续逐步退场
 │   ├── vago-ai/                  # 当前 FastAPI AI 服务，后续演进为统一后端基础
@@ -175,6 +183,33 @@ Vago/
 ├── .env.example
 └── LICENSE
 ```
+
+## 双端当前能力
+
+| 能力域 | React Web | SwiftUI iOS |
+|------|------|------|
+| 登录与会话 | 手机号 / OAuth、浏览器会话 | 手机号登录、Keychain 凭证、设备级 refresh session |
+| 知识与 AI | KnowledgeSource 管理、资料导入、AI 规划与对话 | 暂不复制复杂资料管理与规划流程 |
+| 计划与行程 | Plan / Trip / Itinerary CRUD、日程编辑 | 查看进行中行程与每日安排 |
+| 旅行足迹 | 仅保留导航占位页，尚未查询或渲染真实足迹数据 | 前台定位采样、本地待传队列、批量幂等同步、服务端轨迹点读取、MapKit 点位与手动打卡 |
+
+iOS 的轨迹数据由 FastAPI 作为长期事实来源：设备先缓存位置样本，成功同步后才从本地队列移除。当前地图渲染的是服务端轨迹**点位**，尚未绘制连续轨迹线；打卡已可写入服务端，但打卡历史列表与地图标记留待后续开发。
+
+## 数据库初始化
+
+全量 DDL 位于 [db_schema.sql](docs/database/db_schema.sql)，用于**全新本地数据库**。脚本会 `DROP TABLE` 后重建当前 Phase 8 所需表，执行前不要指向已有用户数据的数据库：
+
+```bash
+mysql -u <user> -p <database_name> < docs/database/db_schema.sql
+```
+
+已有数据库不要运行全量 DDL，应在 `services/vago-ai` 下执行 Alembic 增量迁移：
+
+```bash
+.venv/bin/alembic upgrade head
+```
+
+截至当前版本，Alembic head 为 `20260904_03`，包含 `knowledge_sources`、Trip 生命周期修正、日程去重约束以及 `location_samples` / `checkins` 足迹表。
 
 ## 迁移状态
 

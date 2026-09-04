@@ -820,7 +820,10 @@ server becomes source of truth
 
 ## Phase 9 — Travel Memory
 
-完成实际旅行数据闭环后再开发 AI Memory。
+完成实际旅行数据闭环后再开发 AI Memory。即在进入Phase 9之前还需要完成以下开发效果：
+
+1. iOS端拥有足迹定位、记录、打卡、数据同步和准确渲染等功能。
+2. web端足迹页面拥有足迹和打卡数据查询和渲染功能。
 
 避免在没有真实 footprint / notes 数据模型时先做一个纯 Prompt 的“旅行总结生成器”。
 
