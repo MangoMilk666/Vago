@@ -12,6 +12,7 @@ Qdrant 向量数据库操作模块（Vector Store）。
     支持知识来源的幂等重建，并在兼容窗口保留 article_id payload 别名。
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -43,6 +44,18 @@ def _get_client() -> AsyncQdrantClient:
             port=settings.qdrant_port,
         )
     return _qdrant_client
+
+
+async def is_vector_store_available() -> bool:
+    """快速检查 Qdrant 是否可连接，不执行 collection 创建或任何写入。"""
+    # 分支条件：部署未提供有效地址时，直接视为不可用，避免发起无意义网络请求。
+    if not settings.qdrant_host or settings.qdrant_port <= 0:
+        return False
+    try:
+        await asyncio.wait_for(_get_client().get_collections(), timeout=1.5)
+    except Exception:
+        return False
+    return True
 
 
 # ─── Collection 初始化 ────────────────────────────────────────────────────────

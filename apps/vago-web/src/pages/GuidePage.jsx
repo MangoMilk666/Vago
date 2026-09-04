@@ -5,6 +5,8 @@ import { knowledgeApi } from '../api/travel'
 const INDEX_STATUS = {
   NOT_INDEXED: '未索引', PENDING: '等待索引', INDEXING: '索引中', INDEXED: '已索引', FAILED: '索引失败',
 }
+const INDEX_POLL_INTERVAL_MS = 1000
+const INDEX_POLL_MAX_ATTEMPTS = 12
 
 function SourceModal({ source, onClose, onSaved }) {
   const [form, setForm] = useState({
@@ -76,6 +78,12 @@ export default function GuidePage() {
     finally { setLoading(false) }
   }, [])
   useEffect(() => { loadSources() }, [loadSources])
+  useEffect(() => {
+    if (!indexBanner) return undefined
+    // 顶部反馈短暂展示后自动消失，避免遮挡后续资料操作。
+    const timer = window.setTimeout(() => setIndexBanner(null), 5000)
+    return () => window.clearTimeout(timer)
+  }, [indexBanner])
 
   const upload = async (event) => {
     const file = event.target.files?.[0]
@@ -90,6 +98,26 @@ export default function GuidePage() {
     try {
       await knowledgeApi.index(source.uuid)
       await loadSources()
+      // 接口返回 200 仅代表后台任务已入队；继续查询最终状态，才能捕获向量库连接失败。
+      for (let attempt = 0; attempt < INDEX_POLL_MAX_ATTEMPTS; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, INDEX_POLL_INTERVAL_MS))
+        const response = await knowledgeApi.detail(source.uuid)
+        const latestSource = response.data
+        if (latestSource.indexStatus === 'FAILED') {
+          setSources((current) => current.map((item) => item.uuid === latestSource.uuid ? latestSource : item))
+          setIndexBanner({
+            title: '语义索引未完成',
+            message: `「${source.title}」已保存在知识库中，但暂时无法用于语义检索。请检查 RAG 服务后重试。`,
+          })
+          return
+        }
+        // 分支条件：任务已成功完成时停止轮询，避免无意义的后续请求。
+        if (latestSource.indexStatus === 'INDEXED') {
+          setSources((current) => current.map((item) => item.uuid === latestSource.uuid ? latestSource : item))
+          return
+        }
+      }
+      await loadSources()
     } catch (requestError) {
       // 将请求异常转换为页面级 banner，避免把底层服务错误直接塞进资料内容区域。
       setIndexBanner({
@@ -100,12 +128,13 @@ export default function GuidePage() {
   }
 
   return <div className="app-page"><Navbar />
+    {/* 索引请求失败时使用顶部浮层反馈，避免用户在长列表中错过异常。 */}
+    {indexBanner && <div role="alert" aria-live="assertive" className="fixed left-1/2 top-20 z-50 flex w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 items-start justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-lg"><div><p className="font-medium">{indexBanner.title}</p><p className="mt-1 text-amber-800">{indexBanner.message}</p></div><button type="button" onClick={() => setIndexBanner(null)} className="shrink-0 text-amber-700 hover:text-amber-900" aria-label="关闭提示">×</button></div>}
     <main className="app-main">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div><h1 className="text-xl font-bold text-gray-900">个人旅行知识库</h1><p className="mt-1 text-sm text-gray-500">沉淀自己的旅行资料，按需提供给 AI 作为上下文。</p></div>
         <div className="flex shrink-0 gap-2"><label className="cursor-pointer rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600">{uploading ? '导入中…' : '导入 .md/.txt'}<input type="file" accept=".md,.txt,text/plain,text/markdown" onChange={upload} disabled={uploading} className="hidden" /></label><button onClick={() => setModal('create')} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">新建资料</button></div>
       </div>
-      {indexBanner && <div role="alert" className="mb-4 flex items-start justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"><div><p className="font-medium">{indexBanner.title}</p><p className="mt-1 text-amber-800">{indexBanner.message}</p></div><button type="button" onClick={() => setIndexBanner(null)} className="shrink-0 text-amber-700 hover:text-amber-900" aria-label="关闭提示">×</button></div>}
       {error && <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
       {loading ? <div className="py-20 text-center text-sm text-gray-400">加载中…</div> : sources.length === 0 ? <div className="py-20 text-center text-sm text-gray-400">还没有个人旅行资料</div> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {sources.map((source) => <article key={source.uuid} className="app-surface flex min-h-44 flex-col p-4">

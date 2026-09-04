@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.core.exceptions import AppException
 from app.dependencies.auth import get_current_user_uuid
 from app.knowledge import indexing, service
+from app.services import vector_store
 from app.knowledge.schemas import (
     GuideCreateRequest,
     GuideResponse,
@@ -153,7 +154,7 @@ def delete_source(
 
 
 @router.post("/sources/{source_uuid}/index", response_model=ApiResponse[KnowledgeSourceResponse])
-def index_source(
+async def index_source(
     source_uuid: str,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -163,6 +164,9 @@ def index_source(
     # 分支条件：部署未启用 RAG capability 时，资料仍可使用，但不接受无效索引请求。
     if not settings.rag_enabled:
         raise AppException("当前环境未启用语义索引能力", status_code=503, code="RAG_UNAVAILABLE")
+    # 分支条件：Qdrant 未配置或不可连接时，立即返回，避免客户端误以为 200 代表索引成功。
+    if not await vector_store.is_vector_store_available():
+        raise AppException("语义索引服务暂不可用，请检查向量数据库配置", status_code=503, code="VECTOR_STORE_UNAVAILABLE")
     source = service.mark_source_index_pending(db, user_uuid, source_uuid)
     background_tasks.add_task(indexing.index_source_background, source.uuid, user_uuid)
     return success(source, "知识源已加入语义索引队列")

@@ -16,6 +16,7 @@ from app.core.database import Base, get_db
 from app.core.exceptions import register_exception_handlers
 from app.dependencies.auth import get_current_user_uuid
 from app.knowledge import indexing
+from app.services import vector_store
 from app.knowledge.models import KnowledgeSource
 from app.users.models import User
 
@@ -63,9 +64,13 @@ def client(
         assert source_uuid
         assert user_uuid == "knowledge-source-user"
 
+    async def fake_vector_store_available() -> bool:
+        return True
+
     monkeypatch.setattr(settings, "knowledge_storage_path", str(tmp_path / "knowledge-storage"))
     monkeypatch.setattr(indexing, "index_source_background", fake_index_source_background)
     monkeypatch.setattr(indexing, "delete_source_index_background", fake_delete_source_index_background)
+    monkeypatch.setattr(vector_store, "is_vector_store_available", fake_vector_store_available)
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_current_user_uuid] = override_current_user_uuid
 
@@ -144,6 +149,30 @@ def test_index_unavailable_returns_displayable_message(
     assert index_response.status_code == 503
     assert index_response.json()["code"] == "RAG_UNAVAILABLE"
     assert index_response.json()["message"] == "当前环境未启用语义索引能力"
+
+
+def test_index_rejects_unavailable_vector_store(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """测试：Qdrant 不可连接时，索引接口应立即返回可展示的 503。"""
+    _seed_current_user(db_session)
+    source_response = client.post(
+        "/api/v1/knowledge/sources",
+        json={"title": "台北笔记", "sourceType": "TEXT", "contentText": "夜市建议安排在傍晚。"},
+    )
+
+    async def unavailable_vector_store() -> bool:
+        return False
+
+    monkeypatch.setattr(vector_store, "is_vector_store_available", unavailable_vector_store)
+    index_response = client.post(
+        f"/api/v1/knowledge/sources/{source_response.json()['data']['uuid']}/index"
+    )
+
+    assert index_response.status_code == 503
+    assert index_response.json()["code"] == "VECTOR_STORE_UNAVAILABLE"
 
 
 def test_markdown_upload_creates_file_source_and_delete_removes_asset(
