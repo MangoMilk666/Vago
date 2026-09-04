@@ -53,12 +53,12 @@ RAG / Qdrant 是其中用于检索大量非结构化个人资料的技术能力�
 | Personal Travel Knowledge | Phase 4A–4F 已落地 | 独立 KnowledgeSource、纯文本与 `.md/.txt` 导入、用户隔离、Web 知识库与可选语义索引 |
 | AI Travel Companion | Phase 4 起步整合 | 多轮对话、SSE、Tool Calling、结构化计划输出、用户确认后保存 |
 | Plans / Trips / Itinerary | Phase 3 核心 CRUD 已迁移 | 草稿计划、正式行程、每日安排、景点、交通、住宿、预算 |
-| Footprints | 后续建设 | GPS 采样、轨迹、打卡、地点统计、地图可视化 |
+| Footprints | Phase 8 已完成基础采集 | iOS 前台 GPS 采样、本地缓冲、幂等同步、MapKit 轨迹与手动打卡；地点统计后续建设 |
 | Fog-of-World Map | 后续建设 | 基于真实移动轨迹解锁地图区域 |
 | Photos / Notes | 后续建设 | 拍照、相册选择、EXIF / 时间 / 位置绑定、Trip / Spot 关联 |
 | Travel Memory | 后续建设 | 基于事实数据生成可编辑旅行总结、timeline、highlights、分享卡片 |
 | Public Community | 停止作为主线 | Feed、点赞、关注、陌生人社交不迁移到目标后端；分享能力可保留 |
-| Native iOS | Phase 7 基础已完成 | SwiftUI 登录、Keychain 会话、当前行程、日程与基础个人资料；GPS/地图后续建设 |
+| Native iOS | Phase 8 已完成基础追踪 | SwiftUI 登录、Keychain 会话、当前行程、前台定位、轨迹同步、MapKit 与手动打卡 |
 
 ## 当前架构
 
@@ -178,7 +178,7 @@ Vago/
 
 ## 迁移状态
 
-当前 remould 进度为 **Phase 4 — Knowledge / RAG / AI Companion Integration 已完成 4A–4F**。
+当前 remould 进度为 **Phase 8 — iOS Travel Tracking 基础闭环已完成**。
 
 迁移优先级：
 
@@ -189,7 +189,7 @@ Vago/
 5. 清理 legacy community / public-feed 相关能力；
 6. 更新 Web 产品体验；
 7. 建立 SwiftUI iOS foundation；
-8. 实现 iOS Travel Tracking；
+8. 实现 iOS Travel Tracking；已完成前台采样、本地缓冲、同步、MapKit 与手动打卡
 9. 基于真实 footprint / notes / photos 生成 Travel Memory。
 
 详见 [remould migration inventory](docs/remould-migration-inventory.md)。
@@ -203,6 +203,7 @@ Vago/
 - [用户服务 API](docs/API/user-service.md)
 - [旅行核心 API](docs/API/travel-service.md)
 - [个人知识 API](docs/API/knowledge-service.md)
+- [旅行足迹 API](docs/API/footprint-service.md)
 
 ## License
 

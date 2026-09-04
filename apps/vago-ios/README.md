@@ -2,7 +2,7 @@
 
 Vago 的原生 iOS 基础客户端。它使用 **Swift + SwiftUI**，直接调用 FastAPI `/api/v1` API，不经过 React、Vite Proxy 或旧 Spring Boot 服务。
 
-这份文档面向熟悉 Python FastAPI / Java Spring Boot、但刚开始接触 iOS 的开发者。当前项目刻意保持小而完整：先把登录、会话、当前行程、日程与个人资料跑通；GPS、地图、照片等属于 Phase 8 之后的能力。
+这份文档面向熟悉 Python FastAPI / Java Spring Boot、但刚开始接触 iOS 的开发者。当前项目刻意保持小而完整：已跑通登录、会话、当前行程、日程、个人资料与基础足迹采集；照片、迷雾地图与旅行回忆属于后续能力。
 
 ## 当前能力
 
@@ -186,4 +186,12 @@ xcodebuild \
 
 ## 下一步
 
-Phase 8 将在当前会话与当前行程基础上引入 Core Location、GPS 本地缓冲、同步端点、MapKit 与手动 check-in。实现前先保持本项目的“移动端专注旅行中高频操作”边界，不复制 Web 的知识库编辑和复杂 AI 规划工作流。
+Phase 8 已完成第一版 Travel Tracking：在“记录”标签中，iOS 会在用户点击开始后申请“使用期间”定位权限，以约 20 米的距离变化采集前台 GPS 样本。样本先进入按用户 UUID 隔离的 `UserDefaults` 本地队列，网络可用时按每批最多 100 条调用 FastAPI 同步；服务端按 `userUuid + clientUuid` 去重，因此请求超时或重复重试不会重复生成轨迹。
+
+MapKit 会读取服务端已同步轨迹并显示当前位置。手动打卡只能绑定进行中的正式 Trip；已结束行程仍允许补传此前离线缓存的 GPS 样本，但不允许再创建新打卡。当前版本刻意不启用后台定位、反向地理编码、照片关联、迷雾地图或复杂 GIS，避免在核心采集与同步机制尚未稳定前扩大范围。
+
+首次在模拟器测试时，在 Simulator 的 **Features > Location** 选择一个预设位置或 GPX 路线，随后在 App 的“记录”页点击“开始记录”。真机需在系统弹窗中允许定位权限。API 数据库迁移请在 `services/vago-ai` 中执行：
+
+```bash
+.venv/bin/alembic upgrade head
+```

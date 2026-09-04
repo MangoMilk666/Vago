@@ -27,6 +27,8 @@ private struct MainTabView: View {
             // TabView 是 iOS 原生底部标签导航，移动端只保留旅行中的高频入口。
             CurrentTripView()
                 .tabItem { Label("行程", systemImage: "map") }
+            TrackingView()
+                .tabItem { Label("记录", systemImage: "location") }
             ProfileView()
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }
         }

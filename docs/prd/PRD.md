@@ -308,7 +308,7 @@ users
 | 5 | Remove legacy community | 不迁移 public feed / like / follow，清理无依赖代码 |
 | 6 | Web experience remould | 导航聚焦 Dashboard、Knowledge、AI、Plans、Trips、Footprints、Memories、Profile |
 | 7 | iOS foundation | SwiftUI app 完成 API config、login、current trip、basic profile |
-| 8 | iOS tracking | Core Location、local buffer、sync、MapKit、check-in |
+| 8 | iOS tracking | 已完成前台 Core Location、local buffer、sync、MapKit、check-in；后台定位、迷雾地图与统计后续建设 |
 | 9 | Travel memory | 基于真实足迹 / 笔记 / 照片生成 grounded memory |
 
 ## 10. 当前实现边界

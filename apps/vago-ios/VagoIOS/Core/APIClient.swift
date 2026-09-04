@@ -100,7 +100,7 @@ final class APIClient {
     // URLSession 自身不会占用主线程等待网络返回。
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        // FastAPI datetime 通常是完整 ISO 8601，而 Python date 会输出 yyyy-MM-dd；两者都需兼容。
+        // FastAPI datetime 以 ISO 8601 UTC 返回，兼容窗口内也需读取既有 MySQL 无时区 DATETIME。
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
@@ -116,6 +116,17 @@ final class APIClient {
             if let calendarDate = calendarDateFormatter.date(from: value) {
                 return calendarDate
             }
+            let localDateTimeFormatter = DateFormatter()
+            // 历史 MySQL DATETIME 没有时区信息，按服务端约定将其解释为 UTC。
+            localDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+            localDateTimeFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+            for dateFormat in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"] {
+                localDateTimeFormatter.dateFormat = dateFormat
+                // 分支条件：命中无时区的历史 datetime 格式时，以 UTC 返回给 SwiftUI。
+                if let localDateTime = localDateTimeFormatter.date(from: value) {
+                    return localDateTime
+                }
+            }
             throw DecodingError.dataCorruptedError(
                 in: container,
                 debugDescription: "不支持的日期格式：\(value)"
@@ -130,11 +141,23 @@ final class APIClient {
     }
 
     func request<Value: Decodable, Body: Encodable>(path: String, method: String, body: Body) async throws -> Value {
-        try await perform(path: path, method: method, body: try JSONEncoder().encode(body), accessToken: nil, tokenProvider: nil)
+        try await perform(path: path, method: method, body: try encode(body), accessToken: nil, tokenProvider: nil)
+    }
+
+    func request<Value: Decodable, Body: Encodable>(path: String, method: String, body: Body, tokenProvider: SessionStore) async throws -> Value {
+        let token = try await tokenProvider.validAccessToken()
+        return try await perform(path: path, method: method, body: try encode(body), accessToken: token, tokenProvider: tokenProvider)
     }
 
     func requestWithoutResponse<Body: Encodable>(path: String, method: String, body: Body, accessToken: String) async throws {
-        let _: EmptyResponse = try await perform(path: path, method: method, body: try JSONEncoder().encode(body), accessToken: accessToken, tokenProvider: nil)
+        let _: EmptyResponse = try await perform(path: path, method: method, body: try encode(body), accessToken: accessToken, tokenProvider: nil)
+    }
+
+    private func encode<Body: Encodable>(_ body: Body) throws -> Data {
+        let encoder = JSONEncoder()
+        // FastAPI 的 datetime 字段采用 ISO 8601；避免 JSONEncoder 默认把 Date 编成 Unix 秒数。
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(body)
     }
 
     private func perform<Value: Decodable>(

@@ -1,7 +1,7 @@
 # Vago 架构说明
 
 > 最后更新：2026-08-31
-> 当前状态：Remould Phase 7 — SwiftUI iOS Foundation
+> 当前状态：Remould Phase 8 — iOS Travel Tracking Foundation
 > 目标架构：FastAPI Modular Monolith + React Web + Native iOS
 
 ## 1. 架构原则
@@ -230,7 +230,7 @@ API contract 不应依赖浏览器 cookie、React state 或 Vite proxy。React W
 | 5 | 清理 legacy community / public-feed 能力 | 已完成代码与 API 下线；旧表暂保留 |
 | 6 | 更新 Web 产品体验和导航 | 待开始 |
 | 7 | 建立 SwiftUI iOS foundation | 已完成：API 配置、手机号登录、Keychain 令牌存储、当前行程/日程与基础个人资料 |
-| 8 | 实现 iOS Travel Tracking | 待开始 |
+| 8 | 实现 iOS Travel Tracking | 已完成基础闭环：前台 Core Location 采样、本地缓冲、FastAPI 幂等同步、MapKit 与手动打卡 |
 | 9 | 实现 grounded Travel Memory | 待开始 |
 
 迁移原则：

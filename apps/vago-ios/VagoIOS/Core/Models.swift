@@ -69,3 +69,80 @@ struct ItinerarySpot: Decodable, Identifiable {
 
     var id: String { uuid }
 }
+
+/// iOS 离线队列中的 GPS 样本；clientUuid 是服务端去重所需的稳定幂等键。
+struct PendingLocationSample: Codable, Identifiable {
+    let id: UUID
+    let tripUuid: String
+    let latitude: Double
+    let longitude: Double
+    let accuracyM: Double?
+    let speedMps: Double?
+    let recordedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        tripUuid: String,
+        latitude: Double,
+        longitude: Double,
+        accuracyM: Double?,
+        speedMps: Double?,
+        recordedAt: Date
+    ) {
+        self.id = id
+        self.tripUuid = tripUuid
+        self.latitude = latitude
+        self.longitude = longitude
+        self.accuracyM = accuracyM
+        self.speedMps = speedMps
+        self.recordedAt = recordedAt
+    }
+
+    /// Codable 默认将 id 编码为 UUID；服务端契约使用 clientUuid，因此显式映射字段名称。
+    enum CodingKeys: String, CodingKey {
+        case id = "clientUuid"
+        case tripUuid, latitude, longitude, accuracyM, speedMps, recordedAt
+    }
+}
+
+/// FastAPI 返回的已同步轨迹点，供 MapKit 读取与渲染。
+struct FootprintLocation: Decodable, Identifiable {
+    let uuid: String
+    let latitude: Double
+    let longitude: Double
+    let accuracyM: Double?
+    let speedMps: Double?
+    let recordedAt: Date
+
+    var id: String { uuid }
+}
+
+/// 批量 GPS 同步结果；成功后 iOS 才能从本地队列移除对应样本。
+struct LocationSyncResult: Decodable {
+    let acceptedCount: Int
+    let duplicateCount: Int
+}
+
+/// 手动打卡请求，使用当前位置并绑定进行中的正式行程。
+/// 可序列化
+struct CheckinRequest: Encodable {
+    let tripUuid: String
+    let locationName: String
+    let latitude: Double
+    let longitude: Double
+    let note: String?
+    let checkedAt: Date
+}
+
+/// 可反序列化的VO
+struct Checkin: Decodable, Identifiable {
+    let uuid: String
+    let tripUuid: String
+    let locationName: String
+    let latitude: Double
+    let longitude: Double
+    let note: String?
+    let checkedAt: Date
+
+    var id: String { uuid }
+}

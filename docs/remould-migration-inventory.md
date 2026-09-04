@@ -131,11 +131,11 @@ Java 当前依赖 Python AI 服务维护攻略向量索引：
 | Collections | 有条件保留 | 重定位为个人知识组织，而不是社区功能 |
 | Guide likes / discover | 从核心移除 | 除非未来分享能力确实需要，否则不迁入目标后端 |
 | Public feed / follow / comments | 移除 | 当前 Web 路由未发现，不应进入目标架构 |
-| Footprints | 后续建设 | 需要新增 API、数据库模型和 iOS 支持 |
+| Footprints | Phase 8 基础已完成 | FastAPI GPS/打卡事实表、幂等同步 API 与 iOS 前台采集、MapKit 已落地；统计与 Web 浏览后续建设 |
 | Fog-of-world map | 后续建设 | 第一版保持简单，避免过早引入复杂 GIS |
 | Photos / notes | 后续建设 | 二进制照片使用对象存储 |
 | Travel Memory | 后续建设 | 必须基于真实事实数据生成 |
-| Native iOS | 后续建设 | SwiftUI 直接调用 FastAPI public API |
+| Native iOS | Phase 8 基础已完成 | SwiftUI 直连 FastAPI，覆盖登录、当前行程、前台 GPS、离线队列、轨迹与打卡 |
 
 ## 9. Phase 1 地基状态
 
@@ -234,7 +234,8 @@ Phase 4 已从 AI 保存链路开始整合：
 ## 16. 推荐下一步
 
 - Phase 7 已完成：`apps/vago-ios` 使用 SwiftUI 直连 FastAPI，提供手机号登录、Keychain 令牌存储、当前行程/日程查看与基础个人资料。刷新令牌已调整为 Redis 设备级会话，避免 iOS 与 Web 登录互相覆盖。
-- 在 Phase 8 实现真实的足迹采集与同步后，再将 Web 足迹入口替换为可浏览的领域页面。
+- Phase 8 已完成基础闭环：新增 FastAPI `footprints` 模块、`location_samples` / `checkins` 表与 Alembic migration。iOS 使用 Core Location 在前台采样，将非敏感待传样本写入按用户隔离的本地队列，并按行程批量幂等同步；MapKit 显示已同步轨迹，进行中行程可手动打卡。
+- Web 足迹入口仍保留为占位页；下一步可在不改变 iOS 采集协议的前提下实现历史轨迹与统计浏览。
 - 在 Phase 9 有足够的真实行程、足迹与笔记数据后，再实现 AI 旅行回忆生成与编辑。
 
 ## 17. Trip 生命周期状态
