@@ -104,6 +104,8 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 
 ## Phase 1：布局、地图常驻与可验证的页面状态
 
+实施状态：已完成
+
 **目标：** 验证并修正真实全屏适配；地图刷新、空状态和表单不破坏地图视口。
 
 **涉及现有文件：** `App/RootView.swift`、`Features/Footprints/TrackingView.swift`、必要时 `Features/Auth/LoginView.swift`；检查外层 `VagoIOS-Info.plist` 与 `VagoIOS.xcodeproj/project.pbxproj`。
@@ -126,6 +128,10 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 
 ## Phase 2：定位意图、当前坐标与 camera
 
+实施状态：已完成（2026-09-05）
+
+**本次落地说明：** `LocationTrackingStore` 已提升为 App 级共享对象，并新增 `CurrentLocationFix` 区分一次定位与已持久化足迹。连续采样只在用户明确开始记录、应用位于前台、登录会话和进行中行程均有效时写入队列；切换 Tab、展开 sheet 不会停止记录，注销时只清理内存状态。地图已改为可绑定 camera：初次有数据时自适应可视范围，点击定位恢复跟随，用户拖动后进入自由浏览。后台只停止前台连续定位，回到前台按原记录意图恢复；本阶段不请求后台定位权限，也不新增后端 API 或数据库迁移。
+
 **目标：** 区分“看当前位置”和“保存足迹”，让地图跟随、自由浏览与记录状态独立。
 
 **涉及现有文件：** `LocationTrackingStore.swift`、`RootView.swift`、`VagoIOSApp.swift`、`TrackingView.swift` 及 Phase 1 拆出的 Canvas/ViewModel。
@@ -147,6 +153,8 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 **真机验证：** 首次拒绝后去设置授权，未点开始不能产生上传；Locate 后数据库样本数不增；开始步行、切 Tab、弹 sheet、停止、锁屏再回来，状态和采样符合上述策略；自由拖图不被 GPS 拉回；停止后移动再打卡应获得新坐标；账号 A 注销切 B 不显示 A 的点。
 
 ## Phase 3：本地与远端合并、同步交接和离线恢复
+
+实施状态：未开始
 
 **目标：** 新点本地保存后立即可见，上传/读回过程中不重复、不消失，保留现有批量同步算法和幂等键。
 
@@ -180,6 +188,8 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 **真机验证：** 已登录后断网行走，地图立即出现多个本地点；恢复网络点数稳定，pending 归零但轨迹不消失；模拟 POST 已落库但响应丢失，再传相同 batch，DB 不增重复行；上传后 GET 失败仍可见点；杀进程后离线恢复未上传队列；跨账号无回填；200+ 点分批 ≤100；无移动时网络恢复也能重试。后端补 clientUuid 回传、并发重试与归属测试，iOS 增加有意义的合并/交接测试。
 
 ## Phase 4：GPS 过滤、segment 与足迹渲染
+
+实施状态：部分完成（2026-09-05，已完成 Phase 4A 的时间排序、15 米渲染降采样、断段与平滑路线展示；采集端完整质量过滤与显式段标识仍未实施）
 
 **目标：** 可靠数据源转为可信的多段路径，消除虚假长连接和逐点 Marker 噪声。
 
@@ -219,6 +229,8 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 
 ## Phase 5：Check-in 创建确认与详情
 
+实施状态：部分完成（2026-09-05，已实现打卡前单次定位、冻结坐标与 30 米重复打卡限制；Check-in Annotation 详情仍未实施）
+
 **目标：** 用户可以独立打卡、清楚确认位置，并点击已保存标记查看真实记录。
 
 **涉及现有文件：** `TrackingView.swift`、Phase 1 的 CheckinSheet、Canvas/ViewModel、`Core/Models.swift`、Phase 2 的 currentLocation 接口。
@@ -241,6 +253,8 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 
 ## Phase 6：有限历史行程地图
 
+实施状态：未开始
+
 **目标：** 没有进行中行程也可查看自己的旅行地图，限制数据规模。
 
 **涉及现有文件：** TrackingView、TravelMapViewModel、FootprintRepository、`Core/Models.swift`；使用现有 `travel/trips` 和按 Trip 的 footprint/checkin GET。
@@ -256,6 +270,8 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 **真机验证：** 结束当前行程后仍可选择历史查看；历史模式无编辑/打卡；快速切换两份 Trip 不混点、不连线；记录期间浏览历史不会改上传 tripUuid；用代表性的大行程记录加载时长、内存和交互卡顿，再决定分页是否必要。
 
 ## Phase 7：简单 World Fog / Explored Area 实验
+
+实施状态：未开始
 
 **目标：** 使用现有个人旅行事实派生固定半径探索区域，验证“未探索淡化、探索处显露”的体验。
 

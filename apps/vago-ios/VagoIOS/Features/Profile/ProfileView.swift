@@ -4,6 +4,7 @@ struct ProfileView: View {
     // 个人页不保存用户副本，始终从共享 SessionStore 读取最新 profile。
     @EnvironmentObject private var session: SessionStore
     @State private var isLoggingOut = false
+    @State private var isLogoutConfirmationPresented = false
 
     var body: some View {
         // List 采用系统分组列表样式，Section 用于形成账号信息与危险操作的视觉边界。
@@ -21,11 +22,17 @@ struct ProfileView: View {
                     .padding(.vertical, 6)
                 }
                 Section("账户") {
-                    Button("退出登录", role: .destructive) { Task { await logout() } }
+                    Button("退出登录", role: .destructive) { isLogoutConfirmationPresented = true }
                         .disabled(isLoggingOut)
                 }
             }
             .navigationTitle("我的")
+        }
+        .alert("确认退出登录？", isPresented: $isLogoutConfirmationPresented) {
+            Button("取消", role: .cancel) {}
+            Button("退出登录", role: .destructive) { Task { await logout() } }
+        } message: {
+            Text("你的数据将会被保留，退出后需重新登录 Vago。")
         }
     }
 

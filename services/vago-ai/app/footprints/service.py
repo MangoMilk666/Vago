@@ -1,6 +1,7 @@
 """旅行足迹领域服务：校验行程归属后持久化移动端事实记录。"""
 
 from datetime import UTC, datetime
+from math import asin, cos, radians, sin, sqrt
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -17,6 +18,11 @@ from app.footprints.schemas import (
 )
 from app.travel.models import Trip, utc_now_naive
 from app.travel.service import TRIP_STATUS_IN_PROGRESS
+
+
+# 过近打卡会在地图上重叠，且通常不是新的旅行事实；服务端统一约束以覆盖所有客户端。
+# 最小重复打卡距离判定阈值30米
+MINIMUM_CHECKIN_DISTANCE_METERS = 30.0
 
 
 def _new_uuid() -> str:
@@ -37,6 +43,15 @@ def _get_owned_trip(db: Session, user_uuid: str, trip_uuid: str) -> Trip:
     if trip is None:
         raise AppException("行程不存在或无权访问", status_code=404, code="TRIP_NOT_FOUND")
     return trip
+
+
+def _distance_meters(latitude_a: float, longitude_a: float, latitude_b: float, longitude_b: float) -> float:
+    """使用 Haversine 公式计算两组 WGS-84 坐标间的近似地表距离。"""
+    earth_radius_meters = 6_371_000
+    delta_latitude = radians(latitude_b - latitude_a)
+    delta_longitude = radians(longitude_b - longitude_a)
+    haversine = sin(delta_latitude / 2) ** 2 + cos(radians(latitude_a)) * cos(radians(latitude_b)) * sin(delta_longitude / 2) ** 2
+    return 2 * earth_radius_meters * asin(sqrt(haversine))
 
 
 def sync_location_samples(
@@ -112,6 +127,15 @@ def create_checkin(db: Session, user_uuid: str, payload: CheckinCreateRequest) -
     # 分支条件：只有进行中行程允许创建新的手动记录，保持已结束旅行的数据可回顾但不可篡改。
     if trip.status != TRIP_STATUS_IN_PROGRESS:
         raise AppException("仅进行中的行程可以打卡", status_code=409, code="TRIP_NOT_IN_PROGRESS")
+    existing_checkins = db.scalars(
+        select(Checkin).where(Checkin.user_uuid == user_uuid, Checkin.trip_uuid == trip.uuid)
+    ).all()
+    # 分支条件：同一行程已有 30 米内打卡时拒绝创建，容纳真机 GPS 漂移并避免多端绕过客户端限制。
+    if any(
+        _distance_meters(payload.latitude, payload.longitude, checkin.latitude, checkin.longitude) < MINIMUM_CHECKIN_DISTANCE_METERS
+        for checkin in existing_checkins
+    ):
+        raise AppException("和其他打卡点太近啦，请换个位置重试", status_code=409, code="CHECKIN_TOO_CLOSE")
     checked_at = payload.checked_at or datetime.now(UTC)
     checkin = Checkin(
         uuid=_new_uuid(),

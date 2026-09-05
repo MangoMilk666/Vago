@@ -6,20 +6,27 @@ import SwiftUI
 struct TrackingView: View {
     // 此 View 组合现有定位 Store 与 FastAPI 数据，不在这里实现 Core Location 或持久化细节。
     @EnvironmentObject private var session: SessionStore
-    // @StateObject 由此视图创建并持有一次；body 重算或地图状态更新不会重新创建定位管理器。
-    @StateObject private var tracking = LocationTrackingStore()
+    // App 注入的定位 Store 与登录会话同生命周期，离开记录 Tab 不会停止用户主动开启的记录。
+    @EnvironmentObject private var tracking: LocationTrackingStore
     @State private var trip: Trip?
     @State private var serverLocations: [FootprintLocation] = []
     @State private var checkins: [Checkin] = []
     @State private var isLoading = true
     @State private var isRefreshing = false
     @State private var isCheckingIn = false
+    @State private var isPreparingCheckin = false
     @State private var isTrackingSheetPresented = false
     @State private var isCheckinSheetPresented = false
     @State private var message = ""
     @State private var loadError = ""
     @State private var checkinError = ""
+    // 用户点“打卡”时冻结这一次的新位置，填写表单期间不会因共享位置过期而禁用提交。
+    @State private var checkinLocation: CurrentLocationFix?
+    @State private var isNearbyCheckinAlertPresented = false
     @State private var loadedUserUuid: String?
+    @State private var locatedTripUuid: String?
+    // 每次点击定位按钮递增，Canvas 据此恢复跟随模式；不是位置数据本身。
+    @State private var locateRequestID = 0
     // 保存提示的异步任务，以便连续打卡或离开页面时取消旧的三秒计时。
     @State private var messageDismissTask: Task<Void, Never>?
     private let client = APIClient()
@@ -48,14 +55,15 @@ struct TrackingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // 用户切换后才重新初始读取；地图局部状态变化不应再次触发旅行接口请求。
         .task(id: session.profile?.uuid) { await loadInitially() }
-        .onDisappear {
-            tracking.stopTracking()
-            messageDismissTask?.cancel()
-        }
+        .onDisappear { messageDismissTask?.cancel() }
         .sheet(isPresented: $isCheckinSheetPresented) {
-            CheckinSheet(isSubmitting: isCheckingIn, errorMessage: $checkinError) { locationName, note in
-                guard let trip else { return }
-                Task { await createCheckin(for: trip, locationName: locationName, note: note) }
+            CheckinSheet(
+                isSubmitting: isCheckingIn,
+                errorMessage: $checkinError,
+                isNearbyCheckinAlertPresented: $isNearbyCheckinAlertPresented
+            ) { locationName, note in
+                guard let trip, let checkinLocation else { return }
+                Task { await createCheckin(for: trip, location: checkinLocation, locationName: locationName, note: note) }
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -66,21 +74,30 @@ struct TrackingView: View {
         // 返回 some View 是不透明返回类型：调用者不需知道复杂的 ZStack 具体组合类型。
         ZStack {
             // 地图延伸至屏幕边缘并位于 TabBar 下方，保持 Apple Maps 式的连续地图画布。
-            TravelMapCanvas(locations: serverLocations, checkins: checkins, latestSample: tracking.latestSample)
+            TravelMapCanvas(
+                locations: serverLocations,
+                checkins: checkins,
+                currentLocation: tracking.currentLocation,
+                locateRequestID: locateRequestID
+            )
                 .ignoresSafeArea()
 
             TravelMapControls(
                 trip: trip,
                 isTracking: tracking.isTracking,
                 isRefreshing: isRefreshing,
-                hasLocationSample: tracking.latestSample != nil,
+                isPreparingCheckin: isPreparingCheckin,
                 message: message,
                 syncError: tracking.syncError,
+                locationError: tracking.locationError,
                 onShowTrackingControls: { isTrackingSheetPresented = true },
                 onRefresh: { Task { await refreshMap() } },
+                onLocate: {
+                    locateRequestID += 1
+                    tracking.requestCurrentLocation()
+                },
                 onCheckIn: {
-                    checkinError = ""
-                    isCheckinSheetPresented = true
+                    Task { await prepareCheckin() }
                 }
             )
         }
@@ -123,6 +140,12 @@ struct TrackingView: View {
                 checkins = try await loadedCheckins
                 if let userUuid = session.profile?.uuid {
                     tracking.prepare(tripUuid: trip.uuid, userUuid: userUuid, session: session)
+                    // 分支条件：每个进行中行程首次进入记录页时请求一次当前位置，定位不会写入足迹队列。
+                    if locatedTripUuid != trip.uuid {
+                        locatedTripUuid = trip.uuid
+                        locateRequestID += 1
+                        tracking.requestCurrentLocation()
+                    }
                     await tracking.syncPendingSamples()
                 }
             }
@@ -159,9 +182,31 @@ struct TrackingView: View {
         serverLocations = (try? await client.request(path: "footprints/trips/\(trip.uuid)/locations", tokenProvider: session)) ?? serverLocations
     }
 
-    private func createCheckin(for trip: Trip, locationName: String, note: String) async {
-        // guard let 确保没有有效 GPS 样本时不会构造坐标为 0 的无效打卡请求。
-        guard let sample = tracking.latestSample else { return }
+    private func prepareCheckin() async {
+        guard !isPreparingCheckin else { return }
+        isPreparingCheckin = true
+        defer { isPreparingCheckin = false }
+        do {
+            // 打卡前主动获取并冻结新坐标，静止超过 30 秒也不会让入口悄悄失效。
+            checkinLocation = try await tracking.requestFreshLocation()
+            checkinError = ""
+            isNearbyCheckinAlertPresented = false
+            isCheckinSheetPresented = true
+        } catch {
+            showTransientMessage(error.localizedDescription)
+        }
+    }
+
+    private func createCheckin(for trip: Trip, location: CurrentLocationFix, locationName: String, note: String) async {
+        // 分支条件：30 米内已有打卡时不禁用表单按钮，而是保留用户输入并弹出明确的换位置提示。
+        if checkins.contains(where: { checkin in
+            CLLocation(latitude: checkin.latitude, longitude: checkin.longitude)
+                .distance(from: CLLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude))
+                < 30
+        }) {
+            isNearbyCheckinAlertPresented = true
+            return
+        }
         isCheckingIn = true
         checkinError = ""
         defer { isCheckingIn = false }
@@ -169,8 +214,8 @@ struct TrackingView: View {
             let payload = CheckinRequest(
                 tripUuid: trip.uuid,
                 locationName: locationName,
-                latitude: sample.latitude,
-                longitude: sample.longitude,
+                latitude: location.coordinate.latitude,
+                longitude: location.coordinate.longitude,
                 note: note.isEmpty ? nil : note,
                 checkedAt: Date()
             )
@@ -180,19 +225,27 @@ struct TrackingView: View {
             // 仅在服务端写入成功后收起输入 sheet，保留失败时用户已填写的内容。
             isCheckinSheetPresented = false
         } catch {
-            // 打卡失败应留在弹层内，用户可以保留已填写内容后再次提交。
-            checkinError = error.localizedDescription
+            // 分支条件：其他设备刚写入附近打卡时由服务端兜底，客户端使用同一弹窗反馈。
+            if error.localizedDescription.contains("打卡点太近") || error.localizedDescription.contains("已有打卡") {
+                isNearbyCheckinAlertPresented = true
+            } else {
+                // 打卡失败应留在弹层内，用户可以保留已填写内容后再次提交。
+                checkinError = error.localizedDescription
+            }
         }
     }
 
     private func showCheckinSuccessMessage() {
-        let successMessage = "已记录本次打卡"
+        showTransientMessage("已记录本次打卡")
+    }
+
+    private func showTransientMessage(_ text: String) {
         messageDismissTask?.cancel()
-        message = successMessage
-        // 新一次打卡会取消旧任务，且仅在提示文本未被错误消息替换时才自动收起。
+        message = text
+        // 新提示会取消旧任务，且仅在文本未被后续状态替换时才自动收起。
         messageDismissTask = Task {
             try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled, message == successMessage else { return }
+            guard !Task.isCancelled, message == text else { return }
             message = ""
         }
     }
@@ -208,6 +261,8 @@ private struct CheckinSheet: View {
     let isSubmitting: Bool
     // Binding 指向父视图状态，子 Sheet 可以读取更新后的错误而不复制一份数据。
     @Binding var errorMessage: String
+    // 接收父视图的附近打卡提示状态，Alert 显示时不会关闭用户正在填写的表单。
+    @Binding var isNearbyCheckinAlertPresented: Bool
     let submit: (String, String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var locationName = ""
@@ -268,6 +323,11 @@ private struct CheckinSheet: View {
                     focusedField = nil
                 }
             }
+        }
+        .alert("暂时无法打卡", isPresented: $isNearbyCheckinAlertPresented) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text("和其他打卡点太近啦，请换个位置重试")
         }
     }
 }

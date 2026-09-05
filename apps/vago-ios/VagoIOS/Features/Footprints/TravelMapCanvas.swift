@@ -4,23 +4,39 @@ import SwiftUI
 
 /// 地图画布只负责渲染个人空间数据；定位和网络请求仍由上层现有能力处理。
 struct TravelMapCanvas: View {
-    // 三类输入分别来自服务端轨迹、服务端打卡与尚未同步的最新本地采样。
+    // 三类输入分别来自服务端轨迹、服务端打卡与当前定位；当前定位不必已经保存成足迹。
     let locations: [FootprintLocation]
     let checkins: [Checkin]
-    let latestSample: PendingLocationSample?
+    let currentLocation: CurrentLocationFix?
+    let locateRequestID: Int
+    // MapCameraPosition 是 SwiftUI Map 的可写镜头状态，允许跟随与用户自由浏览共存。
+    @State private var cameraPosition: MapCameraPosition = .automatic
+    @State private var cameraMode: CameraMode = .automatic
+    @State private var hasInitializedCamera = false
+    @State private var routeSegments: [FootprintSegment] = []
+
+    private enum CameraMode {
+        case automatic
+        case following
+        case freeBrowsing
+    }
 
     var body: some View {
         // Map 的闭包是 MapContentBuilder，内部声明的 Marker、Annotation、Polyline 会成为地图叠加物。
-        Map(initialPosition: .region(initialRegion)) {
-            // 分支条件：至少两个轨迹点才绘制连线，单点仅作为位置标记展示。
-            if locations.count > 1 {
-                MapPolyline(coordinates: locations.map(coordinate(for:)))
-                    .stroke(.indigo, lineWidth: 4)
-            }
-            // 已同步点绘制为普通标记；大量轨迹点时后续可按产品需要改为抽稀或仅显示 polyline。
-            ForEach(locations) { location in
-                Marker("轨迹", coordinate: coordinate(for: location))
-                    .tint(.indigo)
+        Map(position: $cameraPosition) {
+            // 每段都由时间顺序的有效 GPS 样本构成，断段后不会再用直线穿越未经过区域。
+            ForEach(routeSegments) { segment in
+                if segment.locations.count > 1 {
+                    MapPolyline(coordinates: segment.smoothedCoordinates)
+                        // 双层圆角描边让路线更接近旅行足迹，而不是一组生硬的 sample 连线。
+                        .stroke(.indigo.opacity(0.22), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+                    MapPolyline(coordinates: segment.smoothedCoordinates)
+                        .stroke(.indigo, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                } else if let location = segment.locations.first {
+                    // 分支条件：孤立点不连线，只用轻量符号表达曾取得过一次有效位置。
+                    Marker("轨迹", coordinate: coordinate(for: location))
+                        .tint(.indigo)
+                }
             }
             // Annotation 支持自定义 SwiftUI 内容，因此打卡使用彩色 SF Symbol 与普通轨迹区分。
             ForEach(checkins) { checkin in
@@ -31,16 +47,50 @@ struct TravelMapCanvas: View {
                         .shadow(radius: 2)
                 }
             }
-            // 分支条件：本地最新样本尚未同步时仍立即显示，满足“本地 pending + 服务端数据合并”的体验。
-            if let latestSample {
-                Marker("当前位置", coordinate: CLLocationCoordinate2D(latitude: latestSample.latitude, longitude: latestSample.longitude))
-                    .tint(.red)
+            // 分支条件：有有效定位时显示唯一当前位置标记，不再与旧采样 Marker 争夺语义。
+            if let currentLocation {
+                Annotation("当前位置", coordinate: currentLocation.coordinate) {
+                    Image(systemName: "location.circle.fill")
+                        .font(.title)
+                        .foregroundStyle(.blue)
+                        .background(.white, in: Circle())
+                }
             }
         }
         .mapStyle(.standard(elevation: .realistic))
         .mapControls {
             MapCompass()
             MapScaleView()
+        }
+        .onAppear {
+            rebuildRoutes()
+            // 页面初次进入已请求定位时，后续回调应直接带动镜头回到用户当前位置。
+            if locateRequestID > 0 {
+                cameraMode = .following
+                moveCameraToCurrentLocation()
+            }
+            initializeCameraIfNeeded()
+        }
+        .onChange(of: contentSignature) { _, _ in
+            // 分支条件：首批远端数据到达时才自动适配范围；后续刷新不得抢走用户已拖动的镜头。
+            rebuildRoutes()
+            initializeCameraIfNeeded()
+        }
+        .onChange(of: locateRequestID) { _, _ in
+            cameraMode = .following
+            moveCameraToCurrentLocation()
+        }
+        .onChange(of: currentLocation?.recordedAt) { _, _ in
+            // 分支条件：只有跟随模式才随新的 GPS 回调移动，自由浏览时保留用户手势结果。
+            if cameraMode == .following {
+                moveCameraToCurrentLocation()
+            }
+        }
+        .onChange(of: cameraPosition) { _, newPosition in
+            // positionedByUser 由 MapKit 标记真实手势移动；程序设置 camera 不会取消用户请求的跟随。
+            if newPosition.positionedByUser {
+                cameraMode = .freeBrowsing
+            }
         }
     }
 
@@ -53,21 +103,53 @@ struct TravelMapCanvas: View {
         CLLocationCoordinate2D(latitude: checkin.latitude, longitude: checkin.longitude)
     }
 
-    private var initialRegion: MKCoordinateRegion {
-        // 计算属性随输入数据变化重新推导首屏区域，不需要另存一份易过期的 camera state。
-        let center: CLLocationCoordinate2D
-        // 分支条件：优先以最新本地样本居中；没有时使用已同步轨迹或打卡，最后才显示默认位置。
-        if let latestSample {
-            center = CLLocationCoordinate2D(latitude: latestSample.latitude, longitude: latestSample.longitude)
-        } else if let location = locations.last {
-            center = coordinate(for: location)
-        } else if let checkin = checkins.last {
-            center = coordinate(for: checkin)
-        } else {
-            center = CLLocationCoordinate2D(latitude: 1.3521, longitude: 103.8198)
+    private var contentSignature: String {
+        // 仅以服务端内容的稳定标识触发首屏初始化，不因每次 SwiftUI body 重算而重置镜头。
+        locations.map(\.uuid).joined(separator: ",") + checkins.map(\.uuid).joined(separator: ",")
+    }
+
+    private func rebuildRoutes() {
+        // 将纯计算结果缓存为 State，Map camera 的细小变化不会重复处理整段轨迹。
+        routeSegments = FootprintRouteBuilder.segments(from: locations)
+    }
+
+    private func initializeCameraIfNeeded() {
+        guard !hasInitializedCamera else { return }
+        // 分支条件：尚无任何远端资料时保持自动区域，待第一批数据回来再适配真实范围。
+        guard !locations.isEmpty || !checkins.isEmpty || currentLocation != nil else { return }
+        hasInitializedCamera = true
+        cameraPosition = .region(fittedRegion)
+    }
+
+    private func moveCameraToCurrentLocation() {
+        guard let currentLocation else { return }
+        cameraPosition = .region(
+            MKCoordinateRegion(center: currentLocation.coordinate, latitudinalMeters: 900, longitudinalMeters: 900)
+        )
+    }
+
+    private var fittedRegion: MKCoordinateRegion {
+        var coordinates = locations.map(coordinate(for:)) + checkins.map(coordinate(for:))
+        if let currentLocation { coordinates.append(currentLocation.coordinate) }
+        guard let first = coordinates.first else {
+            return MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 1.3521, longitude: 103.8198),
+                latitudinalMeters: 1_000,
+                longitudinalMeters: 1_000
+            )
         }
-        // 米为单位的跨度比经纬度 delta 更直观，也能在不同纬度保持大致一致的可见范围。
-        return MKCoordinateRegion(center: center, latitudinalMeters: 1_000, longitudinalMeters: 1_000)
+        let latitudes = coordinates.map(\.latitude)
+        let longitudes = coordinates.map(\.longitude)
+        let latitudeDelta = max((latitudes.max() ?? first.latitude) - (latitudes.min() ?? first.latitude), 0.008)
+        let longitudeDelta = max((longitudes.max() ?? first.longitude) - (longitudes.min() ?? first.longitude), 0.008)
+        // 对真实范围增加留白，单点至少展示约 900 米区域，避免首屏缩放过近。
+        return MKCoordinateRegion(
+            center: CLLocationCoordinate2D(
+                latitude: ((latitudes.max() ?? first.latitude) + (latitudes.min() ?? first.latitude)) / 2,
+                longitude: ((longitudes.max() ?? first.longitude) + (longitudes.min() ?? first.longitude)) / 2
+            ),
+            span: MKCoordinateSpan(latitudeDelta: latitudeDelta * 1.35, longitudeDelta: longitudeDelta * 1.35)
+        )
     }
 }
 
@@ -77,12 +159,14 @@ struct TravelMapControls: View {
     let trip: Trip
     let isTracking: Bool
     let isRefreshing: Bool
-    let hasLocationSample: Bool
+    let isPreparingCheckin: Bool
     let message: String
     let syncError: String?
+    let locationError: String?
     // () -> Void 表示无参数、无返回值的回调；父视图将具体状态变更作为闭包传进来。
     let onShowTrackingControls: () -> Void
     let onRefresh: () -> Void
+    let onLocate: () -> Void
     let onCheckIn: () -> Void
 
     var body: some View {
@@ -122,17 +206,32 @@ struct TravelMapControls: View {
                 if let syncError {
                     Text("同步未完成：\(syncError)").mapStatusPill(tint: .red)
                 }
+                // 定位失败独立于网络同步失败，用户能直接判断下一步应检查权限还是网络。
+                if let locationError {
+                    Text(locationError).mapStatusPill(tint: .red)
+                }
                 HStack(spacing: 10) {
+                    Button(action: onLocate) {
+                        Image(systemName: "location.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("回到当前位置")
+
                     Button(action: onShowTrackingControls) {
                         Label("记录", systemImage: isTracking ? "record.circle.fill" : "location.fill")
                     }
                     .buttonStyle(.borderedProminent)
 
                     Button(action: onCheckIn) {
-                        Label("打卡", systemImage: "mappin.and.ellipse")
+                        if isPreparingCheckin {
+                            ProgressView()
+                        } else {
+                            Label("打卡", systemImage: "mappin.and.ellipse")
+                        }
                     }
                     .buttonStyle(.bordered)
-                    .disabled(!hasLocationSample)
+                    // 仅在正在获取本次位置时避免重复请求；旧坐标过期不再让入口自动禁用。
+                    .disabled(isPreparingCheckin)
                 }
                 .mapOverlaySurface()
             }

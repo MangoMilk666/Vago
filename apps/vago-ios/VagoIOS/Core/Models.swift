@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 
 /// 对齐 FastAPI `{ code, message, data }` 响应；`Value` 是泛型，调用处决定 data 的具体模型。
@@ -128,6 +129,19 @@ struct PendingLocationSample: Codable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id = "clientUuid"
         case tripUuid, latitude, longitude, accuracyM, speedMps, recordedAt
+    }
+}
+
+/// 当前可用于地图定位或打卡的单次定位结果；它不等同于已保存的足迹样本。
+struct CurrentLocationFix {
+    // Core Location 的坐标、采样时间和水平误差共同决定此位置是否足够新鲜、可信。
+    let coordinate: CLLocationCoordinate2D
+    let recordedAt: Date
+    let accuracyM: CLLocationAccuracy
+
+    /// 单次定位过期后仍可展示在地图上，但打卡等操作应重新请求系统定位。
+    func isFresh(within interval: TimeInterval = 30, now: Date = Date()) -> Bool {
+        now.timeIntervalSince(recordedAt) <= interval
     }
 }
 

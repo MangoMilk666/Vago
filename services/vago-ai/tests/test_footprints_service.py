@@ -100,3 +100,28 @@ def test_checkin_requires_an_in_progress_trip(db_session: Session):
     assert checkin.location_name == "滨海湾花园"
     assert db_session.query(Checkin).count() == 1
     assert [item.uuid for item in service.list_trip_checkins(db_session, "user-a", "trip-not-started")] == [checkin.uuid]
+
+
+def test_checkin_rejects_another_point_within_thirty_meters(db_session: Session):
+    """测试：服务端拒绝同一行程中 30 米内的重复打卡，容纳真机 GPS 漂移。"""
+    _add_trip(db_session, uuid="trip-nearby-checkin", user_uuid="user-a", status=2)
+    first_payload = CheckinCreateRequest(
+        tripUuid="trip-nearby-checkin",
+        locationName="第一次打卡",
+        latitude=1.3521,
+        longitude=103.8198,
+    )
+    service.create_checkin(db_session, "user-a", first_payload)
+
+    nearby_payload = CheckinCreateRequest(
+        tripUuid="trip-nearby-checkin",
+        locationName="重复打卡",
+        # 约 22 米，低于 30 米领域阈值，但高于旧 15 米阈值。
+        latitude=1.3523,
+        longitude=103.8198,
+    )
+    with pytest.raises(AppException) as exc_info:
+        service.create_checkin(db_session, "user-a", nearby_payload)
+
+    assert exc_info.value.code == "CHECKIN_TOO_CLOSE"
+    assert db_session.query(Checkin).count() == 1
