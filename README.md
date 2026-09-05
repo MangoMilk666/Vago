@@ -1,8 +1,16 @@
 <h1 align="center">Vago（叠迹）</h1>
 
-[![Python](https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![License](https://img.shields.io/github/license/MangoMilk666/Vago?style=flat-square)](LICENSE)
+<p align="center">
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3">
+  </a>
+  <a href="https://fastapi.tiangolo.com/">
+    <img src="https://img.shields.io/badge/FastAPI-0.111.0-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI 0.111.0">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/github/license/MangoMilk666/Vago?style=flat-square" alt="Apache License 2.0">
+  </a>
+</p>
 
 > AI-Native Personal Travel Companion — 一个以个人旅行知识、AI 规划、真实足迹与旅行回忆为核心的个性化旅行搭子。
 
