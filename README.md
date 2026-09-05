@@ -1,5 +1,9 @@
 # Vago（叠迹）
 
+[![Python](https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![License](https://img.shields.io/github/license/MangoMilk666/Vago?style=flat-square)](LICENSE)
+
 > AI-Native Personal Travel Companion — 以个人旅行知识、AI 规划、真实足迹与旅行回忆为核心的个性化旅行搭子。
 
 ## 项目简介
@@ -53,12 +57,12 @@ RAG / Qdrant 是其中用于检索大量非结构化个人资料的技术能力�
 | Personal Travel Knowledge | Phase 4A–4F 已落地 | 独立 KnowledgeSource、纯文本与 `.md/.txt` 导入、用户隔离、Web 知识库与可选语义索引 |
 | AI Travel Companion | Phase 4 起步整合 | 多轮对话、SSE、Tool Calling、结构化计划输出、用户确认后保存 |
 | Plans / Trips / Itinerary | Phase 3 核心 CRUD 已迁移 | 草稿计划、正式行程、每日安排、景点、交通、住宿、预算 |
-| Footprints | Phase 8 已完成基础采集 | iOS 前台 GPS 采样、本地缓冲、幂等同步、MapKit 轨迹与手动打卡；地点统计后续建设 |
+| Footprints | Phase 8 已完成基础闭环 | iOS 前台 GPS 采样、本地缓冲、幂等同步、MapKit 全屏轨迹线、当前位置镜头与手动打卡；地点统计后续建设 |
 | Fog-of-World Map | 后续建设 | 基于真实移动轨迹解锁地图区域 |
 | Photos / Notes | 后续建设 | 拍照、相册选择、EXIF / 时间 / 位置绑定、Trip / Spot 关联 |
 | Travel Memory | 后续建设 | 基于事实数据生成可编辑旅行总结、timeline、highlights、分享卡片 |
 | Public Community | 停止作为主线 | Feed、点赞、关注、陌生人社交不迁移到目标后端；分享能力可保留 |
-| Native iOS | Phase 8 已完成基础追踪 | SwiftUI 登录、Keychain 会话、当前行程、前台定位、轨迹同步、MapKit 与手动打卡 |
+| Native iOS | Phase 8 已完成基础追踪 | SwiftUI 登录、Keychain 会话、当前行程、前台定位、离线同步、MapKit 轨迹分段/平滑渲染、当前定位与手动打卡 |
 
 ## 当前架构
 
@@ -191,9 +195,9 @@ Vago/
 | 登录与会话 | 手机号 / OAuth、浏览器会话 | 手机号登录、Keychain 凭证、设备级 refresh session |
 | 知识与 AI | KnowledgeSource 管理、资料导入、AI 规划与对话 | 暂不复制复杂资料管理与规划流程 |
 | 计划与行程 | Plan / Trip / Itinerary CRUD、日程编辑 | 查看进行中行程与每日安排 |
-| 旅行足迹 | 仅保留导航占位页，尚未查询或渲染真实足迹数据 | 前台定位采样、本地待传队列、批量幂等同步、服务端轨迹点读取、MapKit 点位与手动打卡 |
+| 旅行足迹 | 仅保留导航占位页，尚未查询或渲染真实足迹数据 | 前台定位采样、本地待传队列、批量幂等同步、服务端轨迹读取、按时间分段的平滑路线、当前定位与手动打卡 |
 
-iOS 的轨迹数据由 FastAPI 作为长期事实来源：设备先缓存位置样本，成功同步后才从本地队列移除。当前地图渲染的是服务端轨迹**点位**，尚未绘制连续轨迹线；打卡已可写入服务端，但打卡历史列表与地图标记留待后续开发。
+iOS 的轨迹数据由 FastAPI 作为长期事实来源：设备先缓存位置样本，成功同步后才从本地队列移除。地图会按采样时间排序，以 15 米渲染阈值降采样，并在长时间间隔或异常远跳处断开，避免把不连续移动伪造成路线；随后用展示层插值绘制更自然的轨迹线。打卡已可写入服务端并渲染为地图标记；创建时会请求一条新坐标，客户端与服务端共同拒绝同一行程 30 米内的重复打卡。
 
 ## 数据库初始化
 
@@ -213,7 +217,7 @@ mysql -u <user> -p <database_name> < docs/database/db_schema.sql
 
 ## 迁移状态
 
-当前 remould 进度为 **Phase 8 — iOS Travel Tracking 基础闭环已完成**。
+当前 remould 进度为 **Phase 8 — iOS Travel Tracking 基础闭环已完成**。当前发布版本记录见 [Changelog](docs/CHANGELOG.md)。
 
 迁移优先级：
 
