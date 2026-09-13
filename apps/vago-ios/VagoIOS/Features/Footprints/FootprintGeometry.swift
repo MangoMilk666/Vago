@@ -26,12 +26,12 @@ enum FootprintRouteBuilder {
     private static let maximumContinuousDistanceMeters: CLLocationDistance = 5_000
 
     static func segments(from locations: [FootprintDisplayPoint]) -> [FootprintSegment] {
-        let sortedLocations = locations
-            .filter(isValidCoordinate)
-            // 服务端已经按时间排序；客户端仍显式排序，防止缓存、刷新或未来接口变化导致错误连线。
-            .sorted {
-                $0.recordedAt == $1.recordedAt ? $0.uuid < $1.uuid : $0.recordedAt < $1.recordedAt
-            }
+        // 拆开 filter 与 sorted，降低 Swift 编译器对链式泛型闭包的推断负担。
+        let validLocations: [FootprintDisplayPoint] = locations.filter { location in
+            isValidCoordinate(location)
+        }
+        // 服务端通常已按时间排序；客户端仍以时间和稳定合并键排序，防止缓存或刷新改变连接顺序。
+        let sortedLocations = validLocations.sorted(by: isEarlierInRoute)
         guard !sortedLocations.isEmpty else { return [] }
 
         var results: [FootprintSegment] = []
@@ -86,6 +86,11 @@ enum FootprintRouteBuilder {
         location.latitude.isFinite && location.longitude.isFinite
             && (-90...90).contains(location.latitude)
             && (-180...180).contains(location.longitude)
+    }
+
+    private static func isEarlierInRoute(_ lhs: FootprintDisplayPoint, _ rhs: FootprintDisplayPoint) -> Bool {
+        // 分支条件：时间相同时按 stableKey 排序，保证远端与本地合并后仍有确定的路线连接顺序。
+        lhs.recordedAt == rhs.recordedAt ? lhs.stableKey < rhs.stableKey : lhs.recordedAt < rhs.recordedAt
     }
     
     private static func distance(from lhs: FootprintDisplayPoint, to rhs: FootprintDisplayPoint) -> CLLocationDistance {
