@@ -5,6 +5,7 @@ from math import asin, cos, radians, sin, sqrt
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppException
@@ -70,7 +71,9 @@ def sync_location_samples(
             )
         ).all()
     )
-    # 重试时真正同步到db的样本列表
+    # 保留请求开始前已存在的键，发生并发写入冲突后据此重新计算本请求的结果计数。
+    existing_before_request = existing_uuids.copy()
+    # 重试时真正同步到 db 的样本列表。
     new_rows: list[LocationSample] = []
     for sample in payload.samples:
         # 分支条件：客户端样本已被成功接收过时，跳过写入，让移动端可安全重试整批数据。
@@ -92,7 +95,37 @@ def sync_location_samples(
         existing_uuids.add(sample.client_uuid)
     if new_rows:
         db.add_all(new_rows)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            '''
+            极端情况：1）请求 A 和请求 B 同时检查数据库，都发现 clientUuid 还不存在
+            2）A 先提交成功。
+            3）B 再提交时，触发数据库唯一约束冲突 IntegrityError。
+            4）如果不捕获，B 会收到 500，iOS 可能保留这批本地数据不断重试。
+            '''
+            # 分支条件：另一台设备或重试请求在本事务提交前写入同一幂等键时回滚并复查，
+            # 让客户端可以安全删除已被服务端确认的批次，而不是因唯一键异常永久卡住队列。
+            db.rollback()
+            persisted_uuids = set(
+                db.scalars(
+                    select(LocationSample.client_uuid).where(
+                        LocationSample.user_uuid == user_uuid,
+                        LocationSample.client_uuid.in_(client_uuids),
+                    )
+                ).all()
+            )
+            # 如果并非所有点都已存在，说明这不是可安全忽略的并发重复问题，继续抛出异常，
+            # 让系统暴露真实错误。
+            if not set(client_uuids).issubset(persisted_uuids):
+                raise
+            accepted_count = len(persisted_uuids - existing_before_request)
+            # 即使当前请求本身提交失败，也告诉客户端：
+            # 这些点已经被服务端确认，无需继续保留在本地待传队列。
+            return LocationSyncResponse(
+                acceptedCount=accepted_count,
+                duplicateCount=len(payload.samples) - accepted_count,
+            )
     return LocationSyncResponse(
         acceptedCount=len(new_rows),
         duplicateCount=len(payload.samples) - len(new_rows),

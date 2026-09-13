@@ -58,6 +58,8 @@ class LocationSampleResponse(BaseModel):
 
     # 服务端位置记录 UUID。
     uuid: str
+    # 客户端首次生成的幂等键；iOS 用它把远端快照与离线队列精确交接。
+    client_uuid: str = Field(alias="clientUuid")
     # 纬度。
     latitude: float
     # 经度。

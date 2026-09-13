@@ -3,9 +3,9 @@ import Foundation
 
 /// 供地图渲染的一段连续足迹；它是原始 GPS 样本的派生视图，不会改写服务端事实数据。
 struct FootprintSegment: Identifiable {
-    // 同一段的首尾样本 UUID 能在 SwiftUI 刷新时提供稳定标识。
+    // 同一段的首尾稳定合并键能在 SwiftUI 刷新时提供稳定标识。
     let id: String
-    let locations: [FootprintLocation]
+    let locations: [FootprintDisplayPoint]
 
     var coordinates: [CLLocationCoordinate2D] {
         locations.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
@@ -25,7 +25,7 @@ enum FootprintRouteBuilder {
     private static let maximumContinuousGap: TimeInterval = 5 * 60
     private static let maximumContinuousDistanceMeters: CLLocationDistance = 5_000
 
-    static func segments(from locations: [FootprintLocation]) -> [FootprintSegment] {
+    static func segments(from locations: [FootprintDisplayPoint]) -> [FootprintSegment] {
         let sortedLocations = locations
             .filter(isValidCoordinate)
             // 服务端已经按时间排序；客户端仍显式排序，防止缓存、刷新或未来接口变化导致错误连线。
@@ -35,7 +35,7 @@ enum FootprintRouteBuilder {
         guard !sortedLocations.isEmpty else { return [] }
 
         var results: [FootprintSegment] = []
-        var currentSegment: [FootprintLocation] = [sortedLocations[0]]
+        var currentSegment: [FootprintDisplayPoint] = [sortedLocations[0]]
 
         for location in sortedLocations.dropFirst() {
             guard let previous = currentSegment.last else { continue }
@@ -76,19 +76,19 @@ enum FootprintRouteBuilder {
         return result
     }
 
-    private static func makeSegment(_ locations: [FootprintLocation]) -> FootprintSegment {
-        let firstID = locations.first?.uuid ?? "empty"
-        let lastID = locations.last?.uuid ?? firstID
+    private static func makeSegment(_ locations: [FootprintDisplayPoint]) -> FootprintSegment {
+        let firstID = locations.first?.stableKey ?? "empty"
+        let lastID = locations.last?.stableKey ?? firstID
         return FootprintSegment(id: "\(firstID)-\(lastID)", locations: locations)
     }
     /// 过滤有效的坐标
-    private static func isValidCoordinate(_ location: FootprintLocation) -> Bool {
+    private static func isValidCoordinate(_ location: FootprintDisplayPoint) -> Bool {
         location.latitude.isFinite && location.longitude.isFinite
             && (-90...90).contains(location.latitude)
             && (-180...180).contains(location.longitude)
     }
     
-    private static func distance(from lhs: FootprintLocation, to rhs: FootprintLocation) -> CLLocationDistance {
+    private static func distance(from lhs: FootprintDisplayPoint, to rhs: FootprintDisplayPoint) -> CLLocationDistance {
         CLLocation(latitude: lhs.latitude, longitude: lhs.longitude)
             .distance(from: CLLocation(latitude: rhs.latitude, longitude: rhs.longitude))
     }

@@ -12,6 +12,12 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     @Published private(set) var latestSample: PendingLocationSample?
     @Published private(set) var isTracking = false
     @Published private(set) var pendingCount = 0
+    @Published private(set) var isSyncing = false
+    // 本地队列每次增删都会递增，Repository 据此合并最新磁盘快照而不直接修改队列。
+    @Published private(set) var localQueueRevision = 0
+    // 每次同步结束发布已确认批次，地图 Repository 据此保留点位直到远端 GET 接管。
+    @Published private(set) var lastConfirmedSamples: [PendingLocationSample] = []
+    @Published private(set) var syncCompletionRevision = 0
     @Published private(set) var syncError: String?
     @Published private(set) var locationError: String?
     @Published private(set) var isRequestingCurrentLocation = false
@@ -29,6 +35,9 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     // Continuation 将 Core Location delegate 的回调桥接为 async/await，供“点击打卡后获取一次新位置”使用。
     private var locationRequestContinuation: CheckedContinuation<CurrentLocationFix, Error>?
     private var locationRequestTimeoutTask: Task<Void, Never>?
+    private var syncDelayTask: Task<Void, Never>?
+    private var retrySyncTask: Task<Void, Never>?
+    private var retryAttempt = 0
 
     override init() {
         // override 表示重写 NSObject 的构造方法；super.init() 必须在使用 self 前完成。
@@ -59,7 +68,8 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         currentTripUuid = tripUuid
         currentUserUuid = userUuid
         self.session = session
-        pendingCount = pendingSamples(for: userUuid).count
+        pendingCount = allPendingSamples(for: userUuid).count
+        localQueueRevision += 1
     }
 
     func stopTracking() {
@@ -67,6 +77,8 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         hasRecordingIntent = false
         manager.stopUpdatingLocation()
         isTracking = false
+        // 用户停止记录时立即尝试交接仍在设备中的样本，无需等待定时器。
+        Task { _ = await syncPendingSamples() }
     }
 
     /// 为地图定位触发一次异步请求；调用方不需要等待结果时使用这个便捷入口。
@@ -108,7 +120,11 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         // 分支条件：应用离开前台时停止连续定位；恢复前台才按用户先前意图继续记录。
         if isAppActive {
             resumeTrackingIfNeeded()
+            // 回到前台是网络恢复后的常见时机，复用同一上传器重试离线队列。
+            Task { _ = await syncPendingSamples() }
         } else {
+            retrySyncTask?.cancel()
+            retrySyncTask = nil
             manager.stopUpdatingLocation()
             isTracking = false
         }
@@ -130,19 +146,27 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         }
     }
 
-    func syncPendingSamples() async {
+    /// 同步当前账号的离线样本，返回本次已被服务端确认、可交给地图临时保留的样本。
+    func syncPendingSamples() async -> [PendingLocationSample] {
         // guard let 是 Swift 的提前返回写法：缺少登录上下文时不进入后续嵌套逻辑。
-        guard let userUuid = currentUserUuid, let session else { return }
-        let pending = pendingSamples(for: userUuid)
-        guard !pending.isEmpty else { return }
+        guard let userUuid = currentUserUuid, let session else { return [] }
+        // 分支条件：已有上传请求时不并发发起第二个请求，避免相同批次交叉删除或触发服务端限流。
+        guard !isSyncing else { return [] }
+        let pending = allPendingSamples(for: userUuid)
+        guard !pending.isEmpty else { return [] }
+        isSyncing = true
+        defer { isSyncing = false }
         syncError = nil
+        var confirmed: [PendingLocationSample] = []
+        var errors: [String] = []
+        var hasRetryableError = false
 
         // 按行程和每批 100 条拆分，既满足后端契约，也让失败重试的范围保持小。
         // KeyPath 写法 \.tripUuid 表示“取元素的 tripUuid 属性”，用于按行程分组。
         let groups = Dictionary(grouping: pending, by: \.tripUuid)
-        do {
-            for (tripUuid, samples) in groups {
-                for batch in samples.chunked(into: 100) {
+        for (tripUuid, samples) in groups {
+            for batch in samples.chunked(into: 100) {
+                do {
                     let payload = LocationSyncPayload(tripUuid: tripUuid, samples: batch)
                     let _: LocationSyncResult = try await client.request(
                         path: "footprints/location-samples/sync",
@@ -151,12 +175,26 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
                         tokenProvider: session
                     )
                     removePendingSamples(batch, for: userUuid)
+                    confirmed.append(contentsOf: batch)
+                } catch {
+                    // 分支条件：某个 Trip 无法上传时只停止该行程后续批次，其余 Trip 仍可继续同步。
+                    errors.append("\(tripUuid)：\(error.localizedDescription)")
+                    hasRetryableError = hasRetryableError || isRetryableSyncError(error)
+                    break
                 }
             }
-        } catch {
-            // 同步失败时不删除本地队列，下一次采样、打开页面或手动刷新都会再次尝试。
-            syncError = error.localizedDescription
         }
+        // 同步失败时不删除该批队列，下一次定时、前台恢复或手动刷新都会再次尝试。
+        syncError = errors.isEmpty ? nil : errors.joined(separator: "\n")
+        lastConfirmedSamples = confirmed
+        syncCompletionRevision += 1
+        // 分支条件：仅临时网络和服务端错误进入有限退避；删除行程等业务错误保留队列并等待用户处理。
+        if hasRetryableError {
+            scheduleRetryIfNeeded()
+        } else if errors.isEmpty {
+            retryAttempt = 0
+        }
+        return confirmed
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -233,8 +271,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         )
         latestSample = sample
         append(sample, for: userUuid)
-        // Task 创建独立异步任务，采样回调无需等待上传结束，避免阻塞后续定位事件。
-        Task { await syncPendingSamples() }
+        scheduleSyncAfterSampling()
     }
 
     private func handleLocationFailure(_ error: Error) {
@@ -285,12 +322,18 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways
     }
 
+    /// 返回当前账号指定行程的磁盘待传快照；只读暴露给 Repository，写入仍由 Store 管理。
+    func pendingSamples(for tripUuid: String) -> [PendingLocationSample] {
+        guard let currentUserUuid else { return [] }
+        return allPendingSamples(for: currentUserUuid).filter { $0.tripUuid == tripUuid }
+    }
+
     private func storageKey(for userUuid: String) -> String {
         // 以 userUuid 隔离 UserDefaults key，避免同一设备切换账号后混读待传轨迹。
         "vago.location.pending.\(userUuid)"
     }
 
-    private func pendingSamples(for userUuid: String) -> [PendingLocationSample] {
+    private func allPendingSamples(for userUuid: String) -> [PendingLocationSample] {
         guard let data = UserDefaults.standard.data(forKey: storageKey(for: userUuid)) else { return [] }
         // 分支条件：本地缓存无法解码时清空损坏数据，避免它阻塞新的采样和同步。
         guard let samples = try? JSONDecoder().decode([PendingLocationSample].self, from: data) else {
@@ -301,14 +344,14 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     }
 
     private func append(_ sample: PendingLocationSample, for userUuid: String) {
-        var samples = pendingSamples(for: userUuid)
+        var samples = allPendingSamples(for: userUuid)
         samples.append(sample)
         save(samples, for: userUuid)
     }
 
     private func removePendingSamples(_ sentSamples: [PendingLocationSample], for userUuid: String) {
         let sentIds = Set(sentSamples.map(\.id))
-        save(pendingSamples(for: userUuid).filter { !sentIds.contains($0.id) }, for: userUuid)
+        save(allPendingSamples(for: userUuid).filter { !sentIds.contains($0.id) }, for: userUuid)
     }
 
     private func save(_ samples: [PendingLocationSample], for userUuid: String) {
@@ -317,6 +360,47 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
             UserDefaults.standard.set(data, forKey: storageKey(for: userUuid))
         }
         pendingCount = samples.count
+        localQueueRevision += 1
+    }
+
+    private func scheduleSyncAfterSampling() {
+        guard let currentUserUuid else { return }
+        // 分支条件：积累到 20 点时立即上传；较少样本在约 30 秒后合并上传，降低网络抖动和限流风险。
+        if allPendingSamples(for: currentUserUuid).count >= 20 {
+            syncDelayTask?.cancel()
+            syncDelayTask = nil
+            Task { _ = await syncPendingSamples() }
+        } else if syncDelayTask == nil {
+            syncDelayTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled else { return }
+                self?.syncDelayTask = nil
+                _ = await self?.syncPendingSamples()
+            }
+        }
+    }
+
+    private func isRetryableSyncError(_ error: Error) -> Bool {
+        if let apiError = error as? APIError,
+           case let .server(_, statusCode) = apiError {
+            return statusCode == 429 || statusCode >= 500
+        }
+        // URLSession 失败通常是弱网或断网，保留同一 clientUuid 后可以安全重试。
+        return !(error is APIError)
+    }
+
+    private func scheduleRetryIfNeeded() {
+        guard retrySyncTask == nil else { return }
+        retryAttempt = min(retryAttempt + 1, 4)
+        let delay = min(30.0 * pow(2, Double(retryAttempt - 1)), 300.0)
+        retrySyncTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            self?.retrySyncTask = nil
+            // 分支条件：退避结束后仅前台重试，遵守当前应用不申请后台定位/上传的边界。
+            guard self?.isAppActive == true else { return }
+            _ = await self?.syncPendingSamples()
+        }
     }
 }
 

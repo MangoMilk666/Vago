@@ -9,7 +9,8 @@ struct TrackingView: View {
     // App 注入的定位 Store 与登录会话同生命周期，离开记录 Tab 不会停止用户主动开启的记录。
     @EnvironmentObject private var tracking: LocationTrackingStore
     @State private var trip: Trip?
-    @State private var serverLocations: [FootprintLocation] = []
+    // Repository 只负责合并显示数据，定位采集与上传仍复用既有 LocationTrackingStore。
+    @StateObject private var footprintRepository = FootprintRepository()
     @State private var checkins: [Checkin] = []
     @State private var isLoading = true
     @State private var isRefreshing = false
@@ -25,6 +26,8 @@ struct TrackingView: View {
     @State private var isNearbyCheckinAlertPresented = false
     @State private var loadedUserUuid: String?
     @State private var locatedTripUuid: String?
+    // 离线冷启动使用的是上次已验证的行程摘要，联网成功前不能把它当作实时服务端状态。
+    @State private var isTripStatusUnverified = false
     // 每次点击定位按钮递增，Canvas 据此恢复跟随模式；不是位置数据本身。
     @State private var locateRequestID = 0
     // 保存提示的异步任务，以便连续打卡或离开页面时取消旧的三秒计时。
@@ -55,6 +58,14 @@ struct TrackingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // 用户切换后才重新初始读取；地图局部状态变化不应再次触发旅行接口请求。
         .task(id: session.profile?.uuid) { await loadInitially() }
+        .onChange(of: tracking.localQueueRevision) { _, _ in
+            // 新采样落盘或成功批次移除后立即刷新合并视图，地图不必等待下一次 GET。
+            footprintRepository.refreshLocalSamples(from: tracking)
+        }
+        .onChange(of: tracking.syncCompletionRevision) { _, _ in
+            // 成功上传后先由内存确认副本接住显示，再等待远端快照回传同一 clientUuid。
+            footprintRepository.recordConfirmedSamples(tracking.lastConfirmedSamples, tracking: tracking)
+        }
         .onDisappear { messageDismissTask?.cancel() }
         .sheet(isPresented: $isCheckinSheetPresented) {
             CheckinSheet(
@@ -75,7 +86,7 @@ struct TrackingView: View {
         ZStack {
             // 地图延伸至屏幕边缘并位于 TabBar 下方，保持 Apple Maps 式的连续地图画布。
             TravelMapCanvas(
-                locations: serverLocations,
+                locations: footprintRepository.displayPoints,
                 checkins: checkins,
                 currentLocation: tracking.currentLocation,
                 locateRequestID: locateRequestID
@@ -90,6 +101,7 @@ struct TrackingView: View {
                 message: message,
                 syncError: tracking.syncError,
                 locationError: tracking.locationError,
+                offlineStatusMessage: isTripStatusUnverified ? "离线状态，行程待联网验证" : nil,
                 onShowTrackingControls: { isTrackingSheetPresented = true },
                 onRefresh: { Task { await refreshMap() } },
                 onLocate: {
@@ -128,26 +140,38 @@ struct TrackingView: View {
                 isLoading = false
             }
         }
+        // 网络读取前先恢复最近一次已验证的进行中行程和本地队列，断网时仍可查看、继续记录足迹。
+        if let userUuid = session.profile?.uuid, let cachedTrip = FootprintRepository.cachedActiveTrip(for: userUuid) {
+            trip = cachedTrip
+            isTripStatusUnverified = true
+            tracking.prepare(tripUuid: cachedTrip.uuid, userUuid: userUuid, session: session)
+            footprintRepository.prepare(userUuid: userUuid, tripUuid: cachedTrip.uuid, tracking: tracking)
+        }
         do {
             let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session)
             trip = trips.first(where: { $0.status == 2 })
+            isTripStatusUnverified = false
             // 分支条件：存在进行中行程时才读取其轨迹与打卡，并恢复该用户的待传队列。
-            if let trip {
+            if let trip, let userUuid = session.profile?.uuid {
+                FootprintRepository.cacheActiveTrip(trip, for: userUuid)
+                tracking.prepare(tripUuid: trip.uuid, userUuid: userUuid, session: session)
+                footprintRepository.prepare(userUuid: userUuid, tripUuid: trip.uuid, tracking: tracking)
                 // async let 并行启动两个独立请求；分别 await 时才汇合结果，比串行读取更快。
                 async let loadedLocations: [FootprintLocation] = client.request(path: "footprints/trips/\(trip.uuid)/locations", tokenProvider: session)
                 async let loadedCheckins: [Checkin] = client.request(path: "footprints/trips/\(trip.uuid)/checkins", tokenProvider: session)
-                serverLocations = try await loadedLocations
+                let remoteLocations = try await loadedLocations
+                // 分支条件：异步请求回来前若用户已切换行程，不让旧结果覆盖新地图。
+                guard self.trip?.uuid == trip.uuid, session.profile?.uuid == userUuid else { return }
+                footprintRepository.replaceRemoteLocations(remoteLocations)
                 checkins = try await loadedCheckins
-                if let userUuid = session.profile?.uuid {
-                    tracking.prepare(tripUuid: trip.uuid, userUuid: userUuid, session: session)
-                    // 分支条件：每个进行中行程首次进入记录页时请求一次当前位置，定位不会写入足迹队列。
-                    if locatedTripUuid != trip.uuid {
-                        locatedTripUuid = trip.uuid
-                        locateRequestID += 1
-                        tracking.requestCurrentLocation()
-                    }
-                    await tracking.syncPendingSamples()
+                // 分支条件：每个进行中行程首次进入记录页时请求一次当前位置，定位不会写入足迹队列。
+                if locatedTripUuid != trip.uuid {
+                    locatedTripUuid = trip.uuid
+                    locateRequestID += 1
+                    tracking.requestCurrentLocation()
                 }
+                let confirmed = await tracking.syncPendingSamples()
+                footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
             }
         } catch {
             // 分支条件：首次加载无可展示地图时展示独立错误页；已有数据刷新失败则保留原地图。
@@ -177,9 +201,15 @@ struct TrackingView: View {
 
     private func syncAndReload() async {
         // 同步本地队列后只重新拉轨迹点，避免为一个按钮重复读取行程与打卡数据。
-        await tracking.syncPendingSamples()
+        let confirmed = await tracking.syncPendingSamples()
+        footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
         guard let trip else { return }
-        serverLocations = (try? await client.request(path: "footprints/trips/\(trip.uuid)/locations", tokenProvider: session)) ?? serverLocations
+        if let remoteLocations: [FootprintLocation] = try? await client.request(
+            path: "footprints/trips/\(trip.uuid)/locations",
+            tokenProvider: session
+        ) {
+            footprintRepository.replaceRemoteLocations(remoteLocations)
+        }
     }
 
     private func prepareCheckin() async {

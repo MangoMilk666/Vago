@@ -13,6 +13,8 @@ final class SessionStore: ObservableObject {
     // token 不发布到 UI，避免令牌变化无意义地触发视图重绘。
     private(set) var tokens: TokenPair?
     private let client = APIClient()
+    // 并发请求同时收到 401 时共用同一个 refresh Task，避免令牌轮换后互相覆盖。
+    private var refreshTask: Task<String, Error>?
 
     func restoreSession() async {
         // async 函数可在 await 处挂起，网络请求期间不会阻塞主线程和首屏动画。
@@ -24,12 +26,25 @@ final class SessionStore: ObservableObject {
             self.tokens = tokens
             // 不仅信任本地 Keychain：启动时请求 profile，确认 token 仍被服务端接受。
             profile = try await client.request(path: "users/profile", tokenProvider: self)
+            SessionProfileCache.save(profile)
             state = .signedIn
         } catch {
-            // 分支条件：本地令牌过期或不可用时清理会话，避免进入半登录状态。
-            KeychainStore.clear()
-            tokens = nil
-            state = .signedOut
+            // 分支条件：临时网络不可达时保留 Keychain 凭证，并用最近资料恢复只读离线界面；
+            // 服务端真正拒绝令牌时才清除登录态，不能把断网误判为退出。
+            if Self.isTemporaryNetworkError(error) {
+                if let cachedProfile = SessionProfileCache.load() {
+                    profile = cachedProfile
+                    state = .signedIn
+                } else {
+                    // 首次离线启动缺少展示资料时只能停留登录页，但仍保留凭证，待网络恢复后继续验证。
+                    state = .signedOut
+                }
+            } else {
+                KeychainStore.clear()
+                tokens = nil
+                profile = nil
+                state = .signedOut
+            }
         }
     }
 
@@ -42,6 +57,7 @@ final class SessionStore: ObservableObject {
         try KeychainStore.save(response.tokens)
         tokens = response.tokens
         profile = response.userInfo
+        SessionProfileCache.save(response.userInfo)
         state = .signedIn
     }
 
@@ -68,6 +84,7 @@ final class SessionStore: ObservableObject {
         KeychainStore.clear()
         tokens = nil
         profile = nil
+        SessionProfileCache.clear()
         state = .signedOut
     }
 
@@ -79,15 +96,55 @@ final class SessionStore: ObservableObject {
 
     fileprivate func refreshAccessToken() async throws -> String {
         guard let tokens else { throw APIError.unauthorized }
+        // 分支条件：已有刷新任务时等待同一结果，避免多个请求各自刷新导致后发 token 失效。
+        if let refreshTask {
+            return try await refreshTask.value
+        }
         // refresh token 只用于换取新 token 对，随后立即覆盖 Keychain 中的旧值。
-        let refreshed: TokenPair = try await client.request(
-            path: "auth/token/refresh",
-            method: "POST",
-            body: RefreshRequest(refreshToken: tokens.refreshToken)
-        )
-        try KeychainStore.save(refreshed)
-        self.tokens = refreshed
-        return refreshed.accessToken
+        let task = Task { @MainActor [client] () throws -> String in
+            let refreshed: TokenPair = try await client.request(
+                path: "auth/token/refresh",
+                method: "POST",
+                body: RefreshRequest(refreshToken: tokens.refreshToken)
+            )
+            try KeychainStore.save(refreshed)
+            self.tokens = refreshed
+            return refreshed.accessToken
+        }
+        refreshTask = task
+        defer { refreshTask = nil }
+        return try await task.value
+    }
+
+    private static func isTemporaryNetworkError(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        // 这些错误表示当前无法验证服务端会话，不代表 JWT 已失效。
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost, .timedOut,
+                .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+/// 仅缓存已登录账号的最小展示资料，支持断网时恢复本地待传足迹；不保存任何 token。
+private enum SessionProfileCache {
+    private static let storageKey = "vago.session.cached-profile"
+
+    static func save(_ profile: UserProfile?) {
+        guard let profile, let data = try? JSONEncoder().encode(profile) else { return }
+        UserDefaults.standard.set(data, forKey: storageKey)
+    }
+
+    static func load() -> UserProfile? {
+        guard let data = UserDefaults.standard.data(forKey: storageKey) else { return nil }
+        return try? JSONDecoder().decode(UserProfile.self, from: data)
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: storageKey)
     }
 }
 
@@ -116,6 +173,11 @@ final class APIClient {
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
             // 格式化器限定在 Sendable 解码闭包内，避免 Swift 6 的 Actor 隔离警告。
+            let fractionalISO8601 = ISO8601DateFormatter()
+            fractionalISO8601.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let timestamp = fractionalISO8601.date(from: value) {
+                return timestamp
+            }
             if let timestamp = ISO8601DateFormatter().date(from: value) {
                 return timestamp
             }

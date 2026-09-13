@@ -5,7 +5,7 @@ import SwiftUI
 /// 地图画布只负责渲染个人空间数据；定位和网络请求仍由上层现有能力处理。
 struct TravelMapCanvas: View {
     // 三类输入分别来自服务端轨迹、服务端打卡与当前定位；当前定位不必已经保存成足迹。
-    let locations: [FootprintLocation]
+    let locations: [FootprintDisplayPoint]
     let checkins: [Checkin]
     let currentLocation: CurrentLocationFix?
     let locateRequestID: Int
@@ -94,7 +94,7 @@ struct TravelMapCanvas: View {
         }
     }
 
-    private func coordinate(for location: FootprintLocation) -> CLLocationCoordinate2D {
+    private func coordinate(for location: FootprintDisplayPoint) -> CLLocationCoordinate2D {
         // MapKit 使用 CLLocationCoordinate2D；领域模型保留 Double 便于 JSON 解码与服务端契约对齐。
         CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
     }
@@ -105,7 +105,7 @@ struct TravelMapCanvas: View {
 
     private var contentSignature: String {
         // 仅以服务端内容的稳定标识触发首屏初始化，不因每次 SwiftUI body 重算而重置镜头。
-        locations.map(\.uuid).joined(separator: ",") + checkins.map(\.uuid).joined(separator: ",")
+        locations.map(\.stableKey).joined(separator: ",") + checkins.map(\.uuid).joined(separator: ",")
     }
 
     private func rebuildRoutes() {
@@ -163,6 +163,7 @@ struct TravelMapControls: View {
     let message: String
     let syncError: String?
     let locationError: String?
+    let offlineStatusMessage: String?
     // () -> Void 表示无参数、无返回值的回调；父视图将具体状态变更作为闭包传进来。
     let onShowTrackingControls: () -> Void
     let onRefresh: () -> Void
@@ -209,6 +210,9 @@ struct TravelMapControls: View {
                 // 定位失败独立于网络同步失败，用户能直接判断下一步应检查权限还是网络。
                 if let locationError {
                     Text(locationError).mapStatusPill(tint: .red)
+                }
+                if let offlineStatusMessage {
+                    Text(offlineStatusMessage).mapStatusPill(tint: .orange)
                 }
                 HStack(spacing: 10) {
                     Button(action: onLocate) {

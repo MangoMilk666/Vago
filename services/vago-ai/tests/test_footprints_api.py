@@ -68,6 +68,8 @@ def test_footprint_routes_sync_and_checkin_for_active_trip(client: TestClient):
     assert sync_response.status_code == 200
     assert sync_response.json()["data"]["acceptedCount"] == 1
     assert locations_response.json()["data"][0]["latitude"] == 1.3521
+    # GET 回传 clientUuid 后，iOS 才能与本地离线队列按同一幂等键精确合并。
+    assert locations_response.json()["data"][0]["clientUuid"] == "ios-api-sample-1"
     assert locations_response.json()["data"][0]["recordedAt"].endswith("Z")
     assert checkin_response.json()["data"]["locationName"] == "滨海湾花园"
     assert checkin_response.json()["data"]["checkedAt"].endswith("Z")

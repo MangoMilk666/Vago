@@ -54,7 +54,7 @@ struct UserProfile: Codable, Identifiable {
 }
 
 /// 正式行程摘要。status 与 FastAPI Trip 状态一致：1 未开始、2 进行中、3 已结束。
-struct Trip: Decodable, Identifiable {
+struct Trip: Codable, Identifiable {
     // 行程主键，同时作为 SwiftUI 列表稳定标识。
     let uuid: String
     // 用户输入或计划转换后生成的行程名称。
@@ -149,6 +149,8 @@ struct CurrentLocationFix {
 struct FootprintLocation: Decodable, Identifiable {
     // 已写入 FastAPI/MySQL 的轨迹点主键，与本地 PendingLocationSample 的 id 不同。
     let uuid: String
+    // 新版服务端回传客户端幂等键；兼容旧服务部署窗口时允许该字段缺失。
+    let clientUuid: String?
     let latitude: Double
     let longitude: Double
     let accuracyM: Double?
