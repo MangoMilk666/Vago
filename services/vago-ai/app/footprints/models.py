@@ -37,6 +37,8 @@ class LocationSample(Base):
     accuracy_m: Mapped[float | None] = mapped_column(Float)
     # 采样时移动速度，单位米/秒。
     speed_mps: Mapped[float | None] = mapped_column(Float)
+    # 一次连续前台记录的段标识；为空表示由旧客户端写入的历史样本。
+    tracking_segment_uuid: Mapped[str | None] = mapped_column(String(36))
     # 设备实际记录时间，服务端不使用接收时间代替它。
     recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     # 服务端首次持久化时间。

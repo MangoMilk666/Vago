@@ -104,6 +104,8 @@ struct PendingLocationSample: Codable, Identifiable {
     let longitude: Double
     let accuracyM: Double?
     let speedMps: Double?
+    // 一段连续前台记录共用的标识；它只表达路线断点，与服务端会话和 clientUuid 无关。
+    let trackingSegmentUuid: String?
     let recordedAt: Date
 
     // 默认参数 id: UUID = UUID() 让调用方创建普通样本时无需手动生成标识。
@@ -114,6 +116,7 @@ struct PendingLocationSample: Codable, Identifiable {
         longitude: Double,
         accuracyM: Double?,
         speedMps: Double?,
+        trackingSegmentUuid: String? = nil,
         recordedAt: Date
     ) {
         self.id = id
@@ -122,13 +125,14 @@ struct PendingLocationSample: Codable, Identifiable {
         self.longitude = longitude
         self.accuracyM = accuracyM
         self.speedMps = speedMps
+        self.trackingSegmentUuid = trackingSegmentUuid
         self.recordedAt = recordedAt
     }
 
     /// Codable 默认将 id 编码为 UUID；服务端契约使用 clientUuid，因此显式映射字段名称。
     enum CodingKeys: String, CodingKey {
         case id = "clientUuid"
-        case tripUuid, latitude, longitude, accuracyM, speedMps, recordedAt
+        case tripUuid, latitude, longitude, accuracyM, speedMps, trackingSegmentUuid, recordedAt
     }
 }
 
@@ -155,6 +159,8 @@ struct FootprintLocation: Decodable, Identifiable {
     let longitude: Double
     let accuracyM: Double?
     let speedMps: Double?
+    // 服务端保存的连续记录段；历史样本为 nil，客户端仍可按时间和距离推断断点。
+    let trackingSegmentUuid: String?
     let recordedAt: Date
 
     var id: String { uuid }

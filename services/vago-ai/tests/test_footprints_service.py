@@ -60,6 +60,7 @@ def test_location_sync_is_user_scoped_and_idempotent(db_session: Session):
                 "latitude": 1.3521,
                 "longitude": 103.8198,
                 "accuracyM": 12.5,
+                "trackingSegmentUuid": "c5e49cc2-75c2-4d06-b87d-728b30b83b97",
                 "recordedAt": datetime(2026, 9, 4, 4, 0, tzinfo=UTC),
             }
         ],
@@ -72,7 +73,9 @@ def test_location_sync_is_user_scoped_and_idempotent(db_session: Session):
     assert second.accepted_count == 0
     assert second.duplicate_count == 1
     assert db_session.query(LocationSample).count() == 1
-    assert len(service.list_trip_locations(db_session, "user-a", "trip-a")) == 1
+    locations = service.list_trip_locations(db_session, "user-a", "trip-a")
+    assert len(locations) == 1
+    assert locations[0].tracking_segment_uuid == "c5e49cc2-75c2-4d06-b87d-728b30b83b97"
     with pytest.raises(AppException) as exc_info:
         service.list_trip_locations(db_session, "user-b", "trip-a")
     assert exc_info.value.code == "TRIP_NOT_FOUND"

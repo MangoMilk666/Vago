@@ -15,6 +15,8 @@ struct FootprintDisplayPoint: Identifiable {
     let longitude: Double
     let accuracyM: Double?
     let speedMps: Double?
+    // 显式记录段用于稳定断线；nil 表示历史样本尚未携带该信息。
+    let trackingSegmentUuid: String?
     let recordedAt: Date
     let source: Source
 
@@ -28,6 +30,7 @@ struct FootprintDisplayPoint: Identifiable {
             longitude: location.longitude,
             accuracyM: location.accuracyM,
             speedMps: location.speedMps,
+            trackingSegmentUuid: location.trackingSegmentUuid,
             recordedAt: location.recordedAt,
             source: .remote
         )
@@ -41,6 +44,7 @@ struct FootprintDisplayPoint: Identifiable {
             longitude: sample.longitude,
             accuracyM: sample.accuracyM,
             speedMps: sample.speedMps,
+            trackingSegmentUuid: sample.trackingSegmentUuid,
             recordedAt: sample.recordedAt,
             source: source
         )

@@ -38,6 +38,13 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     private var syncDelayTask: Task<Void, Never>?
     private var retrySyncTask: Task<Void, Never>?
     private var retryAttempt = 0
+    // 每次用户开始记录或从后台回到前台都会创建新段，避免把中断前后的点错误连成一条线。
+    private var trackingSegmentUuid: String?
+
+    // 以下阈值只拦截确定不可用的实时定位，不用来删除真实但跨度较大的旅行移动。
+    private let maximumAcceptedAccuracyMeters: CLLocationAccuracy = 100
+    private let maximumPastSampleAge: TimeInterval = 120
+    private let maximumFutureSampleOffset: TimeInterval = 60
 
     override init() {
         // override 表示重写 NSObject 的构造方法；super.init() 必须在使用 self 前完成。
@@ -53,6 +60,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         // 将运行期上下文准备与“开始系统定位”分开，页面加载时可单独调用 prepare 恢复离线队列。
         prepare(tripUuid: tripUuid, userUuid: userUuid, session: session)
         hasRecordingIntent = true
+        trackingSegmentUuid = UUID().uuidString.lowercased()
         locationError = nil
         requestLocationPermissionIfNeeded()
         // 分支条件：用户已授予定位权限时立即开始采样；否则等待系统回调后的授权结果。
@@ -75,6 +83,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     func stopTracking() {
         // 用户明确停止后清除记录意图；之后的授权或迟到定位回调不得再次写入足迹。
         hasRecordingIntent = false
+        trackingSegmentUuid = nil
         manager.stopUpdatingLocation()
         isTracking = false
         // 用户停止记录时立即尝试交接仍在设备中的样本，无需等待定时器。
@@ -127,6 +136,8 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
             retrySyncTask = nil
             manager.stopUpdatingLocation()
             isTracking = false
+            // 分支条件：前台连续记录被生命周期打断时清空旧段，恢复后必须生成新的持久化边界。
+            trackingSegmentUuid = nil
         }
     }
 
@@ -207,10 +218,10 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        // 分支条件：系统没有返回位置时无需创建异步任务。
-        guard let location = locations.last else { return }
+        // 分支条件：系统没有返回位置时无需创建异步任务；有效数组中的每个点都应按时间处理，不能只取最后一个。
+        guard !locations.isEmpty else { return }
         Task { @MainActor [weak self] in
-            self?.handleLocationUpdate(location)
+            self?.handleLocationUpdates(locations)
         }
     }
 
@@ -239,39 +250,68 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         }
     }
 
-    private func handleLocationUpdate(_ location: CLLocation) {
-        // CLLocation 同时包含坐标、精度、速度和时间戳，是 Core Location 的单次原始测量结果。
-        // 分支条件：系统报告负精度或缓存过旧坐标时，丢弃不可靠样本。
-        guard location.horizontalAccuracy >= 0, location.timestamp > Date().addingTimeInterval(-120) else {
-            locationError = "暂时无法取得有效定位，请稍后重试。"
-            return
+    private func handleLocationUpdates(_ locations: [CLLocation]) {
+        var didReceiveValidFix = false
+        for location in locations.sorted(by: { $0.timestamp < $1.timestamp }) {
+            // 分支条件：坐标、时间或精度明显无效时仅丢弃本点，不让一次漂移阻断后续正常样本。
+            guard isUsableRealtimeLocation(location) else { continue }
+            didReceiveValidFix = true
+            let fix = CurrentLocationFix(
+                coordinate: location.coordinate,
+                recordedAt: location.timestamp,
+                accuracyM: location.horizontalAccuracy
+            )
+            // 每次有效回调都更新可展示的当前位置；Locate 不需要行程，也绝不因此保存轨迹。
+            currentLocation = fix
+            locationError = nil
+            finishLocationRequest(with: .success(fix))
+            appendTrackingSampleIfNeeded(from: location)
         }
-        // 每次有效回调都先更新可展示的当前位置；Locate 不需要行程，也绝不因此保存轨迹。
-        let fix = CurrentLocationFix(
-            coordinate: location.coordinate,
-            recordedAt: location.timestamp,
-            accuracyM: location.horizontalAccuracy
-        )
-        currentLocation = fix
-        locationError = nil
-        finishLocationRequest(with: .success(fix))
+        // 分支条件：本批 Core Location 回调没有任何可信点时才提示失败，避免有效点后被一个坏点覆盖状态。
+        if !didReceiveValidFix {
+            locationError = "暂时无法取得有效定位，请稍后重试。"
+        }
+    }
+
+    private func appendTrackingSampleIfNeeded(from location: CLLocation) {
         // 分支条件：仅用户已开始记录、应用在前台且会话/行程完整时才持久化 GPS 样本。
         guard hasRecordingIntent, isAppActive,
               let tripUuid = currentTripUuid,
               let userUuid = currentUserUuid,
               let session,
               case .signedIn = session.state else { return }
+        // 分支条件：同一时间和坐标的重复 delegate 回调没有新旅行事实，不写入队列。
+        if let latestSample,
+           latestSample.tripUuid == tripUuid,
+           latestSample.recordedAt == location.timestamp,
+           latestSample.latitude == location.coordinate.latitude,
+           latestSample.longitude == location.coordinate.longitude {
+            return
+        }
         let sample = PendingLocationSample(
             tripUuid: tripUuid,
             latitude: location.coordinate.latitude,
             longitude: location.coordinate.longitude,
             accuracyM: location.horizontalAccuracy,
             speedMps: location.speed >= 0 ? location.speed : nil,
+            trackingSegmentUuid: trackingSegmentUuid,
             recordedAt: location.timestamp
         )
         latestSample = sample
         append(sample, for: userUuid)
         scheduleSyncAfterSampling()
+    }
+
+    private func isUsableRealtimeLocation(_ location: CLLocation, now: Date = Date()) -> Bool {
+        let coordinate = location.coordinate
+        // isFinite 排除 NaN/Infinity；范围检查防止异常驱动把无效坐标带入持久化队列。
+        guard coordinate.latitude.isFinite, coordinate.longitude.isFinite,
+              (-90...90).contains(coordinate.latitude), (-180...180).contains(coordinate.longitude),
+              location.horizontalAccuracy >= 0, location.horizontalAccuracy <= maximumAcceptedAccuracyMeters else {
+            return false
+        }
+        let age = now.timeIntervalSince(location.timestamp)
+        return age <= maximumPastSampleAge && age >= -maximumFutureSampleOffset
     }
 
     private func handleLocationFailure(_ error: Error) {
@@ -293,6 +333,10 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         guard isAppActive, isAuthorized, hasRecordingIntent,
               currentTripUuid != nil, currentUserUuid != nil,
               let session, case .signedIn = session.state else { return }
+        // 分支条件：从后台中断恢复时旧段已被清空，现在创建新段以在服务端和其他设备上保留断点。
+        if trackingSegmentUuid == nil {
+            trackingSegmentUuid = UUID().uuidString.lowercased()
+        }
         manager.startUpdatingLocation()
         isTracking = true
     }
@@ -304,6 +348,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         isTracking = false
         currentLocation = nil
         latestSample = nil
+        trackingSegmentUuid = nil
         syncError = nil
         locationError = nil
     }

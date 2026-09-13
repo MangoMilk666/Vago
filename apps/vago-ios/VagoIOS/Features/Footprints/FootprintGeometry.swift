@@ -24,6 +24,8 @@ enum FootprintRouteBuilder {
     // 重要逻辑: 两次记录间隔过长或跨越过远时宁可断线，不能在地图上伪造一段经过路径。
     private static let maximumContinuousGap: TimeInterval = 5 * 60
     private static let maximumContinuousDistanceMeters: CLLocationDistance = 5_000
+    private static let maximumTrustedAccuracyMeters: CLLocationAccuracy = 100
+    private static let maximumLikelyContinuousSpeedMetersPerSecond: CLLocationSpeed = 100
 
     static func segments(from locations: [FootprintDisplayPoint]) -> [FootprintSegment] {
         // 拆开 filter 与 sorted，降低 Swift 编译器对链式泛型闭包的推断负担。
@@ -42,8 +44,11 @@ enum FootprintRouteBuilder {
             let timeGap = location.recordedAt.timeIntervalSince(previous.recordedAt)
             let distance = distance(from: previous, to: location)
 
-            // 分支条件：时间倒退、长时间无样本或异常远跳时关闭当前段，避免产生跨城市直线。
-            if timeGap <= 0 || timeGap > maximumContinuousGap || distance > maximumContinuousDistanceMeters {
+            // 分支条件：显式段切换、时间倒退、长时间无样本或不可信远跳时关闭当前段，避免产生跨城市直线。
+            if hasExplicitSegmentBoundary(previous, location)
+                || timeGap <= 0
+                || timeGap > maximumContinuousGap
+                || isUntrustworthyConnection(distance: distance, timeGap: timeGap, previous: previous, next: location) {
                 results.append(makeSegment(currentSegment))
                 currentSegment = [location]
             } else if distance < minimumRenderDistanceMeters {
@@ -86,6 +91,8 @@ enum FootprintRouteBuilder {
         location.latitude.isFinite && location.longitude.isFinite
             && (-90...90).contains(location.latitude)
             && (-180...180).contains(location.longitude)
+            // 分支条件：精度缺失的旧样本可继续显示；已知精度超过 100 米的点只在显示层过滤。
+            && (location.accuracyM == nil || (location.accuracyM! >= 0 && location.accuracyM! <= maximumTrustedAccuracyMeters))
     }
 
     private static func isEarlierInRoute(_ lhs: FootprintDisplayPoint, _ rhs: FootprintDisplayPoint) -> Bool {
@@ -96,6 +103,28 @@ enum FootprintRouteBuilder {
     private static func distance(from lhs: FootprintDisplayPoint, to rhs: FootprintDisplayPoint) -> CLLocationDistance {
         CLLocation(latitude: lhs.latitude, longitude: lhs.longitude)
             .distance(from: CLLocation(latitude: rhs.latitude, longitude: rhs.longitude))
+    }
+
+    private static func hasExplicitSegmentBoundary(_ previous: FootprintDisplayPoint, _ next: FootprintDisplayPoint) -> Bool {
+        // 分支条件：两个历史点都没有段标识时继续使用旧的时间/距离推断；只要一侧有标识且不同就保守断开。
+        previous.trackingSegmentUuid != nil || next.trackingSegmentUuid != nil
+            ? previous.trackingSegmentUuid != next.trackingSegmentUuid
+            : false
+    }
+
+    private static func isUntrustworthyConnection(
+        distance: CLLocationDistance,
+        timeGap: TimeInterval,
+        previous: FootprintDisplayPoint,
+        next: FootprintDisplayPoint
+    ) -> Bool {
+        guard timeGap > 0 else { return true }
+        // 超过 5 公里的点仍保留为新段端点；这里只拒绝“把两点连线”的解释，不删除旅行事实。
+        if distance > maximumContinuousDistanceMeters { return true }
+        let impliedSpeed = distance / timeGap
+        let hasLowConfidenceFix = max(previous.accuracyM ?? 0, next.accuracyM ?? 0) > 50
+        // 分支条件：短时间超高速且至少一端精度较差时更像 GPS 漂移，断开比绘制假路线更可靠。
+        return impliedSpeed > maximumLikelyContinuousSpeedMetersPerSecond && hasLowConfidenceFix
     }
     /// 计算Catmull-Rom 插值，用于平滑的曲线渲染
     private static func catmullRom(

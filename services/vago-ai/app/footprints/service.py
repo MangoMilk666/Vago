@@ -89,6 +89,8 @@ def sync_location_samples(
                 longitude=sample.longitude,
                 accuracy_m=sample.accuracy_m,
                 speed_mps=sample.speed_mps,
+                # 可选字段原样保存；它只定义客户端连续采样的断点，不参与幂等或行程归属。
+                tracking_segment_uuid=sample.tracking_segment_uuid,
                 recorded_at=sample.recorded_at.astimezone(UTC).replace(tzinfo=None),
             )
         )

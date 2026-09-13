@@ -301,6 +301,7 @@ CREATE TABLE location_samples (
     longitude       FLOAT           NOT NULL                     COMMENT 'WGS-84 经度',
     accuracy_m      FLOAT           DEFAULT NULL                 COMMENT '水平定位精度（米）',
     speed_mps       FLOAT           DEFAULT NULL                 COMMENT '移动速度（米/秒）',
+    tracking_segment_uuid VARCHAR(36) DEFAULT NULL               COMMENT '连续前台记录段 UUID；旧样本可为空',
     recorded_at     DATETIME        NOT NULL                     COMMENT '设备实际采样时间（UTC）',
     created_at      DATETIME        NOT NULL                     COMMENT '服务端持久化时间（UTC）',
 

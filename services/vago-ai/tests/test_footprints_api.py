@@ -51,6 +51,7 @@ def test_footprint_routes_sync_and_checkin_for_active_trip(client: TestClient):
         "latitude": 1.3521,
         "longitude": 103.8198,
         "accuracyM": 10.0,
+        "trackingSegmentUuid": "c5e49cc2-75c2-4d06-b87d-728b30b83b97",
         "recordedAt": "2026-09-04T09:00:00Z",
     }
 
@@ -70,6 +71,7 @@ def test_footprint_routes_sync_and_checkin_for_active_trip(client: TestClient):
     assert locations_response.json()["data"][0]["latitude"] == 1.3521
     # GET 回传 clientUuid 后，iOS 才能与本地离线队列按同一幂等键精确合并。
     assert locations_response.json()["data"][0]["clientUuid"] == "ios-api-sample-1"
+    assert locations_response.json()["data"][0]["trackingSegmentUuid"] == "c5e49cc2-75c2-4d06-b87d-728b30b83b97"
     assert locations_response.json()["data"][0]["recordedAt"].endswith("Z")
     assert checkin_response.json()["data"]["locationName"] == "滨海湾花园"
     assert checkin_response.json()["data"]["checkedAt"].endswith("Z")

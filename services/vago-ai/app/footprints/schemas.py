@@ -25,6 +25,8 @@ class LocationSampleInput(BaseModel):
     accuracy_m: float | None = Field(default=None, alias="accuracyM", ge=0, le=100_000)
     # 移动速度，单位米/秒；未知时可不传。
     speed_mps: float | None = Field(default=None, alias="speedMps", ge=0, le=500)
+    # 连续前台记录的段标识；旧客户端可省略，服务端不为历史样本补造边界。
+    tracking_segment_uuid: str | None = Field(default=None, alias="trackingSegmentUuid", min_length=1, max_length=36)
     # 设备记录时间。
     recorded_at: datetime = Field(alias="recordedAt")
 
@@ -68,6 +70,8 @@ class LocationSampleResponse(BaseModel):
     accuracy_m: float | None = Field(default=None, alias="accuracyM")
     # 移动速度，单位米/秒。
     speed_mps: float | None = Field(default=None, alias="speedMps")
+    # 连续前台记录的段标识；为空时客户端继续使用时间与距离推断断点。
+    tracking_segment_uuid: str | None = Field(default=None, alias="trackingSegmentUuid")
     # 实际采样时间。
     recorded_at: datetime = Field(alias="recordedAt")
 
