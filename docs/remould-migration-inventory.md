@@ -1,19 +1,15 @@
 # Vago Remould 迁移盘点
 
-> 最后更新：2026-09-02
-> 当前阶段：Phase 6 — Web Product Experience
+> 最后更新：2026-09-14
+> 当前阶段：Phase 8 已形成双端 Travel Tracking 基础闭环；Phase 9+ 进入 Personal Travel Context 与 Agent evolution 规划
 
-## 1. 仓库状态
+## 1. 文档性质与当前仓库状态
 
-执行 `git status --short --untracked-files=all` 时发现一个本轮开始前已经存在的工作区改动：
+本文是 remould 的**历史迁移事实记录**，保留 Phase 1–8 中的关键盘点与完成事实，不把它改写成 PRD。早期章节出现的 Spring Boot、Java 路由和兼容窗口描述均为当时的迁移快照；`services/vago-backend` 已在 Phase 5 后从当前仓库移除，不能将其视为当前可运行架构。
 
-```text
- M .gitignore
-```
+当前可运行后端是 `services/vago-ai` 中的 FastAPI Modular Monolith；当前 Alembic head 为 `20260913_01`。当前工作区状态应以实际 `git status` 为准，不再在本历史盘点中固化某一次工作区改动。
 
-该 `.gitignore` 改动由用户维护，本轮不会修改或回滚。
-
-## 2. 当前 Web 路由
+## 2. 历史 Web 路由盘点
 
 在 `apps/vago-web/src/App.jsx` 中发现的当前路由：
 
@@ -33,7 +29,7 @@
 
 当前 React Router 中没有发现正在使用的公共 Feed / 社区页面路由。
 
-## 3. Spring Boot 盘点
+## 3. 历史 Spring Boot 盘点
 
 `services/vago-backend/src/main/java/com/vago` 下的 Controller：
 
@@ -56,7 +52,7 @@
 - `GuideLike` 和 `LikeFlushTask`：偏公共社区的互动信号，不属于目标核心能力。
 - `Collection` / `CollectionItem`：如果从公共社区语义中拆出来，可以复用为个人知识组织能力。
 
-## 4. FastAPI 盘点
+## 4. 历史 FastAPI 盘点
 
 `services/vago-ai/app` 下的当前文件：
 
@@ -243,3 +239,50 @@ Phase 4 已从 AI 保存链路开始整合：
 - 正式 Trip 使用 `未开始(1) / 进行中(2) / 已结束(3)`，而 Plan 仍使用独立的草稿/已转换状态。
 - 直接创建、计划转换及 AI 保存的正式行程默认均为未开始；每位用户最多同时有一个进行中的 Trip。
 - 已结束 Trip 归入历史行程，只允许回顾，不允许更新、删除或编辑每日安排。
+
+## 18. 当前完成状态（2026-09-14）
+
+以下内容补充并覆盖早期盘点中已经过时的“当前状态”表述：
+
+- FastAPI 已承接 Auth / User、Travel、Knowledge 与 Footprints 等当前领域；React 与 SwiftUI iOS 均以 FastAPI 为服务端边界。
+- Java / Spring Boot community 代码、Java 到 Python 的 Guide indexing bridge 以及旧社区前端主路径均已下线；legacy 表数据仍按数据清理策略保留，不把它们重新引入新领域。
+- `KnowledgeSource` 是技术无关的个人知识实体。MySQL 保存其 metadata、文本与状态，原始文件经 storage abstraction 保存；Qdrant/RAG 仅是可选 indexing / semantic retrieval capability。
+- iOS 已实现当前行程、前台定位、用户隔离的离线 pending 队列、批量幂等同步、本地与远端合并显示、轨迹质量过滤/分段、方向指示和手动 Check-in。GPS 与 Check-in 是不可由 AI 覆盖的旅行事实。
+- 现有 AI 主要是 SSE 对话、按需个人知识检索、来源引用和结构化计划保存。它尚未具备跨领域 context acquisition、constraint checking、replanning、approval engine 或 external tool execution。
+
+## 19. 第二阶段产品深化：Agent evolution gap
+
+第一轮 remould 已把项目从社区导向收敛为 Personal-first 的知识、计划、行程与足迹应用。下一阶段不是为了增加更多孤立功能或堆叠 Agent framework，而是将这些领域逐步组织成 **Personal Travel Intelligence / Personal Travel Agent system**。
+
+### 19.1 已有资产
+
+```text
+Personal Travel Knowledge
++ Plan / Trip / Itinerary
++ Travel Observations (GPS / Check-in)
++ 用户隔离、领域服务、结构化 MySQL 事实
++ 可选 semantic RAG retrieval
+```
+
+这些资产已经能够支撑 Personal Travel Context 的不同来源，但尚未形成面向任务的统一状态视图或跨领域协调能力。
+
+### 19.2 当前缺口
+
+- 没有明确的 **Agent Runtime**，因此没有标准的 goal → observe → constraint check → plan/replan → approval → action loop。
+- 现有对话工具主要检索个人知识，尚未形成 Travel、Itinerary、Footprint、Preferences 等内部 Domain Tools 的明确边界。
+- 个人上下文仍主要以 Context Retrieval 表述，尚未沉淀为 Long-term / Current trip / Live travel / Personal knowledge / External context 的长期产品概念。
+- 没有 grounded Travel Memory、可审视 preference signals 或将真实旅行经历回流到下一次规划的机制。
+- 没有 External Tools / MCP 边界，也没有以真实用户 workflow 驱动的外部信息接入。
+
+这些缺口是未来目标，不意味着当前代码已经具备相应能力。
+
+## 20. 推荐后续阶段
+
+| 阶段 | 目标 | 不做什么 |
+| --- | --- | --- |
+| Phase 9 | **Travel Memory & Personal Context Foundation**：基于真实旅行事实形成 grounded Memory、历史上下文与可审视 preference signals | 不让模型把推断当确认事实；不建立复杂自主记忆系统 |
+| Phase 10 | **Agent Runtime & Vago Domain Tools**：定义 Agent loop、内部工具边界、上下文获取、观察、约束检查、确认原则与最小 tracing/testability | 不直接由 Agent 操作数据库；不以框架/MCP 代替领域设计 |
+| Phase 11 | **Context-aware Coordination & Replanning**：以 Adaptive Day Planner 为代表，基于当前旅行状态提出并确认日程调整 | 不未经确认修改重要 itinerary 或 Trip 状态 |
+| Phase 12 | **External Tool / MCP Integration**：在已有明确 workflow 后引入地图、日历、天气、航班等候选外部能力 | 不为了接入 MCP 创造没有用户价值的工作流 |
+
+推荐顺序保持“先形成真实旅行事实与 Personal Context 基础，再建设可测试的 Agent Runtime，最后扩展外部工具”。这与渐进迁移、Human-in-the-loop 和 FastAPI Modular Monolith 原则一致。

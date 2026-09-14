@@ -1,157 +1,201 @@
 # Vago 架构说明
 
-> 最后更新：2026-09-05
->
-> 当前状态：Remould Phase 8，iOS Travel Tracking 已形成第一版可真机验证闭环
-> 目标架构：FastAPI Modular Monolith + React Web + Native iOS
+> 最后更新：2026-09-14
+> 当前状态：FastAPI Modular Monolith + React Web + Native SwiftUI iOS
+> 本文明确区分当前可运行架构与目标 Agent 架构；目标图不代表已存在的 Python module。
 
-## 1. 架构目标与原则
+## 1. 架构原则
 
-Vago 是面向个人的旅行智能应用：用户的知识资料、计划、正式行程、足迹和未来回忆都属于同一位用户的私有旅行上下文。AI 规划与检索为这些事实数据服务，而非替代它们。
+Vago 围绕 **Personal Travel Intelligence** 建设：用户的知识、计划、正式行程、足迹、打卡和未来回忆属于同一用户的私有旅行上下文。AI 服务于这些旅行事实与用户目标，而不替代或篡改它们。
 
-- **Personal-first**：所有领域记录以 `user_uuid` 隔离；不把公共社区关系带入新领域。
-- **Human-in-the-loop**：AI 只能生成候选计划；用户确认后才写入 Plan、Trip 或未来的 Memory。
-- **Context retrieval, not RAG-first**：明确选择的资料走 Direct Context，结构化旅行事实走 SQL，模糊的大规模文本检索才走 RAG/Qdrant。
-- **事实优先**：GPS 样本和打卡是可追溯事实；地图路线和迷雾区域是其派生展示，不能反向篡改原始记录。
-- **渐进迁移**：先在 FastAPI 新建并切换调用方，再删除 Java 兼容能力；不进行 big-bang 重写。
-- **Mobile-native**：Web 负责知识、规划与完整编辑；iOS 优先服务旅行中的查看、采集、同步与打卡。
+- **Personal-first**：领域记录按 `user_uuid` 隔离；不恢复公共 Feed 或陌生人社交关系。
+- **Facts first**：GPS、Check-in 与未来 Photos / Notes 是原始旅行事实；路线、Memory 和偏好信号均为派生结果。
+- **Context-aware, not RAG-first**：Direct Context、SQL structured retrieval 与 semantic RAG 按任务分工。
+- **Human-in-the-loop**：重要持久化旅行状态或外部操作由用户批准后再执行。
+- **Modular Monolith**：FastAPI 统一承载领域模块与 AI 能力，不为展示而拆微服务。
+- **Progressive evolution**：保留已运行的 API 与领域资产，逐步引入 Agent Runtime，不进行 big-bang rewrite。
 
 ## 2. 当前可运行架构
 
 ```text
 React Web (Vite :5173)                   SwiftUI iOS (iOS 17+)
          │                                         │
-         │ Vite proxy                              │ HTTPS / URLSession
-         ▼                                         ▼
-                  FastAPI vago-ai (:8000)
-         ┌───────────────┼─────────────────────┐
-         │               │                     │
-  Auth / Users     Travel / Knowledge     Footprints / AI
-         │               │                     │
-         └───────────────┼─────────────────────┘
-                         │
-             ┌───────────┼───────────┐
-             ▼           ▼           ▼
-           MySQL       Redis       Qdrant
-                                     │
-                                  OpenAI / LLM
-
-React Web 未迁移 API
-         │
-         ▼
-Spring Boot vago-backend (:8080)
-  legacy public community / collection compatibility
+         │ Vite proxy                              │ URLSession
+         └─────────────────┬───────────────────────┘
+                           ▼
+                 FastAPI vago-ai (:8000)
+         ┌─────────────────┼──────────────────────────┐
+         │                 │                          │
+ Auth / Users      Travel / Knowledge       Footprints / AI chat
+         │                 │                          │
+         └─────────────────┼──────────────────────────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+            MySQL        Redis        Qdrant
+                                           │
+                                      OpenAI / LLM
 ```
 
-### 2.1 客户端职责
+`services/vago-backend` 已从仓库移除；当前没有仍在运行的 Spring Boot 兼容后端。React 已经通过 FastAPI 的领域接口工作，iOS 直接请求 FastAPI `/api/v1`。
 
-| 客户端 | 当前职责 | 与后端的关系 |
-|---|---|---|
-| React + Vite | 个人知识库、AI 对话与规划、Plan/Trip/Itinerary 编辑、个人资料 | 已迁移路径代理至 FastAPI；旧社区兼容路径仍代理至 Spring Boot |
-| SwiftUI iOS | 手机号登录、Keychain 会话、当前行程、前台 GPS 采样、离线缓冲、地图轨迹、打卡 | 直接请求 FastAPI `/api/v1`，不经过 Vite 或 Spring Boot |
+### 2.1 当前模块与职责
 
-### 2.2 FastAPI 模块与真实路由
+| 模块 | 路由或入口 | 当前职责 |
+| --- | --- | --- |
+| `auth` / `users` | `/api/v1/auth`、`/api/v1/users` 及兼容前缀 | 登录、刷新令牌、用户资料、设置与用户隔离 |
+| `travel` | `/api/v1/travel` | Plan、Trip、Itinerary、计划转行程与 Trip 生命周期 |
+| `knowledge` | `/api/v1/knowledge` | KnowledgeSource 文本/`.md/.txt` 导入、状态与可选索引 |
+| `footprints` | `/api/v1/footprints` | GPS 批量同步、读取、Check-in 和归属校验 |
+| `routers.chat` | `/api/v1/ai/chat` | SSE 对话、可选个人知识检索、来源引用 |
+| `routers.ai` | `/api/v1/ai` | 现有 AI 规划入口与结构化计划保存适配；完整规划生成仍在演进 |
 
-| 模块 | 路由前缀 | 当前职责 |
-|---|---|---|
-| `auth` / `users` | `/api/v1/auth`、`/api/v1/users`，兼容 `/api/v1/user` | 手机号验证码、登录、刷新令牌、当前用户与设置 |
-| `travel` | `/api/v1/travel` | Plan、Trip、每日行程、计划转正式行程、开始/结束生命周期 |
-| `knowledge` | `/api/v1/knowledge` | KnowledgeSource 文本与 `.md/.txt` 导入、索引状态、可选 RAG 索引；旧 `/guides` 仅兼容窗口使用 |
-| `footprints` | `/api/v1/footprints` | GPS 批量同步、轨迹读取、手动打卡与用户/行程归属校验 |
-| `routers.ai` / `routers.chat` | `/api/v1/ai`、`/api/v1/ai/chat` | AI 计划、SSE 对话、结构化输出与现有 Agent 能力 |
+当前对话链路已经使用 Tool Calling 形式按需搜索个人知识，但它不是跨领域协调、审批或重规划的完整 Agent Runtime。
 
-FastAPI 采用 SQLAlchemy 2.x、Pydantic v2 与 Alembic；MySQL 保存领域事实和状态，Redis 承担认证/限流等运行期能力。所有移动端和 Web 的领域请求均使用 JWT，并由依赖项解析当前 `user_uuid`。
+### 2.2 当前数据边界
 
-### 2.3 Personal Context Retrieval
+| 数据域 | 主要存储 | 当前边界 |
+| --- | --- | --- |
+| 用户、Plan、Trip、Itinerary | MySQL | 结构化旅行事实；已结束 Trip 只读 |
+| KnowledgeSource | MySQL + local storage abstraction | MySQL 保存元数据/文本/状态，原始文件由存储抽象保存 |
+| 语义向量 | Qdrant | 仅服务于非结构化个人知识的可选 semantic retrieval |
+| GPS 与 Check-in | MySQL | 用户旅行事实；服务端按认证用户与 `client_uuid` 处理归属和幂等 |
+| iOS 待传足迹 | UserDefaults | 短期、按用户隔离的 pending 队列，不是历史数据库 |
+| 会话、限流 | Redis + iOS Keychain | Token 不存入 UserDefaults |
+
+`KnowledgeSource` 与 Qdrant 解耦：资料的创建、读取、更新和删除不依赖向量库。RAG 不可用时，资料 CRUD 仍可工作；索引能力以明确状态和错误降级。
+
+### 2.3 当前 Travel Observation 数据流
 
 ```text
-用户意图
-   │
-   ├── Direct Context：用户明确选中的少量知识资料
-   ├── SQL Context：Trip / Plan / Itinerary / Footprint 等结构化事实
-   ├── RAG Context：规模较大的个人文本知识，使用 Qdrant
-   └── No Personal Context：普通旅行问题不强制读取用户资料
-                         │
-                         ▼
-                   AI Companion / LLM
-                         │
-                         ▼
-                用户确认后的结构化写入
+Core Location（仅用户明确开始、前台）
+        ↓
+LocationTrackingStore → 本地 pending 队列 → 100 条/批幂等同步
+                                                   ↓
+                                                FastAPI
+                                                   ↓
+                                         MySQL location_samples
+                                                   ↓
+                                    MapKit 合并本地与远端事实后渲染
+
+一次手动打卡 → FastAPI checkins → MySQL checkins → MapKit annotation
 ```
 
-`KnowledgeSource` 不依赖 Qdrant：纯文本资料和 `.md/.txt` 文件可独立存在；`parse_status` 与 `index_status` 分开表达资料可读性与可选索引能力。RAG 未启用或向量库不可用时，资料 CRUD 仍正常工作，索引 API 明确返回不可用状态。
+定位、打卡与未来照片/笔记是 **Travel Observations**。它们可成为 Personal Travel Context 的 grounded 输入，但 AI 不应写回或覆盖原始事实。iOS 当前优先负责采集、同步与显示，并不承载 Agent Runtime。
 
-### 2.4 Travel Footprint 数据流
+## 3. Personal Travel Context
+
+> Personal Travel Context 是 Agent 为完成当前任务从多个来源组合出的状态视图；它不是统一表、统一向量库或一段固定 prompt。
 
 ```text
-Core Location 前台回调
-       │  约 20 米距离过滤，保留精度/速度/记录时间
-       ▼
-LocationTrackingStore
-       │
-       ├── UserDefaults：按 user_uuid 隔离的待同步样本队列
-       └── POST /footprints/location-samples/sync（最多 100 条/批）
-                                      │
-                                      ▼
-                         MySQL location_samples
-                         唯一键：(user_uuid, client_uuid)
-                                      │
-                                      ▼
-       GET /footprints/trips/{trip_uuid}/locations
-                                      │
-                                      ▼
-MapKit：时间排序、15 米渲染降采样、长间隔/远跳断段、平滑 polyline
-
-一次手动打卡
-       │  请求并冻结一条新坐标
-       ▼
-POST /footprints/checkins
-       │  仅进行中 Trip；30 米内重复打卡拒绝
-       ▼
-MySQL checkins → MapKit annotation
+Long-term personal context     Current trip context     Live travel context
+preferences / history          trip / itinerary         location / footprint / check-ins
+            \                         |                         /
+             \                        |                        /
+              └──── Personal knowledge + task intent ────┘
+                                │
+                    optional external / ephemeral context
+                                ▼
+                     task-scoped Personal Travel Context
 ```
 
-第一版只做前台定位，不启用后台持续定位。GPS 样本同步失败不会从本地队列删除；服务端按客户端幂等键去重，因此网络重试不会产生重复轨迹。`location_samples` 不保存国家、省市等反向地理编码结果，避免为高频且敏感的定位事实扩张数据面。
+- **Long-term personal context**：明确偏好、历史行程、visited places、Travel Memories 与旅行倾向。learned preference signals 必须与用户确认事实区分。
+- **Current trip context**：当前 Trip、itinerary、已确认安排、交通、住宿、时间与剩余活动。
+- **Live travel context**：当前位置、近期 GPS、Check-in、当前时间与旅行进度。
+- **Personal knowledge**：KnowledgeSource、导入资料、用户选择的资料与未来回忆。
+- **External / ephemeral context**：未来 POI、路线、天气、日历、航班等临时现实世界信息。
 
-## 3. 数据边界
+## 4. 目标 Agent 架构
 
-| 数据域 | 主要存储 | 说明 |
-|---|---|---|
-| 用户、计划、行程、日程 | MySQL | 结构化事实；已结束 Trip 只读 |
-| 个人知识源 | MySQL + local storage abstraction | MySQL 保存元数据、状态和当前阶段的文本；原文件由 storage abstraction 保存 |
-| 向量索引 | Qdrant | 仅为 KnowledgeSource 提供可选 semantic retrieval，不是知识源主存储 |
-| GPS 样本、打卡 | MySQL | `location_samples`、`checkins` 为用户旅行事实；不直接引入 GIS、分区或 chunk 表 |
-| iOS 待传位置 | UserDefaults | MVP 队列，按用户隔离；当前数据量与失败恢复需求下无需提前迁移 SwiftData/Core Data |
-| 会话和限流 | Redis + iOS Keychain | 服务端维护 refresh/session 与限流；客户端 token 不存入 UserDefaults |
+以下是目标概念架构，不表示 `app/agents`、`app/memories` 或 MCP server 已经实现。
 
-当前 Alembic head 为 `20260904_03`。全新数据库可使用 [db_schema.sql](database/db_schema.sql)；已有数据库必须执行 Alembic 增量迁移。
+```text
+React Web                    SwiftUI iOS
+    │                            │
+    └────────────┬───────────────┘
+                 ▼
+              FastAPI
+                 │
+        ┌────────▼────────┐
+        │   Agent Runtime │
+        │ goal / loop     │
+        │ context / tools │
+        │ constraints     │
+        │ replan          │
+        │ approval        │
+        └───┬─────┬───────┘
+            │     │
+     ┌──────┘     └────────────┐
+     ▼                         ▼
+Personal Travel Context    External Tools / MCP
+     │                         │
+     ▼                         ▼
+Vago Domain Tools       candidate integrations
+     │                  maps / weather / calendar / flights
+     ├── Travel
+     ├── Itinerary
+     ├── Footprint
+     ├── Knowledge
+     ├── Preferences
+     └── Memory
+            │
+            ▼
+ MySQL / Redis / Qdrant / Object Storage
+```
 
-## 4. 兼容窗口与目标状态
+### 4.1 Agent Runtime 的职责
 
-Spring Boot 仍承接 legacy public community、收藏夹及旧路由兼容。新的 FastAPI Knowledge Domain 不再暴露点赞、浏览、发布、发现或社区作者等语义；`guides` 表和旧 Java API 必须待 Java community 链路确认下线后再做破坏性清理。
+Agent Runtime 负责：
 
-目标不是拆成微服务，而是让 `services/vago-ai` 演进为统一的 FastAPI 模块化单体：模块共享基础设施，但领域服务不跨越边界直接泄漏存储细节。React 与 iOS 最终共享同一组 domain API contract。
+```text
+interpret user goal
+→ acquire task-relevant context
+→ select read tools
+→ observe results
+→ check constraints
+→ plan or replan
+→ request approval when required
+→ execute approved domain action
+→ observe updated state and complete
+```
 
-## 5. 迁移进度
+它不直接访问数据库，不把所有上下文转换成 embedding，也不以某个框架、MCP 或多 Agent 数量作为设计目标。
+
+### 4.2 Domain Services 与内部 Domain Tools
+
+Domain Services 继续拥有真实业务规则、授权与持久化，例如 Travel service 检查 Trip 生命周期，Footprint service 检查归属与幂等。Agent 通过内部 Domain Tools 调用这些服务，例如概念上的 `get_current_trip`、`get_today_itinerary`、`get_recent_footprint`、`search_personal_knowledge`、`update_itinerary` 和 `create_plan`。
+
+内部工具不是要求把 FastAPI 的每个 endpoint MCP 化。它们是 Agent Runtime 与领域规则间明确、可测试的调用边界。
+
+### 4.3 Human-in-the-loop 与事实边界
+
+- **Read / observe actions**：读取当前 Trip、行程、足迹、偏好、个人资料或未来外部信息，通常可自主执行。
+- **Proposed write actions**：修改 itinerary、创建 Trip、删除数据、未来的 booking/payment，需按风险要求确认。
+- **Travel facts**：GPS、Check-in、照片 metadata 和用户笔记不会被 Agent 直接篡改；Memory 和 signal 必须保留事实来源与派生性质。
+
+当前目标保持保守：重要持久化旅行状态的写操作，执行前必须获得用户确认。approval engine 是未来能力，尚未实现。
+
+## 5. MCP 与外部工具的位置
+
+MCP 是接入外部工具的一种标准化协议，不是 Agent Runtime 本身，也不是内部领域服务的必选协议。未来只有在已有明确 Agent workflow 时，才评估接入地图/POI、路线、天气、Google Calendar、航班搜索（例如 Kiwi.com）或其他旅行服务。
+
+当前没有 MCP 配置、外部 provider 或外部写操作。外部信息不可用时，Agent Runtime 应能明确说明信息缺失并降级，而不是伪造结果。
+
+## 6. 演进路线
+
+历史 Phase 1–8 记录 FastAPI foundation、领域迁移、Web 收敛、iOS foundation 与 Travel Tracking 的真实完成过程，不重新编号。
 
 | Phase | 目标 | 当前状态 |
-|---|---|---|
-| 1 | FastAPI foundation | 已完成 |
-| 2 | Auth / User | 已完成，保留旧用户路径兼容 |
-| 3 | Trip / Plan / Itinerary | 已完成核心 CRUD 与生命周期 |
-| 4 | Knowledge / Context Retrieval / AI | KnowledgeSource、文本文件导入和可选索引已完成；Context Router 深化待后续实施 |
-| 5 | Legacy community 收敛 | 新 FastAPI 不再承接社区语义；Java 兼容数据和旧表等待最终下线 |
-| 6 | Web 产品体验 | 已回归简洁入口布局，后续按产品需求持续优化 |
-| 7 | iOS foundation | 已完成认证、会话、当前行程与个人资料 |
-| 8 | iOS Travel Tracking | 基础闭环已完成；后续继续推进 Check-in 详情、历史行程地图和简单迷雾 |
-| 9 | Travel Memory | 未开始 |
+| --- | --- | --- |
+| 9 | Travel Memory & Personal Context Foundation：grounded Memory、历史上下文、明确偏好与可审视 signal | 未来 |
+| 10 | Agent Runtime & Vago Domain Tools：Agent loop、上下文获取、工具边界、约束检查、审批原则、最小 tracing/testability | 未来 |
+| 11 | Context-aware Coordination & Replanning：以 Adaptive Day Planner 为代表的旅行中协调与确认后更新 | 未来 |
+| 12 | External Tool / MCP Integration：在有真实 workflow 后接入外部能力 | 未来 |
 
-## 6. 当前约束与后续方向
+## 7. 当前约束
 
-- RAG、chunk、embedding 与 Qdrant 是保留的技术资产，但不得成为 Knowledge Domain 的强依赖。
-- 当前仅支持 `.md`、`.txt` 和纯文本知识源；PDF、DOCX、复杂解析管道不在本阶段范围。
-- 轨迹线是基于 GPS 样本的展示插值，不是道路匹配或导航结果；大跨度样本必须断段，不能画出虚假路线。
-- World Fog 将先以客户端有限半径覆盖层验证体验，不引入 PostGIS、GIS 服务或 vector tile 基础设施。
-- Photos、Notes、Travel Memory 需要以已确认的旅行事实为依据，不能由模型凭空补写。
-
-相关文档：[PRD](prd/PRD.md)、[迁移盘点](remould-migration-inventory.md)、[iOS Travel Map 实施计划](ios-development-plan.md)、[足迹 API](API/footprint-service.md)。
+- 不引入不必要微服务、复杂事件总线、多 Agent、GIS 或 MCP 基础设施。
+- 不把 RAG 描述为 Memory，也不把 Qdrant 当作所有 Personal Travel Context 的存储。
+- 当前仅支持纯文本和 `.md/.txt` 知识源；复杂文档解析不在当前范围。
+- Travel Memory、Photos、Notes、Preference signals、Adaptive Day Planner、MCP 和外部工具均属于未来能力。
+- 当前 Alembic head 为 `20260913_01`；全新数据库使用 [db_schema.sql](database/db_schema.sql)，已有数据库使用 Alembic 增量升级。

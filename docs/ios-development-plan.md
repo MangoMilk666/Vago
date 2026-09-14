@@ -353,3 +353,26 @@ Launch Screen 的配置候选来自 Apple 的 [UILaunchScreen 文档](https://de
 Camera 跟随实现参考 Apple 的 [MapCameraPosition.userLocation](https://developer.apple.com/documentation/mapkit/mapcameraposition/userlocation(followsheading:fallback:))，作为复用原生 camera 能力的依据，具体与自有 currentLocation 的职责在 Phase 2 明确。
 
 Fog 的 renderer 方案属于基于现有数据范围的实施建议；局部绘制、坐标转换和并发渲染约束参考 Apple 的 [Displaying overlays on a map](https://developer.apple.com/documentation/mapkit/displaying-overlays-on-a-map) 与 [MKOverlayRenderer.draw](https://developer.apple.com/documentation/mapkit/mkoverlayrenderer/draw(_:zoomscale:in:))。遮罩合成、圆盘并集和性能仍是 Phase 7 的验证任务，不是当前已实现能力。
+
+## 9. Personal Travel Context 战略对齐
+
+Travel Map 不只是一个地图 UI feature。它是 Vago 在旅行中获得 **grounded Travel Observations** 的空间入口：前台 GPS、手动 Check-in，以及未来的 Photos / Notes 都能在事实可靠、用户授权和隐私隔离的前提下，成为 Personal Travel Context 的 live travel context。
+
+```text
+iOS Travel Map
+      ↓
+Travel Observations（GPS / Check-in / future Photos & Notes）
+      ↓
+Personal Travel Context
+      ↓
+FastAPI Agent Runtime（未来）
+      ↓
+旅行中协调、约束检查与重规划建议
+```
+
+该关系不改变本计划的职责边界：
+
+- iOS 继续优先保证定位、采集、同步、事实可靠性与地图体验；不在客户端实现 Agent Runtime。
+- Agent Runtime 的目标位置仍是 FastAPI，它通过领域服务和未来 Domain Tools 读取 Travel Observations，而不直接控制或篡改原始 GPS / Check-in 事实。
+- 当前 Travel Map Phase 1–7 的顺序、API 与数据模型计划不因这一战略对齐而调整。
+- 未来 Agent、Travel Memory 或 external tools 的建设不能成为跳过采集质量、同步可靠性和位置隐私验收的理由。

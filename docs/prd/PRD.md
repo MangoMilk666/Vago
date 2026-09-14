@@ -1,316 +1,263 @@
 # Vago（叠迹）产品需求文档（PRD）
 
-**文档版本**：v0.4-remould
-**最后更新**：2026-08-31
-**状态**：Remould draft，作为后续迁移与实现基准
+**文档版本**：v0.5-agent-evolution
+**最后更新**：2026-09-14
+**状态**：定位深化；已实现能力与目标能力分层记录
 
-## 1. 产品定位
+## 1. 项目定位
 
 ### 1.1 一句话
 
-> Vago（叠迹）是一个 AI-Native 个性化旅行搭子，将用户零散的旅行知识沉淀为个人知识库，通过 AI 辅助旅行规划，并将实际旅行过程中的地点、照片和记录转化为长期可回顾、可复用的旅行记忆。
+> Vago 是一个 AI-native Personal Travel Intelligence / Personal Travel Agent system：它持续积累并理解用户自己的旅行状态与历史，以 Personal Travel Context 支撑旅行前规划、旅行中协调和旅行后回顾。
 
-英文表达：
+Vago 不以旅行社区、通用旅行聊天机器人、单次 LLM 行程生成器或技术框架展示为核心。它也不试图接管用户的旅行决定；用户拥有意图与重要决定，Vago 负责上下文收集、协调、约束检查与重规划建议。
 
-> Vago is an AI-native personal travel companion that turns a user's fragmented travel knowledge into personalized plans, records real-world journeys, and transforms them into reusable travel memories.
-
-### 1.2 不再是什么
-
-Vago 不再以公共旅行社区为核心，不再围绕陌生人 Feed、关注、点赞、评论或社区增长设计核心流程。
-
-分享能力可以保留，但它是旅行结果的输出能力，例如分享某次旅行、足迹地图、AI 旅行回忆或 itinerary，不应重新演变为完整社交平台。
-
-### 1.3 核心闭环
+### 1.2 核心闭环
 
 ```text
-Personal Travel Knowledge
-        ↓
-Adaptive Personal Context Retrieval
-        ↓
-AI Travel Companion
-        ↓
-Structured Travel Plan
-        ↓
-User Confirmation
-        ↓
-Actual Trip
-        ↓
-GPS / Photos / Notes
-        ↓
-Travel Footprint
-        ↓
-AI-generated Travel Memory
-        ↓
-Personal Travel Profile / Memory
-        ↓
-Future Personalized Planning
+Plan → Travel → Observe → Memory → Learn → Next Plan
+                  ↑                         │
+                  └── Personal Travel Context ──┘
+                               ↕
+                          Vago Agent
 ```
 
-### 1.4 产品原则
+AI Companion 仍可作为对话入口，但不再被理解为只负责生成 Structured Travel Plan 的单一节点。长期目标中的 Agent 需要贯穿整个闭环：旅行前理解限制，旅行中观察变化并协调，旅行后将事实沉淀为回忆和可审视的信号。
+
+### 1.3 项目原则
 
 | 原则 | 说明 |
-|------|------|
-| Personal-first | 优先服务用户自己的攻略、偏好、行程、足迹、照片、回忆和历史数据 |
-| AI-native | AI 深入规划、检索、结构化输出、回忆生成，而不是附加聊天入口 |
-| Human-in-the-loop | AI 生成建议和草稿，用户确认后才写入正式业务数据 |
-| Context-aware | 根据任务选择 Direct Context、SQL、Profile、RAG |
-| Mobile-native | Web 管理复杂资料，iOS 采集真实旅途数据 |
+| --- | --- |
+| Personal-first | 用户自己的资料、偏好、行程、足迹、打卡、照片、笔记和回忆优先于公共内容与陌生人社交 |
+| Facts first | GPS、Check-in、用户照片与笔记是原始旅行事实；AI 不得篡改或伪造它们 |
+| Context-aware | 针对任务组合 Direct Context、SQL structured retrieval、semantic retrieval 与未来外部信息 |
+| Human-in-the-loop | 读取和观察可自动完成；重要持久化或外部写操作必须经过适当确认 |
+| Grounded memory | Travel Memory 必须以可追溯旅行事实为依据，叙事与事实分离 |
+| Progressive evolution | 保留 FastAPI Modular Monolith 和已有领域资产，逐阶段演进，不进行 big-bang rewrite |
+| Privacy by default | 个人旅行数据按用户隔离；位置与观察数据默认私有 |
 
-## 2. 用户场景
+## 2. 价值主张
 
-### 2.1 Planner：深度攻略整理与规划用户
+### 2.1 为什么不是普通 LLM
 
-Planner 出行前会收集大量攻略、笔记和链接，但资料分散、重复、难以比较。
-
-Vago 需要帮助这类用户：
-
-- 导入和整理个人旅行资料；
-- 按目的地、主题、来源组织知识；
-- 用 AI 结合个人资料和偏好生成行程草稿；
-- 在确认后保存为 Plan 或 Trip；
-- 在后续旅行中把实际经历反哺个人记忆。
-
-### 2.2 Tracker：重视旅行记录和足迹用户
-
-Tracker 更重视实际旅行中的地点解锁、照片、笔记和回忆沉淀。
-
-Vago 需要帮助这类用户：
-
-- 查看当前行程；
-- 记录 GPS 足迹和打卡点；
-- 将照片、时间、位置和笔记绑定到 Trip / Spot；
-- 旅行后自动生成 grounded travel memory；
-- 形成未来 AI 规划可使用的旅行偏好和历史信号。
-
-## 3. Web 与 iOS 分工
-
-| 功能域 | Web | iOS |
-|--------|-----|-----|
-| Knowledge | 长文粘贴、URL 导入、资料整理、知识库管理 | 快速摘录、分享链接接力 |
-| AI Planning | 复杂多轮规划、结构化预览、行程编辑 | 当前场景轻量问答、局部调整 |
-| Plans / Trips | 列表、详情、每日安排、预算、历史管理 | 当前行程查看、当日安排 |
-| Footprints | 大屏地图、统计、历史回放 | GPS 采样、打卡、迷雾地图 |
-| Photos / Notes | 批量管理、回忆编辑 | 拍照、相册选择、快速笔记 |
-| Memories | 浏览、编辑、导出、分享 | 回忆浏览、移动端分享 |
-| Profile | 偏好、账号、数据管理 | 轻量设置、权限管理 |
-
-## 4. 功能范围
-
-### 4.1 KEEP / MIGRATE
-
-| 功能 | 说明 |
-|------|------|
-| User / Auth | 用户账户、JWT、用户级数据隔离、个人设置 |
-| Knowledge Base | 独立 KnowledgeSource、纯文本 / `.md` / `.txt` 导入、资料整理；RAG 仅作为可选语义检索能力 |
-| AI Companion | 多轮问答、SSE、Tool Calling、结构化行程输出、用户确认保存 |
-| Plan / Trip / Itinerary | 草稿计划、正式行程、每日安排、景点、交通、住宿、预算 |
-| Personal Profile / Preferences | 旅行偏好、节奏、兴趣、预算倾向、历史目的地信号 |
-
-### 4.2 BUILD
-
-| 功能 | 说明 |
-|------|------|
-| Travel Footprint | GPS sampling、route、visited places、check-in、城市/区域/国家统计 |
-| Fog-of-World Map | 根据用户移动解锁区域，支持当前旅行和历史旅行视图 |
-| Travel Photos / Notes | 拍照、相册、时间戳、经纬度、Trip / Day / Spot 绑定 |
-| AI-generated Travel Memory | 基于事实数据生成 timeline、highlights、summary、narrative、share card |
-| Native iOS | SwiftUI、URLSession、Codable、MapKit、Core Location、PhotosUI |
-
-### 4.3 REMOVE FROM CORE
-
-| 功能 | 处理 |
-|------|------|
-| Public Feed | 不迁移到目标 FastAPI 后端 |
-| Follow / Comment | 不作为核心业务继续开发 |
-| Like / public ranking | 仅在分享能力需要时重新评估 |
-| Community recommendation | 暂停，不作为 remould 阶段目标 |
-
-### 4.4 DEFER
-
-Android、React Native、Kubernetes、Service Mesh、复杂事件总线、大规模 GIS、自主多 Agent、商业订阅体系、App Store 正式发布、高级离线地图、OCR / screenshot ingestion 均暂缓。
-
-## 5. Personal Context Retrieval
-
-Vago 的个性化由多类上下文共同组成：
+普通一次性对话通常不持续拥有以下完整状态：
 
 ```text
-Current User Intent
-+ Structured Travel Data
-+ Unstructured Personal Knowledge
-+ Explicit / Learned Preferences
+past travel history
++ preferences
++ current trip
++ current itinerary
++ live footprint
++ check-ins
++ personal knowledge
++ travel memories
 ```
 
-### 5.1 Direct Context
+Vago 的差异化资产是持续积累的 **Personal Travel Context**。它让后续建议不只依赖当前的一句话 prompt，而能够在明确边界内理解“这个用户过去怎样旅行、正在经历什么、当前有什么约束”。
 
-用户明确选择 1 到数篇攻略、笔记或历史回忆时，优先直接提供给 LLM，不为了形式感再次向量检索。
+### 2.2 为什么不让用户自己在多个 App 间完成
 
-### 5.2 Structured Retrieval
+用户可以自行在地图、日历、天气、航班、笔记和行程工具之间完成任务；难点是不断搜索、比较、复制、核对与重新安排。Vago Agent 的目标是降低这部分 **coordination cost**，而不是替用户拥有旅行决定权。
 
-以下问题优先通过 SQL / domain service：
+```text
+User owns intention and important decisions.
+Vago handles coordination, context gathering,
+constraint checking and replanning.
+```
 
-- 我去过多少个国家？
-- 上次东京去了哪些地方？
-- 这次不要重复去过的景点。
-- 最近几次旅行预算大概是多少？
+## 3. Personal Travel Context
 
-### 5.3 Semantic Retrieval / RAG
+> Personal Travel Context = Vago 对“这个用户是谁、过去如何旅行、当前正在经历什么、当前旅行有哪些约束”所掌握的、与任务相关的状态视图。
 
-当用户知识库规模较大，或需要从大量攻略、Notes、Memories 中寻找相关内容时，使用 Embedding + Qdrant + RAG。
+它不是一个单独数据库，不等同于 RAG，也不要求所有信息先被转写为 prompt 或 embedding。Agent 按任务从多个 domain 和 retrieval source 中取得并组合它。
 
-RAG 要求：
+| Context 类别 | 典型信息 | 数据边界 |
+| --- | --- | --- |
+| Long-term personal context | explicit preferences、历史 Trip、visited places、Travel Memories、节奏/预算/兴趣倾向 | 明确偏好是用户事实；learned preference signals 是可审视推断，不自动成为永久事实 |
+| Current trip context | current Trip、itinerary、交通/住宿、已确认计划、剩余活动与约束 | MySQL 中的结构化领域事实 |
+| Live travel context | current location、recent footprint、check-ins、当前时间、旅行进度 | 由 iOS 等观察面产生的 grounded observations |
+| Personal knowledge | KnowledgeSource、导入笔记、资料、回忆、用户明确选择的上下文 | Direct Context 或按需 semantic retrieval |
+| External / ephemeral context | POI、路线、天气、日历、航班和其他现实世界信息 | 未来外部工具能力；不当作用户事实长期保存 |
 
-- 按 `user_uuid` 严格隔离；
-- 保留来源引用；
-- 不把适合 SQL 的结构化数据全部写入 vector DB；
-- 不把模型常识伪装成用户知识库结果。
+### 3.1 Retrieval 的分工
 
-## 6. 核心需求
+- **Direct Context**：用户明确选择少量资料时直接使用。
+- **SQL structured retrieval**：Trip、Spot、Footprint、预算和历史旅行等结构化事实通过领域服务读取。
+- **Semantic RAG retrieval**：仅在大量非结构化个人知识需要语义搜索时，使用 embedding 与 Qdrant。
+- **No Personal Context**：普通旅行知识问题不强制使用用户资料。
 
-### 6.1 Personal Travel Knowledge
+Qdrant / RAG 是 Personal Context 的可选能力，不是 KnowledgeSource 的主存储，更不是所有个人上下文的统一存储。
 
-需求：
+## 4. Agent Runtime 与领域边界
 
-- 支持文本粘贴和 URL 导入；
-- 支持标题、目的地、标签、来源、正文；
-- 支持清洗、metadata extraction、chunking、embedding、Qdrant upsert；
-- 支持删除攻略时清理对应向量；
-- 支持索引状态；
-- 支持用户级隔离；
-- 支持来源引用。
+### 4.1 当前已实现的 AI 能力
 
-当前 Phase 4A–4D 已新增独立 `KnowledgeSource`，支持纯文本与 `.md/.txt` 资料导入、用户隔离和显式语义索引。`guides`、公开 discover / like / collections 仍暂留 Java 兼容窗口；KnowledgeSource 不以发布、点赞或收藏表达生命周期。
+当前 FastAPI 已提供 SSE 对话、可选个人知识语义检索、来源引用、现有 Tool Calling 形式的对话链路，以及结构化计划输入后的确认保存路径。这些能力仍主要服务于聊天、检索和计划草稿，不应被描述成完整的 Agent Runtime。
 
-### 6.2 AI Travel Companion
+### 4.2 目标 Agent Runtime
 
-需求：
+```text
+User Goal / Intent
+        ↓
+Acquire relevant context
+        ↓
+Interpret constraints
+        ↓
+Select tools → Execute read actions → Observe results
+        ↓
+Check constraints → Plan / Replan
+        ↓
+Request approval where required
+        ↓
+Execute domain action → Observe updated state → Complete
+```
 
-- 支持自然语言问答；
-- 支持多轮上下文；
-- 支持 SSE streaming；
-- 支持 Tool Calling；
-- 支持结构化 `TravelPlanDraft` 输出；
-- 支持来源引用；
-- 支持用户确认后保存为 Plan / Trip；
-- 支持 Direct Context、SQL、Profile、RAG 的可选编排。
+Agent Runtime 的职责是目标理解、循环与步骤协调、上下文获取、工具选择、约束检查、观察、重规划、审批边界和最终响应。它不直接操作数据库，也不以是否采用某个 Agent framework 或 MCP 作为能力定义。
 
-AI 不应未经确认直接创建正式行程、修改重要计划或覆盖用户记录。
+### 4.3 Domain Services 与 Domain Tools
 
-### 6.3 Plans / Trips / Itinerary
+真实业务规则继续由 FastAPI 领域模块承担：Auth / User、Travel、Plan / Trip / Itinerary、Footprint / Check-in、Knowledge，以及未来的 Memory 与 Preferences。
 
-当前 Phase 3 已将核心 Trip / Plan / Itinerary CRUD 从 Spring Boot 迁移到 FastAPI，并保持 `/api/v1/travel/trips`、`/api/v1/travel/plans` 及其每日行程子路径稳定。Guides / Collections 暂留 Java，后续在 Knowledge remould 中重定位。
+Agent 应通过明确的内部 Domain Tools 使用这些能力，例如概念上的：
 
-需求：
+```text
+get_current_trip
+get_today_itinerary
+get_recent_footprint
+get_travel_history
+get_user_preferences
+search_personal_knowledge
+update_itinerary
+create_plan
+```
 
-- Plan 表示规划阶段草稿，可无完整日期；
-- Trip 表示确定出行的正式行程，必须有起止日期；
-- Itinerary Day 支持每日交通、住宿、餐饮、预算、备注；
-- Spot 支持地点名称、地址、类型、排序、预计停留、来源说明；
-- AI 结构化草稿保存后进入普通编辑流程。
+这些是目标边界示例，不是本版本已新增的 API 或 Python package。Domain Tools 应调用领域服务；Agent 不应绕过服务直接读写 MySQL。
 
-### 6.4 Travel Footprint
+### 4.4 Human-in-the-loop
 
-需求：
+| Action 类型 | 例子 | 原则 |
+| --- | --- | --- |
+| Read / observe | 读取当前 Trip、日程、足迹、偏好、知识资料或未来天气/路线 | 通常可由 Agent 自主执行 |
+| Proposed write | 修改 itinerary、创建 Trip、删除数据、未来 booking/payment | 在改变重要持久化旅行状态或产生外部影响前请求用户确认 |
 
-- iOS 采集 GPS location samples；
-- 支持行程关联；
-- 支持离线缓存和恢复同步；
-- 支持手动 check-in；
-- 支持 route / trajectory；
-- 服务端为长期 source of truth；
-- 采样策略考虑隐私、电量、频率和权限。
+当前阶段保持保守：会改变重要持久化旅行状态的 Agent action，执行前要求用户确认。本轮只建立该设计原则，不实现 approval engine。
 
-第一版优先保证数据结构清晰、同步可靠、地图可运行。
+## 5. Before / During / After Trip 场景
 
-### 6.5 Photos / Notes
+### 5.1 Scenario A：Personalized Trip Planning
 
-需求：
+用户提出出行目标、日期或限制后，Agent 未来可结合个人偏好、过往旅行、KnowledgeSource、已有计划约束和必要的外部旅行信息，形成可编辑的 context-aware plan。
 
-- iOS 拍照或从相册选择；
-- 读取时间戳和可用 EXIF 位置；
-- 绑定 Trip / Day / Spot / Check-in；
-- 用户可添加 caption / note；
-- 服务端持久化 metadata；
-- 照片二进制资源走对象存储，不直接写入关系型数据库。
+这不同于一次 prompt 直接生成 itinerary：Agent 应说明关键约束与资料来源，并在写入 Plan / Trip 前请求确认。
 
-### 6.6 AI-generated Travel Memory
+**状态：目标能力。** 当前已有对话、可选知识检索和计划保存基础，但尚未实现完整跨领域 context acquisition 与 planning loop。
 
-输入：
+### 5.2 Scenario B：Adaptive Day Planner
 
-- structured itinerary；
-- GPS footprint；
-- visited spots；
-- photos metadata；
-- user notes；
-- trip duration；
-- statistics；
-- optional preferences。
+示例：
 
-输出：
+> “我今天有点累了，重新安排接下来四个小时，晚上 8 点前回酒店。”
 
-- trip summary；
-- timeline；
-- highlights；
-- memorable moments；
-- city / route summary；
-- editable narrative；
-- shareable travel card data。
+未来 Agent 需要综合：
 
-约束：
+```text
+current location
++ recent footprint
++ current itinerary
++ remaining activities
++ user preferences
++ time constraints
++ external weather / routes / POI
+```
 
-- 事实数据和 AI 生成文本分离；
-- 不生成用户未到访地点；
-- 对 GPS、时间戳、用户笔记、照片 metadata 支持的事实保持 grounded；
-- 用户可以编辑生成内容。
+并完成：
 
-## 7. 非功能性需求
+```text
+observe → check constraints → search information → compare options
+→ replan → ask for confirmation → update itinerary
+```
+
+**状态：目标能力。** 当前未实现 Adaptive Day Planner、外部信息接入或批准后的 itinerary 更新。
+
+### 5.3 Scenario C：Travel Memory & Learning
+
+```text
+Trip facts + footprint + check-ins + photos / notes
+        ↓
+Grounded Travel Memory
+        ↓
+Preference / behavior signals
+        ↓
+Personal Travel Context
+        ↓
+Future Agent decisions
+```
+
+Travel Memory 不只是总结文章。它必须区分 confirmed facts、generated narrative 与 inferred preference signals。推断信号不自动等同于用户确认的偏好，未来可通过置信度、可见性或用户确认机制处理。
+
+**状态：目标能力。** 当前尚未有 Memory、Photos 或 Notes domain。
+
+## 6. 领域需求与状态
+
+| 领域 | 当前已实现 | 继续建设 |
+| --- | --- | --- |
+| User / Auth | JWT、用户隔离、资料与会话 | 明确偏好与数据管理 |
+| Personal Travel Knowledge | KnowledgeSource、文本/`.md/.txt`、可选索引 | URL 与更多资料来源的受控导入 |
+| Plan / Trip / Itinerary | 核心 CRUD、计划转行程、生命周期和日程编辑 | 约束表达、受确认的 Agent action |
+| Footprint / Check-in | 前台采样、离线同步、服务端事实、MapKit 轨迹与打卡 | 历史地图、详情、Fog 实验与观察扩展 |
+| Photos / Notes | 未开发 | 绑定 Trip / Day / Spot / Check-in，二进制走对象存储 |
+| Travel Memory | 未开发 | grounded summary、timeline、highlights 与可编辑 narrative |
+| Preferences | 用户设置基础存在 | explicit preferences 与 learned signals 的边界 |
+
+### 6.1 旅行观察与事实保护
+
+GPS、Check-in、未来照片和用户笔记是 Travel Observations。它们是 Agent 理解旅行进度的重要输入，但原始事实不可被 AI 覆盖。地图路线、探索区域、Memory summary 与偏好信号均是基于事实的派生结果，应保留来源与不确定性边界。
+
+### 6.2 Travel Memory 要求
+
+- 以 itinerary、GPS、打卡、照片 metadata、用户笔记、时间与统计等真实旅行事实为输入。
+- 不生成用户未到访地点或未发生事件。
+- 事实数据、AI narrative 和用户编辑内容分离。
+- 用户可编辑生成文本；未来共享前需遵循位置隐私边界。
+
+## 7. External Tools / MCP
+
+External Tools 是未来补足现实世界临时信息的能力边界。候选集成包括 place search / routes / weather、Google Calendar、航班搜索（例如 Kiwi.com）及后续旅行服务。
+
+> MCP 是标准化接入外部工具的一种方式，不是 Agent 本身，也不是 Vago 内部 Domain Service 必须采用的协议。
+
+内部的 `get_trip`、`get_recent_footprint`、`update_itinerary` 等能力优先保持为内部 Domain Tools。只有在有明确用户价值的 Agent workflow 后，才评估以 MCP 或其他适配方式连接外部能力。
+
+**状态：未来候选能力。本版本没有 MCP 配置、外部 Provider 集成或外部写操作。**
+
+## 8. 非功能性要求
 
 | 类型 | 要求 |
-|------|------|
-| Privacy | 位置、攻略、照片、记忆按用户隔离；分享时坐标可脱敏 |
-| Security | JWT、当前用户依赖、重要操作二次确认、删除权 |
-| Reliability | AI 可降级，GPS 可离线缓存，上传可重试 |
-| Performance | AI streaming，地图渲染稳定，批量 GPS 同步 |
-| Maintainability | FastAPI modular monolith，API / service / persistence / LLM boundary 清晰 |
-| Testability | auth、user isolation、trip CRUD、RAG scoping、footprint ownership、memory grounding 均需测试 |
+| --- | --- |
+| Privacy | 位置、知识、照片和回忆按用户隔离；分享时需额外设计坐标脱敏与可见性 |
+| Security | JWT、当前用户归属校验、关键写操作确认、删除权与审计边界 |
+| Reliability | AI/外部信息不可用时明确降级；GPS 可离线缓存并按幂等键重试 |
+| Explainability | Agent 应说明关键约束、使用的资料或信息不可用原因，不伪造观察结果 |
+| Maintainability | FastAPI Modular Monolith；domain service、domain tool、Agent Runtime 与存储边界清晰 |
+| Testability | 领域归属、事实 grounding、工具调用、审批边界、失败回退与重规划应可单独测试 |
 
-## 8. 目标数据域
+## 9. 路线图
 
-```text
-users
-  ├── profile / preferences
-  ├── knowledge sources
-  ├── plans
-  ├── trips
-  │     ├── itinerary days
-  │     ├── spots
-  │     ├── footprints
-  │     ├── photos / notes
-  │     └── memories
-  └── travel history / personalization signals
-```
+历史 Phase 0–8 保留为已发生的 remould 与双端建设过程，不重新编号。
 
-存储分工：
+| Phase | 目标 | 状态 |
+| --- | --- | --- |
+| 9 | **Travel Memory & Personal Context Foundation**：grounded Memory、历史旅行上下文、明确偏好与可审视行为信号 | 未来 |
+| 10 | **Agent Runtime & Vago Domain Tools**：Agent loop、context acquisition、工具边界、观察、约束检查、审批原则、最小 tracing/testability 设计 | 未来 |
+| 11 | **Context-aware Coordination & Replanning**：以 Adaptive Day Planner 为代表，在确认后更新 itinerary | 未来 |
+| 12 | **External Tool / MCP Integration**：在已有有意义的 workflow 上渐进接入地图、日历、天气或航班等外部能力 | 未来 |
 
-- MySQL：用户、计划、行程、地点、足迹 metadata、照片 metadata、回忆 facts / narrative；
-- Redis：token invalidation、rate limit、短期缓存；
-- Qdrant：非结构化个人知识 chunk embedding；
-- Object storage：照片和媒体文件。
+不以多 Agent、MCP、复杂 GIS 或微服务数量作为里程碑完成条件。每一阶段应首先验证用户协调成本是否被真实降低。
 
-## 9. 里程碑
+## 10. 当前边界
 
-| Phase | 目标 | 验收 |
-|------|------|------|
-| 0 | 仓库盘点和文档重塑 | 已完成 README / PRD / architecture / inventory 对齐 |
-| 1 | FastAPI backend foundation | 已完成 config、DB、Alembic、auth dependency、exceptions、tests skeleton |
-| 2 | Auth / User migration | React 可切换到 FastAPI auth，用户隔离测试通过 |
-| 3 | Trip domain migration | Plan / Trip / Itinerary API 和 Web 调用切换 |
-| 4 | Knowledge / RAG integration | 统一后端承接 ingestion、RAG、AI Companion |
-| 5 | Remove legacy community | 不迁移 public feed / like / follow，清理无依赖代码 |
-| 6 | Web experience remould | 导航聚焦 Dashboard、Knowledge、AI、Plans、Trips、Footprints、Memories、Profile |
-| 7 | iOS foundation | SwiftUI app 完成 API config、login、current trip、basic profile |
-| 8 | iOS tracking | 已完成前台 Core Location、local buffer、sync、MapKit、check-in；后台定位、迷雾地图与统计后续建设 |
-| 9 | Travel memory | 基于真实足迹 / 笔记 / 照片生成 grounded memory |
-
-## 10. 当前实现边界
-
-当前代码尚未完成统一 FastAPI 后端、iOS、Footprint、Travel Memory。README 和架构文档必须区分当前架构与目标架构，不能把尚未迁移完成的能力描述成已上线事实。
+- FastAPI 是当前唯一后端，并继续演进为模块化单体。
+- React Web 与 Native SwiftUI iOS 的分工保持不变。
+- MySQL 保存结构化旅行事实；Qdrant 仅保存可选语义检索所需向量数据；原始媒体未来使用对象存储。
+- 当前仅支持纯文本与 `.md/.txt` KnowledgeSource；PDF、DOCX 和复杂 ingestion platform 不在本阶段范围。
+- 不实现后台持续定位、多 Agent、复杂 GIS、自动 booking/payment 或未经确认的 Agent 写操作。
