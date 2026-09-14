@@ -9,7 +9,7 @@ description: Vago 项目的编码规范。仅在用户明确要求新增、修�
 
 本 Skill 仅负责 Vago 项目的**代码修改规范**。
 
-涉及产品定位、功能取舍、架构迁移或技术栈决策时，应同时参考 `project-remould-skill`，并以其中的项目级约束为准。
+涉及产品定位、功能取舍、架构迁移或技术栈决策时，应同时参考项目长期skill `vago-project-skill`, `readme.md`文档，架构文档`architecture.md`, 需求文档`PRD.md`；涉及到不同模块（比如ios客户端）的开发，需要参考对应的设计文档和开发计划文档。
 
 ## Trigger Rules
 
