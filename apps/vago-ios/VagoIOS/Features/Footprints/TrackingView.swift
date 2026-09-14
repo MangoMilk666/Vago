@@ -30,6 +30,8 @@ struct TrackingView: View {
     @State private var isTripStatusUnverified = false
     // 每次点击定位按钮递增，Canvas 据此恢复跟随模式；不是位置数据本身。
     @State private var locateRequestID = 0
+    // 采样点过密时可仅查看平滑轨迹；该开关不影响打卡标记或服务端数据。
+    @State private var areFootprintSamplesVisible = true
     // 保存提示的异步任务，以便连续打卡或离开页面时取消旧的三秒计时。
     @State private var messageDismissTask: Task<Void, Never>?
     private let client = APIClient()
@@ -89,7 +91,8 @@ struct TrackingView: View {
                 locations: footprintRepository.displayPoints,
                 checkins: checkins,
                 currentLocation: tracking.currentLocation,
-                locateRequestID: locateRequestID
+                locateRequestID: locateRequestID,
+                areFootprintSamplesVisible: areFootprintSamplesVisible
             )
                 .ignoresSafeArea()
 
@@ -104,6 +107,8 @@ struct TrackingView: View {
                 offlineStatusMessage: isTripStatusUnverified ? "离线状态，行程待联网验证" : nil,
                 onShowTrackingControls: { isTrackingSheetPresented = true },
                 onRefresh: { Task { await refreshMap() } },
+                areFootprintSamplesVisible: areFootprintSamplesVisible,
+                onToggleFootprintSamples: { areFootprintSamplesVisible.toggle() },
                 onLocate: {
                     locateRequestID += 1
                     tracking.requestCurrentLocation()

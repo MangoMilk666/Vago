@@ -9,6 +9,8 @@ struct TravelMapCanvas: View {
     let checkins: [Checkin]
     let currentLocation: CurrentLocationFix?
     let locateRequestID: Int
+    // 采样点只是轨迹的辅助视觉层，可按用户偏好隐藏，但不改变路线与打卡标注。
+    let areFootprintSamplesVisible: Bool
     // MapCameraPosition 是 SwiftUI Map 的可写镜头状态，允许跟随与用户自由浏览共存。
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var cameraMode: CameraMode = .automatic
@@ -35,13 +37,16 @@ struct TravelMapCanvas: View {
                     MapPolyline(coordinates: segment.smoothedCoordinates)
                         .stroke(.indigo, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
                 }
-                // 每个渲染点是固定屏幕尺寸的实心圆，缩放地图不会改变它的视觉大小。
-                ForEach(segment.locations) { location in
-                    Annotation("轨迹", coordinate: coordinate(for: location)) {
-                        Circle()
-                            .fill(.indigo)
-                            .frame(width: footprintPointDiameter, height: footprintPointDiameter)
-                            .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1))
+                // 分支条件：用户开启采样点显示时才绘制圆点；路线与打卡保持独立渲染。
+                if areFootprintSamplesVisible {
+                    // 每个渲染点是固定屏幕尺寸的实心圆，缩放地图不会改变它的视觉大小。
+                    ForEach(segment.locations) { location in
+                        Annotation("轨迹", coordinate: coordinate(for: location)) {
+                            Circle()
+                                .fill(.indigo)
+                                .frame(width: footprintPointDiameter, height: footprintPointDiameter)
+                                .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1))
+                        }
                     }
                 }
             }
@@ -178,6 +183,8 @@ struct TravelMapControls: View {
     // () -> Void 表示无参数、无返回值的回调；父视图将具体状态变更作为闭包传进来。
     let onShowTrackingControls: () -> Void
     let onRefresh: () -> Void
+    let areFootprintSamplesVisible: Bool
+    let onToggleFootprintSamples: () -> Void
     let onLocate: () -> Void
     let onCheckIn: () -> Void
 
@@ -195,17 +202,25 @@ struct TravelMapControls: View {
 
                 Spacer()
 
-                Button(action: onRefresh) {
-                    // iOS 17 使用 ProgressView 表达刷新中，避免依赖 iOS 18 的旋转符号效果。
-                    if isRefreshing {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "arrow.clockwise")
+                HStack(spacing: 8) {
+                    Button(action: onToggleFootprintSamples) {
+                        Image(systemName: areFootprintSamplesVisible ? "eye" : "eye.slash")
                     }
+                    .mapOverlaySurface()
+                    .accessibilityLabel(areFootprintSamplesVisible ? "隐藏足迹采样点" : "显示足迹采样点")
+
+                    Button(action: onRefresh) {
+                        // iOS 17 使用 ProgressView 表达刷新中，避免依赖 iOS 18 的旋转符号效果。
+                        if isRefreshing {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                    .mapOverlaySurface()
+                    .disabled(isRefreshing)
+                    .accessibilityLabel("刷新足迹数据")
                 }
-                .mapOverlaySurface()
-                .disabled(isRefreshing)
-                .accessibilityLabel("刷新足迹数据")
             }
 
             Spacer()
