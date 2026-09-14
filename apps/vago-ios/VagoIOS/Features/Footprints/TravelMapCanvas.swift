@@ -14,8 +14,8 @@ struct TravelMapCanvas: View {
     @State private var cameraMode: CameraMode = .automatic
     @State private var hasInitializedCamera = false
     @State private var routeSegments: [FootprintSegment] = []
-    // 使用真实米制半径绘制足迹点，缩放地图时视觉尺寸会随地图比例自然变化。
-    private let footprintPointRadiusMeters: CLLocationDistance = 7
+    // 20pt 是原生地图地点 glyph 的常用视觉尺寸；足迹点取其 90%，并保持固定屏幕大小。
+    private let footprintPointDiameter: CGFloat = 11
 
     private enum CameraMode {
         case automatic
@@ -35,10 +35,14 @@ struct TravelMapCanvas: View {
                     MapPolyline(coordinates: segment.smoothedCoordinates)
                         .stroke(.indigo, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
                 }
-                // 每个渲染点是实心圆而非系统 Marker；MapCircle 的半径以米计，缩放时会随地图比例变化。
+                // 每个渲染点是固定屏幕尺寸的实心圆，缩放地图不会改变它的视觉大小。
                 ForEach(segment.locations) { location in
-                    MapCircle(center: coordinate(for: location), radius: footprintPointRadiusMeters)
-                        .foregroundStyle(.indigo)
+                    Annotation("轨迹", coordinate: coordinate(for: location)) {
+                        Circle()
+                            .fill(.indigo)
+                            .frame(width: footprintPointDiameter, height: footprintPointDiameter)
+                            .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1))
+                    }
                 }
             }
             // Annotation 支持自定义 SwiftUI 内容，因此打卡使用彩色 SF Symbol 与普通轨迹区分。
