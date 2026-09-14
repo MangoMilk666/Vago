@@ -21,8 +21,9 @@ enum FootprintRouteBuilder {
     // 15 米内的连续样本通常只是 GPS 抖动或短时间重复回调，渲染时只保留较新的一个。
     static let minimumRenderDistanceMeters: CLLocationDistance = 15
     
-    // 重要逻辑: 两次记录间隔过长或跨越过远时宁可断线，不能在地图上伪造一段经过路径。
-    private static let maximumContinuousGap: TimeInterval = 5 * 60
+    // 真机弱信号下正常移动可能数分钟才回调一次；仅时间稀疏不再单独断线，需结合较大位移判断。
+    private static let maximumSparseGap: TimeInterval = 20 * 60
+    private static let maximumDistanceAcrossSparseGapMeters: CLLocationDistance = 1_000
     private static let maximumContinuousDistanceMeters: CLLocationDistance = 5_000
     private static let maximumTrustedAccuracyMeters: CLLocationAccuracy = 100
     private static let maximumLikelyContinuousSpeedMetersPerSecond: CLLocationSpeed = 100
@@ -43,11 +44,12 @@ enum FootprintRouteBuilder {
             guard let previous = currentSegment.last else { continue }
             let timeGap = location.recordedAt.timeIntervalSince(previous.recordedAt)
             let distance = distance(from: previous, to: location)
+            let hasSparseGapWithLargeMove = timeGap > maximumSparseGap && distance > maximumDistanceAcrossSparseGapMeters
 
-            // 分支条件：显式段切换、时间倒退、长时间无样本或不可信远跳时关闭当前段，避免产生跨城市直线。
+            // 分支条件：显式段切换、时间倒退、长时间缺点且位移很大或不可信远跳时关闭当前段，避免产生跨城市直线。
             if hasExplicitSegmentBoundary(previous, location)
                 || timeGap <= 0
-                || timeGap > maximumContinuousGap
+                || hasSparseGapWithLargeMove
                 || isUntrustworthyConnection(distance: distance, timeGap: timeGap, previous: previous, next: location) {
                 results.append(makeSegment(currentSegment))
                 currentSegment = [location]

@@ -14,6 +14,8 @@ struct TravelMapCanvas: View {
     @State private var cameraMode: CameraMode = .automatic
     @State private var hasInitializedCamera = false
     @State private var routeSegments: [FootprintSegment] = []
+    // 使用真实米制半径绘制足迹点，缩放地图时视觉尺寸会随地图比例自然变化。
+    private let footprintPointRadiusMeters: CLLocationDistance = 7
 
     private enum CameraMode {
         case automatic
@@ -32,10 +34,11 @@ struct TravelMapCanvas: View {
                         .stroke(.indigo.opacity(0.22), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
                     MapPolyline(coordinates: segment.smoothedCoordinates)
                         .stroke(.indigo, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
-                } else if let location = segment.locations.first {
-                    // 分支条件：孤立点不连线，只用轻量符号表达曾取得过一次有效位置。
-                    Marker("轨迹", coordinate: coordinate(for: location))
-                        .tint(.indigo)
+                }
+                // 每个渲染点是实心圆而非系统 Marker；MapCircle 的半径以米计，缩放时会随地图比例变化。
+                ForEach(segment.locations) { location in
+                    MapCircle(center: coordinate(for: location), radius: footprintPointRadiusMeters)
+                        .foregroundStyle(.indigo)
                 }
             }
             // Annotation 支持自定义 SwiftUI 内容，因此打卡使用彩色 SF Symbol 与普通轨迹区分。
@@ -50,10 +53,14 @@ struct TravelMapCanvas: View {
             // 分支条件：有有效定位时显示唯一当前位置标记，不再与旧采样 Marker 争夺语义。
             if let currentLocation {
                 Annotation("当前位置", coordinate: currentLocation.coordinate) {
-                    Image(systemName: "location.circle.fill")
-                        .font(.title)
+                    Image(systemName: "location.north.fill")
+                        .font(.system(size: 24, weight: .bold))
                         .foregroundStyle(.blue)
-                        .background(.white, in: Circle())
+                        // SwiftUI 0 度朝上与 Core Location 0 度朝北一致，直接旋转即可表示行进方向。
+                        .rotationEffect(.degrees(currentLocation.headingDegrees ?? 0))
+                        .padding(5)
+                        .background(.white.opacity(0.92), in: Circle())
+                        .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
                 }
             }
         }

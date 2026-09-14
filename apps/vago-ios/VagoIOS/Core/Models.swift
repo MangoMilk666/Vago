@@ -142,6 +142,8 @@ struct CurrentLocationFix {
     let coordinate: CLLocationCoordinate2D
     let recordedAt: Date
     let accuracyM: CLLocationAccuracy
+    // 0 度表示正北、顺时针增加；为空时地图仅展示当前位置，不强行猜测箭头朝向。
+    let headingDegrees: CLLocationDirection?
 
     /// 单次定位过期后仍可展示在地图上，但打卡等操作应重新请求系统定位。
     func isFresh(within interval: TimeInterval = 30, now: Date = Date()) -> Bool {

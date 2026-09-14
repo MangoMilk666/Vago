@@ -45,6 +45,10 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     private let maximumAcceptedAccuracyMeters: CLLocationAccuracy = 100
     private let maximumPastSampleAge: TimeInterval = 120
     private let maximumFutureSampleOffset: TimeInterval = 60
+    // 指南针方向是 GPS course 不可用（例如刚开始移动、低速行走）时的显示兜底，并不进入足迹数据。
+    private var latestHeadingDegrees: CLLocationDirection?
+    // 移动中的 GPS course 优先级高于手机朝向，避免用户手持角度改变时箭头偏离实际行进方向。
+    private var latestCourseHeadingDegrees: CLLocationDirection?
 
     override init() {
         // override 表示重写 NSObject 的构造方法；super.init() 必须在使用 self 前完成。
@@ -54,6 +58,8 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         // 第一版仅在 App 前台以约 20 米间隔采样，先控制功耗和隐私边界。
         manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         manager.distanceFilter = 20
+        // 约 5 度才回调一次，避免用户轻微晃动手机时地图上的方向箭头持续抖动。
+        manager.headingFilter = 5
     }
 
     func startTracking(tripUuid: String, userUuid: String, session: SessionStore) {
@@ -85,6 +91,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         hasRecordingIntent = false
         trackingSegmentUuid = nil
         manager.stopUpdatingLocation()
+        manager.stopUpdatingHeading()
         isTracking = false
         // 用户停止记录时立即尝试交接仍在设备中的样本，无需等待定时器。
         Task { _ = await syncPendingSamples() }
@@ -108,6 +115,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
             requestLocationPermissionIfNeeded()
             // 分支条件：已有权限时立即请求坐标；首次授权完成后由授权 delegate 继续请求。
             if isAuthorized {
+                startHeadingUpdatesIfAvailable()
                 manager.requestLocation()
             } else if authorizationStatus != .notDetermined {
                 finishLocationRequest(with: .failure(LocationRequestError.permissionDenied))
@@ -135,6 +143,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
             retrySyncTask?.cancel()
             retrySyncTask = nil
             manager.stopUpdatingLocation()
+            manager.stopUpdatingHeading()
             isTracking = false
             // 分支条件：前台连续记录被生命周期打断时清空旧段，恢复后必须生成新的持久化边界。
             trackingSegmentUuid = nil
@@ -231,17 +240,28 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         }
     }
 
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        // 先在 delegate 线程提取 Sendable 的 Double，不能把非 Sendable 的 CLHeading 系统对象跨 Actor 传给主线程。
+        let trueHeading = newHeading.trueHeading
+        let magneticHeading = newHeading.magneticHeading
+        Task { @MainActor [weak self] in
+            self?.handleHeadingUpdate(trueHeading: trueHeading, magneticHeading: magneticHeading)
+        }
+    }
+
     private func handleAuthorizationChange(_ status: CLAuthorizationStatus) {
         authorizationStatus = status
         // 分支条件：授权后仅恢复用户已明确开始的记录，或补发等待中的一次定位请求。
         if isAuthorized {
             locationError = nil
             if locationRequestContinuation != nil {
+                startHeadingUpdatesIfAvailable()
                 manager.requestLocation()
             }
             resumeTrackingIfNeeded()
         } else if !isAuthorized {
             manager.stopUpdatingLocation()
+            manager.stopUpdatingHeading()
             isTracking = false
             if authorizationStatus != .notDetermined {
                 locationError = "未获得定位权限，请在系统设置中允许 Vago 使用定位。"
@@ -256,10 +276,12 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
             // 分支条件：坐标、时间或精度明显无效时仅丢弃本点，不让一次漂移阻断后续正常样本。
             guard isUsableRealtimeLocation(location) else { continue }
             didReceiveValidFix = true
+            updateCourseHeading(from: location)
             let fix = CurrentLocationFix(
                 coordinate: location.coordinate,
                 recordedAt: location.timestamp,
-                accuracyM: location.horizontalAccuracy
+                accuracyM: location.horizontalAccuracy,
+                headingDegrees: preferredHeading()
             )
             // 每次有效回调都更新可展示的当前位置；Locate 不需要行程，也绝不因此保存轨迹。
             currentLocation = fix
@@ -314,6 +336,42 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         return age <= maximumPastSampleAge && age >= -maximumFutureSampleOffset
     }
 
+    private func handleHeadingUpdate(trueHeading: CLLocationDirection, magneticHeading: CLLocationDirection) {
+        // 分支条件：trueHeading 不可用时 Core Location 返回负数，此时采用磁北方向；两者都无效则保留旧值。
+        let candidate = trueHeading >= 0 ? trueHeading : magneticHeading
+        guard candidate.isFinite, candidate >= 0 else { return }
+        latestHeadingDegrees = candidate
+        // 指南针先到、GPS 点后到是正常时序；已有位置时仅更新箭头方向，不改变坐标或采样时间。
+        if let currentLocation {
+            self.currentLocation = CurrentLocationFix(
+                coordinate: currentLocation.coordinate,
+                recordedAt: currentLocation.recordedAt,
+                accuracyM: currentLocation.accuracyM,
+                headingDegrees: preferredHeading()
+            )
+        }
+    }
+
+    private func updateCourseHeading(from location: CLLocation) {
+        // 分支条件：设备有可靠移动速度和 GPS course 时优先使用真实行进方向，避免手机朝向与前进方向不同。
+        if location.speed >= 0.5, location.course >= 0, location.course.isFinite {
+            latestCourseHeadingDegrees = location.course
+        } else {
+            // 分支条件：当前 GPS 点无法证明设备仍在移动时释放旧 course，改由实时指南针方向驱动箭头。
+            latestCourseHeadingDegrees = nil
+        }
+    }
+
+    private func preferredHeading() -> CLLocationDirection? {
+        latestCourseHeadingDegrees ?? latestHeadingDegrees
+    }
+
+    private func startHeadingUpdatesIfAvailable() {
+        // heading 来自 Core Location，不需要新增运动/陀螺仪授权；没有硬件能力的设备安全跳过。
+        guard CLLocationManager.headingAvailable(), isAuthorized else { return }
+        manager.startUpdatingHeading()
+    }
+
     private func handleLocationFailure(_ error: Error) {
         // 分支条件：locationUnknown 是系统可恢复的临时状态，继续等待本次十秒请求的后续回调。
         if let locationError = error as? CLError, locationError.code == .locationUnknown {
@@ -337,17 +395,21 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         if trackingSegmentUuid == nil {
             trackingSegmentUuid = UUID().uuidString.lowercased()
         }
+        startHeadingUpdatesIfAvailable()
         manager.startUpdatingLocation()
         isTracking = true
     }
 
     private func resetRuntimeState() {
         manager.stopUpdatingLocation()
+        manager.stopUpdatingHeading()
         hasRecordingIntent = false
         finishLocationRequest(with: .failure(LocationRequestError.cancelled))
         isTracking = false
         currentLocation = nil
         latestSample = nil
+        latestHeadingDegrees = nil
+        latestCourseHeadingDegrees = nil
         trackingSegmentUuid = nil
         syncError = nil
         locationError = nil
