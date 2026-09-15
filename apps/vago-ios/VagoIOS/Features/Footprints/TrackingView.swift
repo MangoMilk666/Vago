@@ -17,6 +17,10 @@ struct TrackingView: View {
     @State private var isPreparingCheckin = false
     @State private var isTrackingSheetPresented = false
     @State private var isCheckinSheetPresented = false
+    // 被点击的手动打卡会驱动详情 sheet；自动 GPS 点没有详情编辑入口。
+    @State private var selectedCheckin: FootprintDisplayPoint?
+    @State private var isUpdatingCheckin = false
+    @State private var checkinDetailError = ""
     @State private var message = ""
     // 刷新错误与短暂操作反馈分开保存，成功读取远端数据后可以准确收起。
     @State private var refreshError: String?
@@ -94,7 +98,11 @@ struct TrackingView: View {
                 locations: footprintRepository.displayPoints,
                 currentLocation: tracking.currentLocation,
                 locateRequestID: locateRequestID,
-                areFootprintSamplesVisible: areFootprintSamplesVisible
+                areFootprintSamplesVisible: areFootprintSamplesVisible,
+                onSelectCheckin: { checkin in
+                    checkinDetailError = ""
+                    selectedCheckin = checkin
+                }
             )
                 .ignoresSafeArea()
 
@@ -133,6 +141,17 @@ struct TrackingView: View {
                 onSync: { Task { await syncAndReload() } }
             )
             .presentationDetents([.height(300), .medium])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $selectedCheckin) { checkin in
+            CheckinDetailSheet(
+                checkin: checkin,
+                isSaving: isUpdatingCheckin,
+                errorMessage: checkinDetailError
+            ) { locationName, note in
+                Task { await updateCheckin(checkin, locationName: locationName, note: note) }
+            }
+            .presentationDetents([.height(470), .large])
             .presentationDragIndicator(.visible)
         }
     }
@@ -273,7 +292,7 @@ struct TrackingView: View {
                 body: payload,
                 tokenProvider: session
             )
-            footprintRepository.recordCreatedCheckin(checkin)
+            footprintRepository.upsertManualCheckin(checkin)
             tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
             showCheckinSuccessMessage()
             checkinClientEventUuid = nil
@@ -290,6 +309,33 @@ struct TrackingView: View {
         }
     }
 
+    private func updateCheckin(_ checkin: FootprintDisplayPoint, locationName: String, note: String) async {
+        // 分支条件：详情只会由远端手动打卡打开；缺少服务端 UUID 时拒绝发送不完整更新请求。
+        guard let serverUuid = checkin.serverUuid else {
+            checkinDetailError = "该打卡尚未同步完成，暂时无法编辑。"
+            return
+        }
+        isUpdatingCheckin = true
+        checkinDetailError = ""
+        defer { isUpdatingCheckin = false }
+        do {
+            let payload = CheckinUpdateRequest(locationName: locationName, note: note)
+            let updated: TravelObservation = try await client.request(
+                path: "footprints/observations/checkins/\(serverUuid)",
+                method: "PATCH",
+                body: payload,
+                tokenProvider: session
+            )
+            footprintRepository.upsertManualCheckin(updated)
+            tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: updated.tripUuid)
+            selectedCheckin = nil
+            showTransientMessage("打卡已更新")
+        } catch {
+            // 服务端会拒绝历史行程或跨账号更新，详情 sheet 保持打开以展示明确原因。
+            checkinDetailError = error.localizedDescription
+        }
+    }
+
     private func showCheckinSuccessMessage() {
         showTransientMessage("已记录本次打卡")
     }
@@ -302,6 +348,168 @@ struct TrackingView: View {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled, message == text else { return }
             message = ""
+        }
+    }
+}
+
+/// 手动打卡详情：用户可补充文本，但不会修改已经发生的坐标、时间与路线事实。
+private struct CheckinDetailSheet: View {
+    private enum InputField {
+        case locationName
+        case note
+    }
+
+    let checkin: FootprintDisplayPoint
+    let isSaving: Bool
+    let errorMessage: String
+    let save: (String, String) -> Void
+
+    @State private var isEditing = false
+    @State private var locationName = ""
+    @State private var note = ""
+    @State private var isPhotoPreviewPresented = false
+    @FocusState private var focusedField: InputField?
+
+    private var trimmedLocationName: String {
+        locationName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top) {
+                    if isEditing {
+                        Text("编辑打卡")
+                            .font(.title3.bold())
+                    } else {
+                        Text(checkin.locationName ?? "未命名地点")
+                            .font(.title3.bold())
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    Button {
+                        if isEditing {
+                            resetEditableText()
+                            focusedField = nil
+                        }
+                        isEditing.toggle()
+                    } label: {
+                        Image(systemName: isEditing ? "xmark" : "pencil")
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel(isEditing ? "取消编辑打卡" : "编辑打卡")
+                }
+
+                if isEditing {
+                    TextField("地点名称", text: $locationName)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .locationName)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .note }
+                    TextField("记录备注（可选）", text: $note, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(3...6)
+                        .focused($focusedField, equals: .note)
+                        .submitLabel(.done)
+                        .onSubmit { focusedField = nil }
+                } else {
+                    Text(checkin.note?.isEmpty == false ? checkin.note! : "暂未添加备注")
+                        .font(.body)
+                        .foregroundStyle(checkin.note?.isEmpty == false ? .primary : .secondary)
+                }
+
+                Button {
+                    isPhotoPreviewPresented = true
+                } label: {
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: 34, weight: .medium))
+                        Text("照片功能准备中")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 154)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("全屏查看打卡照片占位图")
+
+                HStack(spacing: 8) {
+                    Image(systemName: "clock")
+                    Text(checkin.recordedAt, format: .dateTime.year().month().day().hour().minute())
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+                if !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+
+                if isEditing {
+                    Button(isSaving ? "保存中" : "保存修改") {
+                        focusedField = nil
+                        save(trimmedLocationName, note.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .frame(maxWidth: .infinity)
+                    .disabled(isSaving || trimmedLocationName.isEmpty)
+                }
+            }
+            .padding(24)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { focusedField = nil }
+        .onAppear(perform: resetEditableText)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("完成") { focusedField = nil }
+            }
+        }
+        .fullScreenCover(isPresented: $isPhotoPreviewPresented) {
+            CheckinPhotoPlaceholderPreview(locationName: checkin.locationName)
+        }
+    }
+
+    private func resetEditableText() {
+        locationName = checkin.locationName ?? ""
+        note = checkin.note ?? ""
+    }
+}
+
+/// 真实照片上传尚未实施时，保留完整的全屏查看交互，不把占位卡伪装为用户照片。
+private struct CheckinPhotoPlaceholderPreview: View {
+    let locationName: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 18) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 76, weight: .light))
+                Text(locationName ?? "打卡照片")
+                    .font(.title3.weight(.semibold))
+                Text("照片上传功能准备中")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .foregroundStyle(.white)
+        }
+        .overlay(alignment: .topTrailing) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.white)
+            }
+            .padding()
+            .accessibilityLabel("关闭全屏照片预览")
         }
     }
 }

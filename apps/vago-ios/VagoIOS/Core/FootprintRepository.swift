@@ -48,8 +48,8 @@ final class FootprintRepository: ObservableObject {
         rebuildDisplayPoints()
     }
 
-    func recordCreatedCheckin(_ observation: TravelObservation) {
-        // 分支条件：POST 成功后先写入内存远端快照，地图不必等待下一次完整 GET 才显示打卡。
+    func upsertManualCheckin(_ observation: TravelObservation) {
+        // POST/PATCH 成功后先替换内存远端快照，地图不必等待下一次完整 GET 才显示最新打卡文本。
         guard observation.tripUuid == tripUuid, observation.observationType == .manualCheckin else { return }
         remoteObservations.removeAll { $0.clientEventUuid == observation.clientEventUuid }
         remoteObservations.append(observation)

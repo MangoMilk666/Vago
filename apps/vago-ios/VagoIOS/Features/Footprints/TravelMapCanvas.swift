@@ -10,6 +10,8 @@ struct TravelMapCanvas: View {
     let locateRequestID: Int
     // 采样点只是轨迹的辅助视觉层，可按用户偏好隐藏，但不改变路线与打卡标注。
     let areFootprintSamplesVisible: Bool
+    // Map 只负责将点击事件上抛，详情 sheet 与编辑网络请求仍由记录页协调。
+    let onSelectCheckin: (FootprintDisplayPoint) -> Void
     // MapCameraPosition 是 SwiftUI Map 的可写镜头状态，允许跟随与用户自由浏览共存。
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var cameraMode: CameraMode = .automatic
@@ -52,10 +54,16 @@ struct TravelMapCanvas: View {
             // 手动打卡来自同一观察流，但始终使用独立 Annotation，不受自动采样点显示开关影响。
             ForEach(locations.filter { $0.kind == .manualCheckin }) { checkin in
                 Annotation(checkin.locationName ?? "打卡", coordinate: coordinate(for: checkin)) {
-                    Image(systemName: "mappin.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.orange)
-                        .shadow(radius: 2)
+                    Button {
+                        onSelectCheckin(checkin)
+                    } label: {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.orange)
+                            .shadow(radius: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("查看打卡：\(checkin.locationName ?? "未命名地点")")
                 }
             }
             // 分支条件：有有效定位时显示唯一当前位置标记，不再与旧采样 Marker 争夺语义。

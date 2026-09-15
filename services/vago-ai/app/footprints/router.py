@@ -9,6 +9,7 @@ from app.footprints import service
 from app.footprints.schemas import (
     CheckinCreateRequest,
     CheckinResponse,
+    CheckinUpdateRequest,
     LocationSampleResponse,
     LocationSyncRequest,
     LocationSyncResponse,
@@ -77,3 +78,14 @@ def create_checkin_observation(
 ) -> ApiResponse[TravelObservationResponse]:
     """创建手动打卡并返回统一观察，供新版 iOS 立即合并地图。"""
     return success(service.create_checkin_observation(db, user_uuid, payload), "打卡成功")
+
+
+@router.patch("/observations/checkins/{observation_uuid}", response_model=ApiResponse[TravelObservationResponse])
+def update_checkin_observation(
+    observation_uuid: str,
+    payload: CheckinUpdateRequest,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[TravelObservationResponse]:
+    """更新用户主动打卡的可编辑文本，不改写已记录的空间事实。"""
+    return success(service.update_checkin_observation(db, user_uuid, observation_uuid, payload), "打卡已更新")

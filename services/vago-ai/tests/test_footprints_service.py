@@ -9,7 +9,7 @@ from app.core.database import Base
 from app.core.exceptions import AppException
 from app.footprints import service
 from app.footprints.models import TravelObservation
-from app.footprints.schemas import CheckinCreateRequest, LocationSyncRequest
+from app.footprints.schemas import CheckinCreateRequest, CheckinUpdateRequest, LocationSyncRequest
 from app.travel.models import Trip
 
 
@@ -191,3 +191,43 @@ def test_checkin_event_key_is_idempotent(db_session: Session):
 
     assert first.uuid == second.uuid
     assert db_session.query(TravelObservation).count() == 1
+
+
+def test_checkin_update_only_changes_user_text_for_in_progress_trip(db_session: Session):
+    """测试：编辑打卡只能改名称与备注，坐标和发生时间仍是不可变旅行事实。"""
+    _add_trip(db_session, uuid="trip-checkin-edit", user_uuid="user-a", status=2)
+    created = service.create_checkin_observation(
+        db_session,
+        "user-a",
+        CheckinCreateRequest(
+            tripUuid="trip-checkin-edit",
+            clientEventUuid="manual-checkin-edit",
+            locationName="旧名称",
+            latitude=1.3521,
+            longitude=103.8198,
+            note="旧备注",
+            checkedAt=datetime(2026, 9, 15, 4, 0, tzinfo=UTC),
+        ),
+    )
+    updated = service.update_checkin_observation(
+        db_session,
+        "user-a",
+        created.uuid,
+        CheckinUpdateRequest(locationName="新名称", note=""),
+    )
+
+    assert updated.location_name == "新名称"
+    assert updated.note is None
+    assert updated.latitude == 1.3521
+    assert updated.occurred_at == created.occurred_at
+
+    db_session.query(Trip).filter(Trip.uuid == "trip-checkin-edit").update({"status": 3})
+    db_session.commit()
+    with pytest.raises(AppException) as exc_info:
+        service.update_checkin_observation(
+            db_session,
+            "user-a",
+            created.uuid,
+            CheckinUpdateRequest(locationName="不应修改"),
+        )
+    assert exc_info.value.code == "TRIP_NOT_IN_PROGRESS"

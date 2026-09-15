@@ -13,6 +13,7 @@ from app.footprints.models import TravelObservation
 from app.footprints.schemas import (
     CheckinCreateRequest,
     CheckinResponse,
+    CheckinUpdateRequest,
     LocationSampleResponse,
     LocationSyncRequest,
     LocationSyncResponse,
@@ -312,3 +313,31 @@ def create_checkin(db: Session, user_uuid: str, payload: CheckinCreateRequest) -
         note=observation.note,
         checkedAt=observation.occurred_at,
     )
+
+
+def update_checkin_observation(
+    db: Session,
+    user_uuid: str,
+    observation_uuid: str,
+    payload: CheckinUpdateRequest,
+) -> TravelObservationResponse:
+    """更新用户主动打卡的名称与备注，不改写空间与时间事实。"""
+    checkin = db.scalar(
+        select(TravelObservation).where(
+            TravelObservation.uuid == observation_uuid,
+            TravelObservation.user_uuid == user_uuid,
+            TravelObservation.observation_type == MANUAL_CHECKIN,
+        )
+    )
+    # 分支条件：非本人的记录、自动 GPS 或不存在的 UUID 都不暴露内部差异。
+    if checkin is None:
+        raise AppException("打卡不存在或无权访问", status_code=404, code="CHECKIN_NOT_FOUND")
+    trip = _get_owned_trip(db, user_uuid, checkin.trip_uuid)
+    # 分支条件：已结束旅行保留历史回顾，但不允许再修改其用户记录文本。
+    if trip.status != TRIP_STATUS_IN_PROGRESS:
+        raise AppException("仅进行中的行程可以编辑打卡", status_code=409, code="TRIP_NOT_IN_PROGRESS")
+    checkin.location_name = payload.location_name
+    checkin.note = payload.note.strip() or None
+    db.commit()
+    db.refresh(checkin)
+    return _to_observation_response(checkin)

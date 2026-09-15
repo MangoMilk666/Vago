@@ -231,13 +231,13 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 
 ## Phase 5：Check-in 创建确认与详情
 
-实施状态：部分完成（2026-09-05，已实现打卡前单次定位、冻结坐标与 30 米重复打卡限制；Check-in Annotation 详情仍未实施）
+实施状态：已完成（2026-09-16，已实现新鲜定位、冻结坐标、30 米重复打卡限制、Annotation 详情、名称/备注编辑与照片占位预览）
 
 **目标：** 用户可以独立打卡、清楚确认位置，并点击已保存标记查看真实记录。
 
-**涉及现有文件：** `TrackingView.swift`、Phase 1 的 CheckinSheet、Canvas/ViewModel、`Core/Models.swift`、Phase 2 的 currentLocation 接口。
+**涉及现有文件：** `TrackingView.swift`、`TravelMapCanvas.swift`、`Core/Models.swift`、`Core/FootprintRepository.swift`、Phase 2 的 currentLocation 接口；FastAPI `footprints/router.py`、`schemas.py`、`service.py`。
 
-**建议新增文件/类型：** `CheckinDetailSheet.swift`、轻量 `CheckinDraft`；无需新增 CheckinRepository 或数据库实体。
+**新增类型：** `TrackingView.swift` 内私有 `CheckinDetailSheet`、`CheckinPhotoPlaceholderPreview` 与 `CheckinUpdateRequest`；无需新增照片表或上传队列。
 
 **实施内容与数据流：**
 
@@ -245,15 +245,16 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 - sheet 展示地点名、备注、坐标/定位状态、时间和所属 Trip；不能反向地理编码时不伪造地址。提交时检查 Trip 仍有效，FastAPI 409/403/网络错误在 sheet 内可见且保留输入。
 - 没有 active Trip、定位拒绝或尚未定位要给明确原因。浏览历史行程时创建入口默认只读；回到当前行程后再打卡，不误绑所选历史 Trip。
 - 校验 256/2000 字符限制并阻止双击并发提交；成功后用响应 uuid 去重更新 Annotation，清焦点并关闭 sheet。现有 POST 没有业务幂等键，超时后不能盲目自动重试创建；提示结果待确认并刷新列表。
-- Annotation 以稳定 uuid 选择，打开详情展示名称、时间、备注、坐标和 Trip 信息。现有 GET 列表已经返回完整详情，无需新详情接口。已结束 Trip 只读，不出现编辑按钮或尚不存在的 Memory 跳转。
+- Annotation 以统一观察的稳定事件键选择，打开底部详情展示名称、时间、备注和默认照片占位图；点击占位图可验证全屏预览交互，但不伪造已上传照片。已结束 Trip 保持只读。
+- 详情编辑只允许更新用户主动填写的地点名称、备注；坐标、发生时间、路线段等 Travel Observation 事实不允许改写。保存后使用 PATCH 响应立即替换地图内存快照。
 
-**后端/API/数据库：** 纯 iOS，复用已存在的 GET/POST；离线创建、创建幂等键作为后续独立增强，不在本阶段暗加队列。
+**后端/API/数据库：** 复用统一 observations 查询与创建入口，新增 `PATCH /footprints/observations/checkins/{uuid}` 更新名称和备注；不新增数据库 migration。离线创建与真实照片上传仍属于后续独立能力。
 
 **主要风险：** 用户编辑期间坐标不断变化、错误被 sheet 遮住、超时重试造成重复打卡、详情点击与地图手势冲突。
 
 **真机验证：** 未开始连续记录也可单次定位打卡，但不生成 GPS 轨迹；移动后打卡坐标新鲜；取消/键盘完成/拖拽收起/长备注滚动均可用；关闭网络提交显示表单错误且内容保留；保存后点击标记看到同一备注和时间；重开/第二台设备读取一致。
 
-## Phase 6：有限历史行程地图
+## Phase 6：全类型行程对应地图数据
 
 实施状态：未开始
 
@@ -263,13 +264,15 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 
 **建议新增文件/类型：** `TripMapPickerSheet.swift`；ViewModel 增加 selectedTrip 与 activeRecordingTrip 的独立状态。
 
-**实施内容与数据流：** 读取行程元数据，区分未开始/进行中/已结束；一次仅加载用户明确选择的一份 Trip。切换先清理上一份派生状态，取消或忽略旧请求；camera 的“显示全部”适配该 Trip 的 segment/打卡范围。正在记录的 Trip 不随历史浏览切换绑定；状态面板明确告诉用户仍在记录哪份行程。
+**实施内容与数据流：** 读取行程元数据，区分未开始/进行中/已结束；一次仅加载用户明确选择的一份 Trip。正在记录的 Trip 不随历史浏览切换绑定；状态面板明确告诉用户仍在记录哪份行程。
+
+查看正在记录的trip以外的其他trip，可以从【行程】页面添加多个入口和页面实现。不要在【记录】页面，以免影响正在记录的Trip的打卡情况。
 
 **后端/API/数据库：** 有限、较小单 Trip 浏览可纯 iOS 完成。现有 GET 无分页；若真实单 Trip 点量达到性能预算，需单独增加可选 cursor/limit 或时间范围及稳定排序，保持旧数组 contract 默认行为，不能截断后仍宣称显示完整行程。分页不是本阶段无条件前置。
 
 **主要风险：** 无 active Trip 导致历史页被挡、旧请求污染新 Trip、误向历史 Trip 写入、长行程无界下载。
 
-**真机验证：** 结束当前行程后仍可选择历史查看；历史模式无编辑/打卡；快速切换两份 Trip 不混点、不连线；记录期间浏览历史不会改上传 tripUuid；用代表性的大行程记录加载时长、内存和交互卡顿，再决定分页是否必要。
+**真机验证：** 结束当前行程后仍可在历史trip中点击查看点位和轨迹情况；历史模式只读，无编辑/打卡功能；快速切换两份 Trip对应的点位和轨迹数据， 不混点、不连线；记录期间浏览历史不影响选定的上传的 tripUuid；用代表性的大行程记录加载时长、内存和交互卡顿，再决定分页是否必要。
 
 ## Phase 7：简单 World Fog / Explored Area 实验
 
@@ -326,13 +329,13 @@ Phase 3 真机测量 100/1000/5000 点的 JSON 字节量、编解码耗时、主
 | Phase 3  | 合并、调度、离线恢复       | GPS GET 回传 clientUuid；并发冲突问题按测试修正 | 无                   |
 | Phase 4A | 过滤、推断分段、折线样式     | 无                                 | 无                   |
 | Phase 4B | 连续记录段标识          | 可选 trackingSegmentUuid 的输入、保存、输出  | 新增一个可空列和新 migration |
-| Phase 5  | 打卡确认与详情          | 无，GET checkins 已存在                | 无                   |
+| Phase 5  | 打卡确认、详情与文本编辑     | 统一观察查询、创建与打卡文本 PATCH             | 无                   |
 | Phase 6  | 有限历史选择           | 仅真实数据量超预算时新增分页/范围能力               | 无强制修改；按查询评估索引       |
 | Phase 7  | 派生探索区、Fog 渲染     | 无                                 | 无                   |
 
 Phase 3 先发布兼容的响应增量，再发合并客户端；Phase 4B 先升级数据库和后端，再发携带段标识的客户端。旧客户端继续工作，旧样本保持可读；每次只验收一个 Phase，4A/4B 分别可交付。
 
-既有后端测试应保留，新增测试集中于共同 key、归属、旧请求兼容、并发幂等和段字段往返。不得为了客户端渲染更改认证用户来源、唯一键或把 Check-in 合并进 GPS 表。
+既有后端测试应保留，新增测试集中于共同 key、归属、旧请求兼容、并发幂等、段字段往返与打卡文本编辑。TravelObservation 可以统一存储空间事实，但必须保留 `AUTO_GPS` 与 `MANUAL_CHECKIN` 的不同业务语义和约束。
 
 ## 7. 推荐执行方式与验收门槛
 

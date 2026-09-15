@@ -15,6 +15,8 @@ struct FootprintDisplayPoint: Identifiable {
 
     // stableKey 是 user + Trip 范围内的合并键；远端 clientUuid 缺失时退回 server UUID。
     let stableKey: String
+    // 手动打卡详情更新使用服务端观察 UUID；本地待传自动点尚未具备该值。
+    let serverUuid: String?
     let tripUuid: String
     let latitude: Double
     let longitude: Double
@@ -34,6 +36,7 @@ struct FootprintDisplayPoint: Identifiable {
     static func remote(_ observation: TravelObservation) -> Self {
         Self(
             stableKey: FootprintMergeKey.normalize(observation.clientEventUuid),
+            serverUuid: observation.uuid,
             tripUuid: observation.tripUuid,
             latitude: observation.latitude,
             longitude: observation.longitude,
@@ -51,6 +54,7 @@ struct FootprintDisplayPoint: Identifiable {
     static func local(_ sample: PendingLocationSample, source: Source) -> Self {
         Self(
             stableKey: FootprintMergeKey.normalize(sample.id.uuidString),
+            serverUuid: nil,
             tripUuid: sample.tripUuid,
             latitude: sample.latitude,
             longitude: sample.longitude,

@@ -175,6 +175,12 @@ struct CheckinRequest: Encodable {
     let checkedAt: Date
 }
 
+/// 手动打卡详情面板保存时的可编辑字段；坐标与发生时间不在该请求中。
+struct CheckinUpdateRequest: Encodable {
+    let locationName: String
+    let note: String
+}
+
 /// 同一条旅行空间观察的类型；打卡仍是用户主动确认的特殊观察，而不是普通 GPS 点。
 enum TravelObservationType: String, Decodable {
     case automaticGPS = "AUTO_GPS"

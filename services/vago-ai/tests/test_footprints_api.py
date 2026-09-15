@@ -64,6 +64,11 @@ def test_footprint_routes_sync_and_checkin_for_active_trip(client: TestClient):
         "/api/v1/footprints/checkins",
         json={"tripUuid": trip["uuid"], "locationName": "滨海湾花园", "latitude": 1.2816, "longitude": 103.8636},
     )
+    checkin_uuid = checkin_response.json()["data"]["uuid"]
+    update_response = client.patch(
+        f"/api/v1/footprints/observations/checkins/{checkin_uuid}",
+        json={"locationName": "滨海湾花园南门", "note": "傍晚散步"},
+    )
     checkins_response = client.get(f"/api/v1/footprints/trips/{trip['uuid']}/checkins")
     observations_response = client.get(f"/api/v1/footprints/trips/{trip['uuid']}/observations")
 
@@ -76,7 +81,11 @@ def test_footprint_routes_sync_and_checkin_for_active_trip(client: TestClient):
     assert locations_response.json()["data"][0]["recordedAt"].endswith("Z")
     assert checkin_response.json()["data"]["locationName"] == "滨海湾花园"
     assert checkin_response.json()["data"]["checkedAt"].endswith("Z")
+    assert update_response.status_code == 200
+    assert update_response.json()["data"]["locationName"] == "滨海湾花园南门"
+    assert update_response.json()["data"]["note"] == "傍晚散步"
     assert checkins_response.status_code == 200
-    assert checkins_response.json()["data"][0]["locationName"] == "滨海湾花园"
+    assert checkins_response.json()["data"][0]["locationName"] == "滨海湾花园南门"
+    assert checkins_response.json()["data"][0]["note"] == "傍晚散步"
     assert observations_response.status_code == 200
     assert [item["observationType"] for item in observations_response.json()["data"]] == ["AUTO_GPS", "MANUAL_CHECKIN"]

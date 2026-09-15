@@ -119,6 +119,17 @@ class CheckinCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class CheckinUpdateRequest(BaseModel):
+    """用户对手动打卡补充或修正的可编辑语义字段。"""
+
+    # 地点名称属于用户主动输入的注释，可编辑但不能清空。
+    location_name: str = Field(alias="locationName", min_length=1, max_length=256)
+    # 空字符串由服务层规范化为 NULL，表示用户主动清除备注。
+    note: str = Field(default="", max_length=2000)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class CheckinResponse(BaseModel):
     """兼容既有打卡入口的手动打卡响应。"""
 
