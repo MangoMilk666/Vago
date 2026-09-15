@@ -1,4 +1,4 @@
-"""旅行足迹领域服务：校验行程归属后持久化移动端事实记录。"""
+"""旅行空间观察领域服务：校验行程归属后持久化移动端事实记录。"""
 
 from datetime import UTC, datetime
 from math import asin, cos, radians, sin, sqrt
@@ -9,20 +9,24 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppException
-from app.footprints.models import Checkin, LocationSample
+from app.footprints.models import TravelObservation
 from app.footprints.schemas import (
     CheckinCreateRequest,
     CheckinResponse,
     LocationSampleResponse,
     LocationSyncRequest,
     LocationSyncResponse,
+    TravelObservationResponse,
 )
 from app.travel.models import Trip, utc_now_naive
 from app.travel.service import TRIP_STATUS_IN_PROGRESS
 
 
-# 过近打卡会在地图上重叠，且通常不是新的旅行事实；服务端统一约束以覆盖所有客户端。
-# 最小重复打卡距离判定阈值30米
+AUTO_GPS = "AUTO_GPS"
+MANUAL_CHECKIN = "MANUAL_CHECKIN"
+# 自动 GPS 贴近用户主动确认地点时没有额外旅行价值，因此避免写入冗余样本。
+MINIMUM_AUTOMATIC_SAMPLE_DISTANCE_TO_CHECKIN_METERS = 15.0
+# 两次用户主动打卡的阈值更大，减少 GPS 漂移造成的重复地点记录。
 MINIMUM_CHECKIN_DISTANCE_METERS = 30.0
 
 
@@ -55,43 +59,105 @@ def _distance_meters(latitude_a: float, longitude_a: float, latitude_b: float, l
     return 2 * earth_radius_meters * asin(sqrt(haversine))
 
 
+def _to_observation_response(observation: TravelObservation) -> TravelObservationResponse:
+    """将 ORM 事实转换为统一观察 API 契约。"""
+    return TravelObservationResponse(
+        uuid=observation.uuid,
+        clientEventUuid=observation.client_event_uuid,
+        tripUuid=observation.trip_uuid,
+        observationType=observation.observation_type,
+        latitude=observation.latitude,
+        longitude=observation.longitude,
+        accuracyM=observation.accuracy_m,
+        speedMps=observation.speed_mps,
+        trackingSegmentUuid=observation.tracking_segment_uuid,
+        locationName=observation.location_name,
+        note=observation.note,
+        occurredAt=observation.occurred_at,
+    )
+
+
+def _to_location_response(observation: TravelObservation) -> LocationSampleResponse:
+    """为旧 locations 读取入口投影自动 GPS 字段。"""
+    return LocationSampleResponse(
+        uuid=observation.uuid,
+        clientUuid=observation.client_event_uuid,
+        latitude=observation.latitude,
+        longitude=observation.longitude,
+        accuracyM=observation.accuracy_m,
+        speedMps=observation.speed_mps,
+        trackingSegmentUuid=observation.tracking_segment_uuid,
+        recordedAt=observation.occurred_at,
+    )
+
+
+def _to_checkin_response(observation: TravelObservation) -> CheckinResponse:
+    """为旧 checkins 读取入口投影用户主动打卡字段。"""
+    return CheckinResponse(
+        uuid=observation.uuid,
+        tripUuid=observation.trip_uuid,
+        locationName=observation.location_name or "未命名地点",
+        latitude=observation.latitude,
+        longitude=observation.longitude,
+        note=observation.note,
+        checkedAt=observation.occurred_at,
+    )
+
+
 def sync_location_samples(
     db: Session,
     user_uuid: str,
     payload: LocationSyncRequest,
 ) -> LocationSyncResponse:
-    """批量写入 GPS 样本；按客户端 UUID 幂等以支持离线重试。"""
+    """批量写入自动 GPS 样本；按客户端 UUID 幂等并避开已有打卡。"""
     _get_owned_trip(db, user_uuid, payload.trip_uuid)
     client_uuids = [sample.client_uuid for sample in payload.samples]
     existing_uuids = set(
         db.scalars(
-            select(LocationSample.client_uuid).where(
-                LocationSample.user_uuid == user_uuid,
-                LocationSample.client_uuid.in_(client_uuids),
+            select(TravelObservation.client_event_uuid).where(
+                TravelObservation.user_uuid == user_uuid,
+                TravelObservation.client_event_uuid.in_(client_uuids),
             )
         ).all()
     )
-    # 保留请求开始前已存在的键，发生并发写入冲突后据此重新计算本请求的结果计数。
     existing_before_request = existing_uuids.copy()
-    # 重试时真正同步到 db 的样本列表。
-    new_rows: list[LocationSample] = []
+    # 同一批次只读取一次已有打卡；当前 MVP 的单个行程打卡数量有限，无需提前引入 GIS 查询。
+    checkins = db.scalars(
+        select(TravelObservation).where(
+            TravelObservation.user_uuid == user_uuid,
+            TravelObservation.trip_uuid == payload.trip_uuid,
+            TravelObservation.observation_type == MANUAL_CHECKIN,
+        )
+    ).all()
+    new_rows: list[TravelObservation] = []
+    skipped_client_uuids: set[str] = set()
     for sample in payload.samples:
-        # 分支条件：客户端样本已被成功接收过时，跳过写入，让移动端可安全重试整批数据。
+        # 分支条件：客户端样本已被成功接收过时,不再写入，让移动端可安全重试整批数据。
         if sample.client_uuid in existing_uuids:
             continue
+        # 分支条件：自动采样距已有用户打卡不足 15 米时不再新增冗余 GPS 事实。
+        if any(
+            _distance_meters(sample.latitude, sample.longitude, checkin.latitude, checkin.longitude)
+            < MINIMUM_AUTOMATIC_SAMPLE_DISTANCE_TO_CHECKIN_METERS
+            for checkin in checkins
+        ):
+            skipped_client_uuids.add(sample.client_uuid)
+            continue
         new_rows.append(
-            LocationSample(
+            TravelObservation(
                 uuid=_new_uuid(),
-                client_uuid=sample.client_uuid,
+                client_event_uuid=sample.client_uuid,
                 user_uuid=user_uuid,
                 trip_uuid=payload.trip_uuid,
+                observation_type=AUTO_GPS,
                 latitude=sample.latitude,
                 longitude=sample.longitude,
                 accuracy_m=sample.accuracy_m,
                 speed_mps=sample.speed_mps,
-                # 可选字段原样保存；它只定义客户端连续采样的断点，不参与幂等或行程归属。
                 tracking_segment_uuid=sample.tracking_segment_uuid,
-                recorded_at=sample.recorded_at.astimezone(UTC).replace(tzinfo=None),
+                location_name=None,
+                note=None,
+                occurred_at=sample.recorded_at.astimezone(UTC).replace(tzinfo=None),
             )
         )
         existing_uuids.add(sample.client_uuid)
@@ -100,90 +166,149 @@ def sync_location_samples(
         try:
             db.commit()
         except IntegrityError:
-            '''
-            极端情况：1）请求 A 和请求 B 同时检查数据库，都发现 clientUuid 还不存在
-            2）A 先提交成功。
-            3）B 再提交时，触发数据库唯一约束冲突 IntegrityError。
-            4）如果不捕获，B 会收到 500，iOS 可能保留这批本地数据不断重试。
-            '''
-            # 分支条件：另一台设备或重试请求在本事务提交前写入同一幂等键时回滚并复查，
-            # 让客户端可以安全删除已被服务端确认的批次，而不是因唯一键异常永久卡住队列。
+            # 分支条件：并发设备或重试请求先写入同一幂等键时，回滚并复查后返回可安全删除队列的结果。
             db.rollback()
             persisted_uuids = set(
                 db.scalars(
-                    select(LocationSample.client_uuid).where(
-                        LocationSample.user_uuid == user_uuid,
-                        LocationSample.client_uuid.in_(client_uuids),
+                    select(TravelObservation.client_event_uuid).where(
+                        TravelObservation.user_uuid == user_uuid,
+                        TravelObservation.client_event_uuid.in_(client_uuids),
                     )
                 ).all()
             )
-            # 如果并非所有点都已存在，说明这不是可安全忽略的并发重复问题，继续抛出异常，
-            # 让系统暴露真实错误。
-            if not set(client_uuids).issubset(persisted_uuids):
+            expected_uuids = set(client_uuids) - skipped_client_uuids
+            if not expected_uuids.issubset(persisted_uuids):
                 raise
-            accepted_count = len(persisted_uuids - existing_before_request)
-            # 即使当前请求本身提交失败，也告诉客户端：
-            # 这些点已经被服务端确认，无需继续保留在本地待传队列。
+            accepted_count = len((persisted_uuids - existing_before_request) & expected_uuids)
             return LocationSyncResponse(
                 acceptedCount=accepted_count,
-                duplicateCount=len(payload.samples) - accepted_count,
+                duplicateCount=len(payload.samples) - accepted_count - len(skipped_client_uuids),
+                skippedCount=len(skipped_client_uuids),
             )
     return LocationSyncResponse(
         acceptedCount=len(new_rows),
-        duplicateCount=len(payload.samples) - len(new_rows),
+        duplicateCount=len(payload.samples) - len(new_rows) - len(skipped_client_uuids),
+        skippedCount=len(skipped_client_uuids),
     )
 
 
-def list_trip_locations(db: Session, user_uuid: str, trip_uuid: str) -> list[LocationSampleResponse]:
-    """按采样时间读取一段行程的已同步轨迹。"""
+def list_trip_observations(db: Session, user_uuid: str, trip_uuid: str) -> list[TravelObservationResponse]:
+    """按实际发生时间读取一个行程的统一空间观察流。"""
     _get_owned_trip(db, user_uuid, trip_uuid)
-    samples = db.scalars(
-        select(LocationSample)
-        .where(LocationSample.user_uuid == user_uuid, LocationSample.trip_uuid == trip_uuid)
-        .order_by(LocationSample.recorded_at.asc())
+    observations = db.scalars(
+        select(TravelObservation)
+        .where(TravelObservation.user_uuid == user_uuid, TravelObservation.trip_uuid == trip_uuid)
+        .order_by(TravelObservation.occurred_at.asc(), TravelObservation.uuid.asc())
     ).all()
-    return [LocationSampleResponse.model_validate(sample) for sample in samples]
+    return [_to_observation_response(observation) for observation in observations]
+
+
+def list_trip_locations(db: Session, user_uuid: str, trip_uuid: str) -> list[LocationSampleResponse]:
+    """兼容旧入口：只读取自动 GPS 观察。"""
+    observations = [
+        observation
+        for observation in list_trip_observations(db, user_uuid, trip_uuid)
+        if observation.observation_type == AUTO_GPS
+    ]
+    # 统一响应已脱离 ORM，此处保留旧字段名供未升级客户端读取。
+    return [
+        LocationSampleResponse(
+            uuid=observation.uuid,
+            clientUuid=observation.client_event_uuid,
+            latitude=observation.latitude,
+            longitude=observation.longitude,
+            accuracyM=observation.accuracy_m,
+            speedMps=observation.speed_mps,
+            trackingSegmentUuid=observation.tracking_segment_uuid,
+            recordedAt=observation.occurred_at,
+        )
+        for observation in observations
+    ]
 
 
 def list_trip_checkins(db: Session, user_uuid: str, trip_uuid: str) -> list[CheckinResponse]:
-    """按打卡时间读取行程中的用户主动记录，供地图恢复标记。"""
-    _get_owned_trip(db, user_uuid, trip_uuid)
-    checkins = db.scalars(
-        select(Checkin)
-        .where(Checkin.user_uuid == user_uuid, Checkin.trip_uuid == trip_uuid)
-        .order_by(Checkin.checked_at.asc())
-    ).all()
-    return [CheckinResponse.model_validate(checkin) for checkin in checkins]
+    """兼容旧入口：只读取用户主动打卡观察。"""
+    observations = [
+        observation
+        for observation in list_trip_observations(db, user_uuid, trip_uuid)
+        if observation.observation_type == MANUAL_CHECKIN
+    ]
+    return [
+        CheckinResponse(
+            uuid=observation.uuid,
+            tripUuid=observation.trip_uuid,
+            locationName=observation.location_name or "未命名地点",
+            latitude=observation.latitude,
+            longitude=observation.longitude,
+            note=observation.note,
+            checkedAt=observation.occurred_at,
+        )
+        for observation in observations
+    ]
 
 
-def create_checkin(db: Session, user_uuid: str, payload: CheckinCreateRequest) -> CheckinResponse:
-    """为进行中的行程新增一条用户主动确认的打卡。"""
+def create_checkin_observation(db: Session, user_uuid: str, payload: CheckinCreateRequest) -> TravelObservationResponse:
+    """为进行中的行程新增一条用户主动确认的空间观察。"""
     trip = _get_owned_trip(db, user_uuid, payload.trip_uuid)
-    # 分支条件：只有进行中行程允许创建新的手动记录，保持已结束旅行的数据可回顾但不可篡改。
     if trip.status != TRIP_STATUS_IN_PROGRESS:
         raise AppException("仅进行中的行程可以打卡", status_code=409, code="TRIP_NOT_IN_PROGRESS")
+    client_event_uuid = payload.client_event_uuid or _new_uuid()
+    existing_event = db.scalar(
+        select(TravelObservation).where(
+            TravelObservation.user_uuid == user_uuid,
+            TravelObservation.client_event_uuid == client_event_uuid,
+        )
+    )
+    # 分支条件：同一客户端事件已经成功写入时直接回传原事实，防止网络重试产生重复打卡。
+    if existing_event is not None:
+        if existing_event.trip_uuid != trip.uuid or existing_event.observation_type != MANUAL_CHECKIN:
+            raise AppException("打卡事件键与已有记录冲突", status_code=409, code="CHECKIN_EVENT_CONFLICT")
+        return _to_observation_response(existing_event)
     existing_checkins = db.scalars(
-        select(Checkin).where(Checkin.user_uuid == user_uuid, Checkin.trip_uuid == trip.uuid)
+        select(TravelObservation).where(
+            TravelObservation.user_uuid == user_uuid,
+            TravelObservation.trip_uuid == trip.uuid,
+            TravelObservation.observation_type == MANUAL_CHECKIN,
+        )
     ).all()
-    # 分支条件：同一行程已有 30 米内打卡时拒绝创建，容纳真机 GPS 漂移并避免多端绕过客户端限制。
+    # 分支条件：同一行程已有 30 米内用户打卡时拒绝创建；自动 GPS 点不参与此限制。
     if any(
         _distance_meters(payload.latitude, payload.longitude, checkin.latitude, checkin.longitude) < MINIMUM_CHECKIN_DISTANCE_METERS
         for checkin in existing_checkins
     ):
         raise AppException("和其他打卡点太近啦，请换个位置重试", status_code=409, code="CHECKIN_TOO_CLOSE")
     checked_at = payload.checked_at or datetime.now(UTC)
-    checkin = Checkin(
+    checkin = TravelObservation(
         uuid=_new_uuid(),
+        client_event_uuid=client_event_uuid,
         user_uuid=user_uuid,
         trip_uuid=trip.uuid,
-        location_name=payload.location_name,
+        observation_type=MANUAL_CHECKIN,
         latitude=payload.latitude,
         longitude=payload.longitude,
+        accuracy_m=None,
+        speed_mps=None,
+        tracking_segment_uuid=payload.tracking_segment_uuid,
+        location_name=payload.location_name,
         note=payload.note,
-        checked_at=checked_at.astimezone(UTC).replace(tzinfo=None),
+        occurred_at=checked_at.astimezone(UTC).replace(tzinfo=None),
         created_at=utc_now_naive(),
     )
     db.add(checkin)
     db.commit()
     db.refresh(checkin)
-    return CheckinResponse.model_validate(checkin)
+    return _to_observation_response(checkin)
+
+
+def create_checkin(db: Session, user_uuid: str, payload: CheckinCreateRequest) -> CheckinResponse:
+    """兼容旧 POST 入口：返回传统打卡字段，但底层写入统一观察表。"""
+    observation = create_checkin_observation(db, user_uuid, payload)
+    return CheckinResponse(
+        uuid=observation.uuid,
+        tripUuid=observation.trip_uuid,
+        locationName=observation.location_name or "未命名地点",
+        latitude=observation.latitude,
+        longitude=observation.longitude,
+        note=observation.note,
+        checkedAt=observation.occurred_at,
+    )

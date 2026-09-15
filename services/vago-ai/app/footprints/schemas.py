@@ -1,8 +1,12 @@
-"""旅行足迹接口的请求与响应模型。"""
+"""旅行空间观察接口的请求与响应模型。"""
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+
+ObservationType = Literal["AUTO_GPS", "MANUAL_CHECKIN"]
 
 
 def _serialize_utc_datetime(value: datetime) -> str:
@@ -13,7 +17,7 @@ def _serialize_utc_datetime(value: datetime) -> str:
 
 
 class LocationSampleInput(BaseModel):
-    """移动端离线队列中的单个 GPS 样本。"""
+    """移动端离线队列中的单个自动 GPS 样本。"""
 
     # 客户端生成的稳定 UUID，作为幂等键。
     client_uuid: str = Field(alias="clientUuid", min_length=1, max_length=64)
@@ -34,7 +38,7 @@ class LocationSampleInput(BaseModel):
 
 
 class LocationSyncRequest(BaseModel):
-    """一次最多同步 100 条 GPS 样本，便于网络恢复时分批重试。"""
+    """一次最多同步 100 条自动 GPS 样本。"""
 
     # 目标正式行程 UUID。
     trip_uuid: str = Field(alias="tripUuid", min_length=1, max_length=32)
@@ -51,78 +55,83 @@ class LocationSyncResponse(BaseModel):
     accepted_count: int = Field(alias="acceptedCount")
     # 因客户端幂等键已存在而跳过的样本数量。
     duplicate_count: int = Field(alias="duplicateCount")
+    # 因附近已有手动打卡而不需要保存的自动样本数量，客户端可安全移除对应待传项。
+    skipped_count: int = Field(alias="skippedCount")
 
     model_config = ConfigDict(populate_by_name=True)
 
 
-class LocationSampleResponse(BaseModel):
-    """用于 MapKit 渲染的已持久化轨迹点。"""
+class TravelObservationResponse(BaseModel):
+    """地图与 Live Context 共用的统一旅行空间观察。"""
 
-    # 服务端位置记录 UUID。
     uuid: str
-    # 客户端首次生成的幂等键；iOS 用它把远端快照与离线队列精确交接。
-    client_uuid: str = Field(alias="clientUuid")
-    # 纬度。
+    client_event_uuid: str = Field(alias="clientEventUuid")
+    trip_uuid: str = Field(alias="tripUuid")
+    observation_type: ObservationType = Field(alias="observationType")
     latitude: float
-    # 经度。
     longitude: float
-    # 定位精度，单位米。
     accuracy_m: float | None = Field(default=None, alias="accuracyM")
-    # 移动速度，单位米/秒。
     speed_mps: float | None = Field(default=None, alias="speedMps")
-    # 连续前台记录的段标识；为空时客户端继续使用时间与距离推断断点。
     tracking_segment_uuid: str | None = Field(default=None, alias="trackingSegmentUuid")
-    # 实际采样时间。
+    location_name: str | None = Field(default=None, alias="locationName")
+    note: str | None = None
+    occurred_at: datetime = Field(alias="occurredAt")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_serializer("occurred_at")
+    def serialize_occurred_at(self, value: datetime) -> str:
+        return _serialize_utc_datetime(value)
+
+
+class LocationSampleResponse(BaseModel):
+    """兼容旧地图读取入口的自动 GPS 响应。"""
+
+    uuid: str
+    client_uuid: str = Field(alias="clientUuid")
+    latitude: float
+    longitude: float
+    accuracy_m: float | None = Field(default=None, alias="accuracyM")
+    speed_mps: float | None = Field(default=None, alias="speedMps")
+    tracking_segment_uuid: str | None = Field(default=None, alias="trackingSegmentUuid")
     recorded_at: datetime = Field(alias="recordedAt")
 
-    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     @field_serializer("recorded_at")
     def serialize_recorded_at(self, value: datetime) -> str:
-        """保证 MapKit 客户端收到可明确解析的 UTC 采样时间。"""
         return _serialize_utc_datetime(value)
 
 
 class CheckinCreateRequest(BaseModel):
     """用户手动创建打卡的请求。"""
 
-    # 打卡归属的正式行程 UUID。
     trip_uuid: str = Field(alias="tripUuid", min_length=1, max_length=32)
-    # 用户可编辑的地点名称。
+    # 新客户端提供事件键以防止重复提交；旧客户端未提供时服务端仍可兼容创建。
+    client_event_uuid: str | None = Field(default=None, alias="clientEventUuid", min_length=1, max_length=64)
     location_name: str = Field(alias="locationName", min_length=1, max_length=256)
-    # 打卡纬度。
     latitude: float = Field(ge=-90, le=90)
-    # 打卡经度。
     longitude: float = Field(ge=-180, le=180)
-    # 可选旅行笔记。
     note: str | None = Field(default=None, max_length=2000)
-    # 客户端触发时间；未传时服务端使用当前 UTC 时间。
+    tracking_segment_uuid: str | None = Field(default=None, alias="trackingSegmentUuid", min_length=1, max_length=36)
     checked_at: datetime | None = Field(default=None, alias="checkedAt")
 
     model_config = ConfigDict(populate_by_name=True)
 
 
 class CheckinResponse(BaseModel):
-    """手动打卡响应。"""
+    """兼容既有打卡入口的手动打卡响应。"""
 
-    # 打卡业务 UUID。
     uuid: str
-    # 关联正式行程 UUID。
     trip_uuid: str = Field(alias="tripUuid")
-    # 地点名称。
     location_name: str = Field(alias="locationName")
-    # 纬度。
     latitude: float
-    # 经度。
     longitude: float
-    # 用户笔记。
     note: str | None = None
-    # 打卡时间。
     checked_at: datetime = Field(alias="checkedAt")
 
-    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     @field_serializer("checked_at")
     def serialize_checked_at(self, value: datetime) -> str:
-        """保证手动打卡响应的时间携带 UTC 时区信息。"""
         return _serialize_utc_datetime(value)

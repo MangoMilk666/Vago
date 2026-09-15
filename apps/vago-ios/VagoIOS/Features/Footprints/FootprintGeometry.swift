@@ -53,9 +53,14 @@ enum FootprintRouteBuilder {
                 || isUntrustworthyConnection(distance: distance, timeGap: timeGap, previous: previous, next: location) {
                 results.append(makeSegment(currentSegment))
                 currentSegment = [location]
+            } else if location.kind == .manualCheckin {
+                // 分支条件：手动打卡即使靠近自动点也必须保留，才能作为路线顶点与独立地图标记。
+                currentSegment.append(location)
             } else if distance < minimumRenderDistanceMeters {
-                // 分支条件：连续点距离不足 15 米时用更新时间更晚的样本替换，保留最新位置且减少抖动。
-                currentSegment[currentSegment.count - 1] = location
+                // 分支条件：新自动点紧邻手动打卡时保留打卡；两个自动点则以较新的点替换，减少抖动。
+                if previous.kind == .automaticGPS {
+                    currentSegment[currentSegment.count - 1] = location
+                }
             } else {
                 currentSegment.append(location)
             }

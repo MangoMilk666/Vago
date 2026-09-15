@@ -12,6 +12,7 @@ from app.footprints.schemas import (
     LocationSampleResponse,
     LocationSyncRequest,
     LocationSyncResponse,
+    TravelObservationResponse,
 )
 from app.shared.responses import ApiResponse, success
 
@@ -38,6 +39,16 @@ def list_trip_locations(
     return success(service.list_trip_locations(db, user_uuid, trip_uuid))
 
 
+@router.get("/trips/{trip_uuid}/observations", response_model=ApiResponse[list[TravelObservationResponse]])
+def list_trip_observations(
+    trip_uuid: str,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[list[TravelObservationResponse]]:
+    """读取统一旅行空间观察流，供新版 iOS 同时构建路线与打卡标记。"""
+    return success(service.list_trip_observations(db, user_uuid, trip_uuid))
+
+
 @router.get("/trips/{trip_uuid}/checkins", response_model=ApiResponse[list[CheckinResponse]])
 def list_trip_checkins(
     trip_uuid: str,
@@ -56,3 +67,13 @@ def create_checkin(
 ) -> ApiResponse[CheckinResponse]:
     """创建一次用户主动打卡。"""
     return success(service.create_checkin(db, user_uuid, payload), "打卡成功")
+
+
+@router.post("/observations/checkins", response_model=ApiResponse[TravelObservationResponse])
+def create_checkin_observation(
+    payload: CheckinCreateRequest,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[TravelObservationResponse]:
+    """创建手动打卡并返回统一观察，供新版 iOS 立即合并地图。"""
+    return success(service.create_checkin_observation(db, user_uuid, payload), "打卡成功")

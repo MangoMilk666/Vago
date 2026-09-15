@@ -2,6 +2,11 @@ import Foundation
 
 /// 地图的统一显示点：既可来自服务端快照，也可来自本地待传或刚确认的样本。
 struct FootprintDisplayPoint: Identifiable {
+    enum ObservationKind {
+        case automaticGPS
+        case manualCheckin
+    }
+
     enum Source {
         case remote
         case confirmed
@@ -19,20 +24,27 @@ struct FootprintDisplayPoint: Identifiable {
     let trackingSegmentUuid: String?
     let recordedAt: Date
     let source: Source
+    // 打卡保留用户填写的地点语义，自动 GPS 则只作为路线采样事实。
+    let kind: ObservationKind
+    let locationName: String?
+    let note: String?
 
     var id: String { stableKey }
 
-    static func remote(_ location: FootprintLocation, tripUuid: String) -> Self {
+    static func remote(_ observation: TravelObservation) -> Self {
         Self(
-            stableKey: FootprintMergeKey.make(clientUuid: location.clientUuid, fallbackServerUuid: location.uuid),
-            tripUuid: tripUuid,
-            latitude: location.latitude,
-            longitude: location.longitude,
-            accuracyM: location.accuracyM,
-            speedMps: location.speedMps,
-            trackingSegmentUuid: location.trackingSegmentUuid,
-            recordedAt: location.recordedAt,
-            source: .remote
+            stableKey: FootprintMergeKey.normalize(observation.clientEventUuid),
+            tripUuid: observation.tripUuid,
+            latitude: observation.latitude,
+            longitude: observation.longitude,
+            accuracyM: observation.accuracyM,
+            speedMps: observation.speedMps,
+            trackingSegmentUuid: observation.trackingSegmentUuid,
+            recordedAt: observation.occurredAt,
+            source: .remote,
+            kind: observation.observationType == .manualCheckin ? .manualCheckin : .automaticGPS,
+            locationName: observation.locationName,
+            note: observation.note
         )
     }
 
@@ -46,7 +58,10 @@ struct FootprintDisplayPoint: Identifiable {
             speedMps: sample.speedMps,
             trackingSegmentUuid: sample.trackingSegmentUuid,
             recordedAt: sample.recordedAt,
-            source: source
+            source: source,
+            kind: .automaticGPS,
+            locationName: nil,
+            note: nil
         )
     }
 }

@@ -4,9 +4,8 @@ import SwiftUI
 
 /// 地图画布只负责渲染个人空间数据；定位和网络请求仍由上层现有能力处理。
 struct TravelMapCanvas: View {
-    // 三类输入分别来自服务端轨迹、服务端打卡与当前定位；当前定位不必已经保存成足迹。
+    // 统一观察流同时包含自动轨迹与手动打卡；当前定位不必已经保存成足迹。
     let locations: [FootprintDisplayPoint]
-    let checkins: [Checkin]
     let currentLocation: CurrentLocationFix?
     let locateRequestID: Int
     // 采样点只是轨迹的辅助视觉层，可按用户偏好隐藏，但不改变路线与打卡标注。
@@ -40,7 +39,7 @@ struct TravelMapCanvas: View {
                 // 分支条件：用户开启采样点显示时才绘制圆点；路线与打卡保持独立渲染。
                 if areFootprintSamplesVisible {
                     // 每个渲染点是固定屏幕尺寸的实心圆，缩放地图不会改变它的视觉大小。
-                    ForEach(segment.locations) { location in
+                    ForEach(segment.locations.filter { $0.kind == .automaticGPS }) { location in
                         Annotation("轨迹", coordinate: coordinate(for: location)) {
                             Circle()
                                 .fill(.indigo)
@@ -50,9 +49,9 @@ struct TravelMapCanvas: View {
                     }
                 }
             }
-            // Annotation 支持自定义 SwiftUI 内容，因此打卡使用彩色 SF Symbol 与普通轨迹区分。
-            ForEach(checkins) { checkin in
-                Annotation(checkin.locationName, coordinate: coordinate(for: checkin)) {
+            // 手动打卡来自同一观察流，但始终使用独立 Annotation，不受自动采样点显示开关影响。
+            ForEach(locations.filter { $0.kind == .manualCheckin }) { checkin in
+                Annotation(checkin.locationName ?? "打卡", coordinate: coordinate(for: checkin)) {
                     Image(systemName: "mappin.circle.fill")
                         .font(.title2)
                         .foregroundStyle(.orange)
@@ -115,13 +114,9 @@ struct TravelMapCanvas: View {
         CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
     }
 
-    private func coordinate(for checkin: Checkin) -> CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: checkin.latitude, longitude: checkin.longitude)
-    }
-
     private var contentSignature: String {
         // 仅以服务端内容的稳定标识触发首屏初始化，不因每次 SwiftUI body 重算而重置镜头。
-        locations.map(\.stableKey).joined(separator: ",") + checkins.map(\.uuid).joined(separator: ",")
+        locations.map(\.stableKey).joined(separator: ",")
     }
 
     private func rebuildRoutes() {
@@ -132,7 +127,7 @@ struct TravelMapCanvas: View {
     private func initializeCameraIfNeeded() {
         guard !hasInitializedCamera else { return }
         // 分支条件：尚无任何远端资料时保持自动区域，待第一批数据回来再适配真实范围。
-        guard !locations.isEmpty || !checkins.isEmpty || currentLocation != nil else { return }
+        guard !locations.isEmpty || currentLocation != nil else { return }
         hasInitializedCamera = true
         cameraPosition = .region(fittedRegion)
     }
@@ -145,7 +140,7 @@ struct TravelMapCanvas: View {
     }
 
     private var fittedRegion: MKCoordinateRegion {
-        var coordinates = locations.map(coordinate(for:)) + checkins.map(coordinate(for:))
+        var coordinates = locations.map(coordinate(for:))
         if let currentLocation { coordinates.append(currentLocation.coordinate) }
         guard let first = coordinates.first else {
             return MKCoordinateRegion(

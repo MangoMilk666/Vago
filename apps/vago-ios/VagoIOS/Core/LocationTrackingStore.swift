@@ -40,11 +40,14 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     private var retryAttempt = 0
     // 每次用户开始记录或从后台回到前台都会创建新段，避免把中断前后的点错误连成一条线。
     private var trackingSegmentUuid: String?
+    // 已读取的手动打卡坐标只参与自动采样过滤，不替代服务端的最终多设备兜底校验。
+    private var manualCheckinCoordinatesByTrip: [String: [ManualCheckinCoordinate]] = [:]
 
     // 以下阈值只拦截确定不可用的实时定位，不用来删除真实但跨度较大的旅行移动。
     private let maximumAcceptedAccuracyMeters: CLLocationAccuracy = 100
     private let maximumPastSampleAge: TimeInterval = 120
     private let maximumFutureSampleOffset: TimeInterval = 60
+    private let minimumAutomaticSampleDistanceToCheckinMeters: CLLocationDistance = 15
     // 指南针方向是 GPS course 不可用（例如刚开始移动、低速行走）时的显示兜底，并不进入足迹数据。
     private var latestHeadingDegrees: CLLocationDirection?
     // 移动中的 GPS course 优先级高于手机朝向，避免用户手持角度改变时箭头偏离实际行进方向。
@@ -78,12 +81,23 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         // 分支条件：账号切换时清空运行期位置，避免 A 账号的当前坐标短暂显示在 B 的地图上。
         if let currentUserUuid, currentUserUuid != userUuid {
             resetRuntimeState()
+            manualCheckinCoordinatesByTrip = [:]
         }
         currentTripUuid = tripUuid
         currentUserUuid = userUuid
         self.session = session
         pendingCount = allPendingSamples(for: userUuid).count
         localQueueRevision += 1
+    }
+
+    /// 更新当前已知手动打卡坐标，让下一次自动 GPS 回调可立即避开重复点。
+    func updateManualCheckinCoordinates(_ coordinates: [ManualCheckinCoordinate], for tripUuid: String) {
+        manualCheckinCoordinatesByTrip[tripUuid] = coordinates
+    }
+
+    /// 仅在记录中暴露当前段；非记录状态的打卡不应加入上一段路线。
+    var activeTrackingSegmentUuid: String? {
+        isTracking ? trackingSegmentUuid : nil
     }
 
     func stopTracking() {
@@ -310,6 +324,10 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
            latestSample.longitude == location.coordinate.longitude {
             return
         }
+        // 分支条件：自动 GPS 靠近用户已确认打卡时不写入队列，避免该地点出现冗余采样圆点。
+        if isNearManualCheckin(location.coordinate, tripUuid: tripUuid) {
+            return
+        }
         let sample = PendingLocationSample(
             tripUuid: tripUuid,
             latitude: location.coordinate.latitude,
@@ -322,6 +340,14 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         latestSample = sample
         append(sample, for: userUuid)
         scheduleSyncAfterSampling()
+    }
+
+    private func isNearManualCheckin(_ coordinate: CLLocationCoordinate2D, tripUuid: String) -> Bool {
+        let candidate = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        return manualCheckinCoordinatesByTrip[tripUuid, default: []].contains { checkin in
+            candidate.distance(from: CLLocation(latitude: checkin.latitude, longitude: checkin.longitude))
+                < minimumAutomaticSampleDistanceToCheckinMeters
+        }
     }
 
     private func isUsableRealtimeLocation(_ location: CLLocation, now: Date = Date()) -> Bool {

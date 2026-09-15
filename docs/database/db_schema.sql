@@ -1,5 +1,5 @@
 -- ============================================================
--- Vago (叠迹) — 当前 Phase 8 全量数据库 DDL
+-- Vago (叠迹) — 当前 Travel Observation 全量数据库 DDL
 -- 数据库：MySQL 8.0+  字符集：utf8mb4_unicode_ci
 -- 一键重建：mysql -u <user> -p <database> < docs/database/db_schema.sql
 -- 注意：本脚本会 DROP 并重建下列所有表，仅用于全新本地数据库。
@@ -14,8 +14,7 @@
 --   7. knowledge_sources  个人知识来源
 --   8. itinerary_days     每日行程主表
 --   9. itinerary_spots    每日景点/活动
---  10. location_samples   iOS GPS 位置样本
---  11. checkins           用户手动打卡
+--  10. travel_observations 统一旅行空间观察（自动 GPS / 手动打卡）
 -- ============================================================
 
 SET NAMES utf8mb4;
@@ -24,8 +23,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- ------------------------------------------------------------
 -- 清空旧表（按依赖逆序 DROP，重建时幂等）
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS checkins;
-DROP TABLE IF EXISTS location_samples;
+DROP TABLE IF EXISTS travel_observations;
 DROP TABLE IF EXISTS itinerary_spots;
 DROP TABLE IF EXISTS itinerary_days;
 DROP TABLE IF EXISTS guides;
@@ -283,57 +281,37 @@ CREATE TABLE itinerary_spots (
 
 
 -- ============================================================
--- 模块四：旅行足迹（Phase 8）
+-- 模块四：旅行空间观察
 -- ============================================================
 
 -- ------------------------------------------------------------
--- GPS 位置样本（location_samples）
--- iOS 先在本地缓存，随后按 user_uuid + client_uuid 幂等同步。
+-- 统一旅行空间观察（travel_observations）
+-- 自动 GPS 与手动打卡共享空间事实基础；observation_type 保留用户主动确认语义。
 -- 不建立外键：当前 Trip / User 跨迁移阶段仍由业务层做归属校验。
 -- ------------------------------------------------------------
-CREATE TABLE location_samples (
+CREATE TABLE travel_observations (
     id              INT             NOT NULL AUTO_INCREMENT      COMMENT '自增主键',
-    uuid            VARCHAR(32)     NOT NULL                     COMMENT '服务端位置记录 UUID',
-    client_uuid     VARCHAR(64)     NOT NULL                     COMMENT '设备本地生成的幂等 UUID',
+    uuid            VARCHAR(32)     NOT NULL                     COMMENT '服务端旅行观察 UUID',
+    client_event_uuid VARCHAR(64)   NOT NULL                     COMMENT '客户端生成的稳定事件键',
     user_uuid       VARCHAR(32)     NOT NULL                     COMMENT '归属用户 UUID',
     trip_uuid       VARCHAR(32)     NOT NULL                     COMMENT '关联正式行程 UUID',
+    observation_type VARCHAR(24)    NOT NULL                     COMMENT 'AUTO_GPS 或 MANUAL_CHECKIN',
     latitude        FLOAT           NOT NULL                     COMMENT 'WGS-84 纬度',
     longitude       FLOAT           NOT NULL                     COMMENT 'WGS-84 经度',
-    accuracy_m      FLOAT           DEFAULT NULL                 COMMENT '水平定位精度（米）',
-    speed_mps       FLOAT           DEFAULT NULL                 COMMENT '移动速度（米/秒）',
-    tracking_segment_uuid VARCHAR(36) DEFAULT NULL               COMMENT '连续前台记录段 UUID；旧样本可为空',
-    recorded_at     DATETIME        NOT NULL                     COMMENT '设备实际采样时间（UTC）',
+    accuracy_m      FLOAT           DEFAULT NULL                 COMMENT '自动 GPS 的水平定位精度（米）',
+    speed_mps       FLOAT           DEFAULT NULL                 COMMENT '自动 GPS 的移动速度（米/秒）',
+    tracking_segment_uuid VARCHAR(36) DEFAULT NULL               COMMENT '连续前台记录段 UUID；非记录时打卡可为空',
+    location_name   VARCHAR(256)    DEFAULT NULL                 COMMENT '手动打卡的地点名称',
+    note            TEXT            DEFAULT NULL                 COMMENT '手动打卡的旅行笔记',
+    occurred_at     DATETIME        NOT NULL                     COMMENT '观察实际发生时间（UTC）',
     created_at      DATETIME        NOT NULL                     COMMENT '服务端持久化时间（UTC）',
 
     PRIMARY KEY (id),
-    UNIQUE KEY uk_location_samples_uuid        (uuid),
-    UNIQUE KEY uk_location_samples_user_client (user_uuid, client_uuid),
-    INDEX      idx_location_samples_user_uuid  (user_uuid),
-    INDEX      idx_location_samples_trip_uuid  (trip_uuid)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='移动端 GPS 位置样本';
-
-
--- ------------------------------------------------------------
--- 用户手动打卡（checkins）
--- 仅进行中 Trip 允许创建；已结束行程保持只读。
--- ------------------------------------------------------------
-CREATE TABLE checkins (
-    id              INT             NOT NULL AUTO_INCREMENT      COMMENT '自增主键',
-    uuid            VARCHAR(32)     NOT NULL                     COMMENT '打卡业务 UUID',
-    user_uuid       VARCHAR(32)     NOT NULL                     COMMENT '归属用户 UUID',
-    trip_uuid       VARCHAR(32)     NOT NULL                     COMMENT '关联正式行程 UUID',
-    location_name   VARCHAR(256)    NOT NULL                     COMMENT '用户填写的地点名称',
-    latitude        FLOAT           NOT NULL                     COMMENT '打卡纬度',
-    longitude       FLOAT           NOT NULL                     COMMENT '打卡经度',
-    note            TEXT            DEFAULT NULL                 COMMENT '用户补充的旅行笔记',
-    checked_at      DATETIME        NOT NULL                     COMMENT '用户触发打卡时间（UTC）',
-    created_at      DATETIME        NOT NULL                     COMMENT '服务端持久化时间（UTC）',
-
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_checkins_uuid       (uuid),
-    INDEX      idx_checkins_user_uuid (user_uuid),
-    INDEX      idx_checkins_trip_uuid (trip_uuid)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户旅行手动打卡';
+    UNIQUE KEY uk_travel_observations_uuid        (uuid),
+    UNIQUE KEY uk_travel_observations_user_client (user_uuid, client_event_uuid),
+    INDEX      idx_travel_observations_user_uuid  (user_uuid),
+    INDEX      idx_travel_observations_trip_time  (trip_uuid, occurred_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户旅行空间观察事实';
 
 
 SET FOREIGN_KEY_CHECKS = 1;

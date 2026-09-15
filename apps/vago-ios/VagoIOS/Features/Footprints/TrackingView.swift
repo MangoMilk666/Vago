@@ -11,7 +11,6 @@ struct TrackingView: View {
     @State private var trip: Trip?
     // Repository 只负责合并显示数据，定位采集与上传仍复用既有 LocationTrackingStore。
     @StateObject private var footprintRepository = FootprintRepository()
-    @State private var checkins: [Checkin] = []
     @State private var isLoading = true
     @State private var isRefreshing = false
     @State private var isCheckingIn = false
@@ -23,6 +22,8 @@ struct TrackingView: View {
     @State private var checkinError = ""
     // 用户点“打卡”时冻结这一次的新位置，填写表单期间不会因共享位置过期而禁用提交。
     @State private var checkinLocation: CurrentLocationFix?
+    // 同一次表单提交失败后必须复用同一事件键，才能让网络重试保持幂等。
+    @State private var checkinClientEventUuid: UUID?
     @State private var isNearbyCheckinAlertPresented = false
     @State private var loadedUserUuid: String?
     @State private var locatedTripUuid: String?
@@ -89,7 +90,6 @@ struct TrackingView: View {
             // 地图延伸至屏幕边缘并位于 TabBar 下方，保持 Apple Maps 式的连续地图画布。
             TravelMapCanvas(
                 locations: footprintRepository.displayPoints,
-                checkins: checkins,
                 currentLocation: tracking.currentLocation,
                 locateRequestID: locateRequestID,
                 areFootprintSamplesVisible: areFootprintSamplesVisible
@@ -161,14 +161,15 @@ struct TrackingView: View {
                 FootprintRepository.cacheActiveTrip(trip, for: userUuid)
                 tracking.prepare(tripUuid: trip.uuid, userUuid: userUuid, session: session)
                 footprintRepository.prepare(userUuid: userUuid, tripUuid: trip.uuid, tracking: tracking)
-                // async let 并行启动两个独立请求；分别 await 时才汇合结果，比串行读取更快。
-                async let loadedLocations: [FootprintLocation] = client.request(path: "footprints/trips/\(trip.uuid)/locations", tokenProvider: session)
-                async let loadedCheckins: [Checkin] = client.request(path: "footprints/trips/\(trip.uuid)/checkins", tokenProvider: session)
-                let remoteLocations = try await loadedLocations
+                // 统一观察流按时间返回自动 GPS 与手动打卡，地图不再拼接两个独立远端集合。
+                let remoteObservations: [TravelObservation] = try await client.request(
+                    path: "footprints/trips/\(trip.uuid)/observations",
+                    tokenProvider: session
+                )
                 // 分支条件：异步请求回来前若用户已切换行程，不让旧结果覆盖新地图。
                 guard self.trip?.uuid == trip.uuid, session.profile?.uuid == userUuid else { return }
-                footprintRepository.replaceRemoteLocations(remoteLocations)
-                checkins = try await loadedCheckins
+                footprintRepository.replaceRemoteObservations(remoteObservations)
+                tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
                 // 分支条件：每个进行中行程首次进入记录页时请求一次当前位置，定位不会写入足迹队列。
                 if locatedTripUuid != trip.uuid {
                     locatedTripUuid = trip.uuid
@@ -209,11 +210,12 @@ struct TrackingView: View {
         let confirmed = await tracking.syncPendingSamples()
         footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
         guard let trip else { return }
-        if let remoteLocations: [FootprintLocation] = try? await client.request(
-            path: "footprints/trips/\(trip.uuid)/locations",
+        if let remoteObservations: [TravelObservation] = try? await client.request(
+            path: "footprints/trips/\(trip.uuid)/observations",
             tokenProvider: session
         ) {
-            footprintRepository.replaceRemoteLocations(remoteLocations)
+            footprintRepository.replaceRemoteObservations(remoteObservations)
+            tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
         }
     }
 
@@ -224,6 +226,7 @@ struct TrackingView: View {
         do {
             // 打卡前主动获取并冻结新坐标，静止超过 30 秒也不会让入口悄悄失效。
             checkinLocation = try await tracking.requestFreshLocation()
+            checkinClientEventUuid = UUID()
             checkinError = ""
             isNearbyCheckinAlertPresented = false
             isCheckinSheetPresented = true
@@ -234,8 +237,9 @@ struct TrackingView: View {
 
     private func createCheckin(for trip: Trip, location: CurrentLocationFix, locationName: String, note: String) async {
         // 分支条件：30 米内已有打卡时不禁用表单按钮，而是保留用户输入并弹出明确的换位置提示。
-        if checkins.contains(where: { checkin in
-            CLLocation(latitude: checkin.latitude, longitude: checkin.longitude)
+        if footprintRepository.displayPoints.contains(where: { point in
+            point.kind == .manualCheckin
+                && CLLocation(latitude: point.latitude, longitude: point.longitude)
                 .distance(from: CLLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude))
                 < 30
         }) {
@@ -246,17 +250,27 @@ struct TrackingView: View {
         checkinError = ""
         defer { isCheckingIn = false }
         do {
+            guard let clientEventUuid = checkinClientEventUuid else { return }
             let payload = CheckinRequest(
                 tripUuid: trip.uuid,
+                clientEventUuid: clientEventUuid,
                 locationName: locationName,
                 latitude: location.coordinate.latitude,
                 longitude: location.coordinate.longitude,
                 note: note.isEmpty ? nil : note,
+                trackingSegmentUuid: tracking.activeTrackingSegmentUuid,
                 checkedAt: Date()
             )
-            let checkin: Checkin = try await client.request(path: "footprints/checkins", method: "POST", body: payload, tokenProvider: session)
-            checkins.append(checkin)
+            let checkin: TravelObservation = try await client.request(
+                path: "footprints/observations/checkins",
+                method: "POST",
+                body: payload,
+                tokenProvider: session
+            )
+            footprintRepository.recordCreatedCheckin(checkin)
+            tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
             showCheckinSuccessMessage()
+            checkinClientEventUuid = nil
             // 仅在服务端写入成功后收起输入 sheet，保留失败时用户已填写的内容。
             isCheckinSheetPresented = false
         } catch {

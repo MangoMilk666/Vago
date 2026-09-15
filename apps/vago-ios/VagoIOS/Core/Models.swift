@@ -151,51 +151,57 @@ struct CurrentLocationFix {
     }
 }
 
-/// FastAPI 返回的已同步轨迹点，供 MapKit 读取与渲染。
-struct FootprintLocation: Decodable, Identifiable {
-    // 已写入 FastAPI/MySQL 的轨迹点主键，与本地 PendingLocationSample 的 id 不同。
-    let uuid: String
-    // 新版服务端回传客户端幂等键；兼容旧服务部署窗口时允许该字段缺失。
-    let clientUuid: String?
-    let latitude: Double
-    let longitude: Double
-    let accuracyM: Double?
-    let speedMps: Double?
-    // 服务端保存的连续记录段；历史样本为 nil，客户端仍可按时间和距离推断断点。
-    let trackingSegmentUuid: String?
-    let recordedAt: Date
-
-    var id: String { uuid }
-}
-
 /// 批量 GPS 同步结果；成功后 iOS 才能从本地队列移除对应样本。
 struct LocationSyncResult: Decodable {
     // 新接收数量与命中幂等去重的重复数量；两者都代表本地样本可安全移除。
     let acceptedCount: Int
     let duplicateCount: Int
+    // 接近已有手动打卡而被服务端跳过的自动点，同样不需要留在本地待传队列。
+    let skippedCount: Int?
 }
 
 /// 手动打卡请求，使用当前位置并绑定进行中的正式行程；Encodable 表示仅需要写入 JSON。
 struct CheckinRequest: Encodable {
     // 归属行程、展示地点、坐标、可选备注和用户触发时刻组成一次打卡事实。
     let tripUuid: String
+    // 与自动 GPS 相同，手动打卡也在客户端预先生成事件键，网络重试不会重复创建事实。
+    let clientEventUuid: UUID
     let locationName: String
     let latitude: Double
     let longitude: Double
     let note: String?
+    // 正在记录时携带当前段，允许打卡作为真实路线顶点；未记录时为空以避免伪造连线。
+    let trackingSegmentUuid: String?
     let checkedAt: Date
 }
 
-/// 服务端已持久化的打卡记录；Decodable 表示只从 JSON 读取，不由客户端直接编码。
-struct Checkin: Decodable, Identifiable {
-    // uuid 是服务端主键；tripUuid 保留归属关系，供地图按行程加载。
+/// 同一条旅行空间观察的类型；打卡仍是用户主动确认的特殊观察，而不是普通 GPS 点。
+enum TravelObservationType: String, Decodable {
+    case automaticGPS = "AUTO_GPS"
+    case manualCheckin = "MANUAL_CHECKIN"
+}
+
+/// FastAPI 统一观察流，地图、Live Context 与后续旅行回忆均以它作为真实空间事实来源。
+struct TravelObservation: Decodable, Identifiable {
     let uuid: String
+    let clientEventUuid: String
     let tripUuid: String
-    let locationName: String
+    let observationType: TravelObservationType
     let latitude: Double
     let longitude: Double
+    let accuracyM: Double?
+    let speedMps: Double?
+    let trackingSegmentUuid: String?
+    let locationName: String?
     let note: String?
-    let checkedAt: Date
+    let occurredAt: Date
 
     var id: String { uuid }
+}
+
+/// 采样器只需要知道手动打卡的坐标和行程归属，避免依赖地图展示模型。
+struct ManualCheckinCoordinate {
+    let tripUuid: String
+    let latitude: Double
+    let longitude: Double
 }

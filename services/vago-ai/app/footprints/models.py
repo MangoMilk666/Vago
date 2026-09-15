@@ -1,6 +1,7 @@
-"""Travel Footprint 的 SQLAlchemy 模型。
+"""Travel Observation 的 SQLAlchemy 模型。
 
-第一版只保存 GPS 采样和手动打卡两类不可变事实，不提前引入分区、GIS 或地图瓦片等复杂基础设施。
+自动 GPS 与用户手动打卡都属于不可变的旅行空间观察；两者共用位置、时间和归属，
+但通过 observation_type 保留主动确认打卡的名称、备注等业务语义。
 """
 
 from datetime import datetime
@@ -12,61 +13,40 @@ from app.core.database import Base
 from app.travel.models import utc_now_naive
 
 
-class LocationSample(Base):
-    """移动端采集的一条 GPS 位置样本。"""
+class TravelObservation(Base):
+    """用户旅行过程中记录的一条空间事实。"""
 
-    __tablename__ = "location_samples"
-    # 同一用户的同一客户端样本只接受一次，使离线重试不会重复写入轨迹。
-    __table_args__ = (UniqueConstraint("user_uuid", "client_uuid", name="uk_location_samples_user_client"),)
+    __tablename__ = "travel_observations"
+    # 所有观察都使用客户端事件键，离线 GPS 重试与手动打卡重复提交都可幂等处理。
+    __table_args__ = (UniqueConstraint("user_uuid", "client_event_uuid", name="uk_travel_observations_user_client"),)
 
     # 数据库内部主键。
     id: Mapped[int] = mapped_column(primary_key=True)
-    # 服务端生成并对外暴露的位置记录 UUID。
+    # 服务端生成并对外暴露的观察 UUID。
     uuid: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
-    # iOS 本地预先生成的 UUID，用于批量同步幂等。
-    client_uuid: Mapped[str] = mapped_column(String(64), nullable=False)
-    # 记录所属用户，用于严格的数据隔离。
+    # 客户端预先生成的稳定事件键，用于同一用户范围内幂等去重。
+    client_event_uuid: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 归属用户，用于严格数据隔离。
     user_uuid: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     # 关联正式行程 UUID。
     trip_uuid: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    # AUTO_GPS 或 MANUAL_CHECKIN，决定采样规则和地图展示语义。
+    observation_type: Mapped[str] = mapped_column(String(24), nullable=False)
     # WGS-84 纬度。
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     # WGS-84 经度。
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
-    # 采样时定位系统报告的水平精度，单位米。
+    # 自动 GPS 可携带水平精度；手动打卡允许为空。
     accuracy_m: Mapped[float | None] = mapped_column(Float)
-    # 采样时移动速度，单位米/秒。
+    # 自动 GPS 可携带速度；手动打卡允许为空。
     speed_mps: Mapped[float | None] = mapped_column(Float)
-    # 一次连续前台记录的段标识；为空表示由旧客户端写入的历史样本。
+    # 连续前台记录段；未开启记录时创建的手动打卡为空，避免伪造路线连线。
     tracking_segment_uuid: Mapped[str | None] = mapped_column(String(36))
-    # 设备实际记录时间，服务端不使用接收时间代替它。
-    recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    # 服务端首次持久化时间。
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
-
-
-class Checkin(Base):
-    """用户主动确认的一次旅行打卡。"""
-
-    __tablename__ = "checkins"
-
-    # 数据库内部主键。
-    id: Mapped[int] = mapped_column(primary_key=True)
-    # 打卡业务 UUID。
-    uuid: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
-    # 打卡所属用户。
-    user_uuid: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    # 打卡关联的正式行程 UUID。
-    trip_uuid: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    # 用户填写或客户端提供的地点名称。
-    location_name: Mapped[str] = mapped_column(String(256), nullable=False)
-    # 打卡坐标纬度。
-    latitude: Mapped[float] = mapped_column(Float, nullable=False)
-    # 打卡坐标经度。
-    longitude: Mapped[float] = mapped_column(Float, nullable=False)
-    # 用户补充的简短旅行笔记。
+    # MANUAL_CHECKIN 的用户确认地点名称；自动 GPS 为空。
+    location_name: Mapped[str | None] = mapped_column(String(256))
+    # MANUAL_CHECKIN 的可选旅行笔记；自动 GPS 为空。
     note: Mapped[str | None] = mapped_column(Text)
-    # 用户触发打卡的实际时间。
-    checked_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # 观察实际发生时间，统一替代旧 recorded_at / checked_at。
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     # 服务端首次持久化时间。
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)

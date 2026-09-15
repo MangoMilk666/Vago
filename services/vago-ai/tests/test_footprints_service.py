@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base
 from app.core.exceptions import AppException
 from app.footprints import service
-from app.footprints.models import Checkin, LocationSample
+from app.footprints.models import TravelObservation
 from app.footprints.schemas import CheckinCreateRequest, LocationSyncRequest
 from app.travel.models import Trip
 
@@ -72,7 +72,7 @@ def test_location_sync_is_user_scoped_and_idempotent(db_session: Session):
     assert first.accepted_count == 1
     assert second.accepted_count == 0
     assert second.duplicate_count == 1
-    assert db_session.query(LocationSample).count() == 1
+    assert db_session.query(TravelObservation).count() == 1
     locations = service.list_trip_locations(db_session, "user-a", "trip-a")
     assert len(locations) == 1
     assert locations[0].tracking_segment_uuid == "c5e49cc2-75c2-4d06-b87d-728b30b83b97"
@@ -101,7 +101,7 @@ def test_checkin_requires_an_in_progress_trip(db_session: Session):
     checkin = service.create_checkin(db_session, "user-a", payload)
 
     assert checkin.location_name == "滨海湾花园"
-    assert db_session.query(Checkin).count() == 1
+    assert db_session.query(TravelObservation).count() == 1
     assert [item.uuid for item in service.list_trip_checkins(db_session, "user-a", "trip-not-started")] == [checkin.uuid]
 
 
@@ -127,4 +127,67 @@ def test_checkin_rejects_another_point_within_thirty_meters(db_session: Session)
         service.create_checkin(db_session, "user-a", nearby_payload)
 
     assert exc_info.value.code == "CHECKIN_TOO_CLOSE"
-    assert db_session.query(Checkin).count() == 1
+    assert db_session.query(TravelObservation).count() == 1
+
+
+def test_checkin_is_a_route_observation_and_nearby_automatic_sample_is_skipped(db_session: Session):
+    """测试：打卡进入统一观察流，且服务端过滤附近自动 GPS 以覆盖多设备场景。"""
+    _add_trip(db_session, uuid="trip-observations", user_uuid="user-a", status=2)
+    checkin = service.create_checkin_observation(
+        db_session,
+        "user-a",
+        CheckinCreateRequest(
+            tripUuid="trip-observations",
+            clientEventUuid="manual-checkin-1",
+            locationName="鱼尾狮公园",
+            latitude=1.2868,
+            longitude=103.8545,
+            trackingSegmentUuid="segment-1",
+            checkedAt=datetime(2026, 9, 15, 4, 0, tzinfo=UTC),
+        ),
+    )
+    result = service.sync_location_samples(
+        db_session,
+        "user-a",
+        LocationSyncRequest(
+            tripUuid="trip-observations",
+            samples=[
+                {
+                    "clientUuid": "nearby-auto-sample",
+                    "latitude": 1.28685,
+                    "longitude": 103.8545,
+                    "recordedAt": datetime(2026, 9, 15, 4, 1, tzinfo=UTC),
+                },
+                {
+                    "clientUuid": "far-auto-sample",
+                    "latitude": 1.2873,
+                    "longitude": 103.8545,
+                    "recordedAt": datetime(2026, 9, 15, 4, 2, tzinfo=UTC),
+                },
+            ],
+        ),
+    )
+
+    observations = service.list_trip_observations(db_session, "user-a", "trip-observations")
+    assert checkin.observation_type == "MANUAL_CHECKIN"
+    assert result.accepted_count == 1
+    assert result.skipped_count == 1
+    assert [item.observation_type for item in observations] == ["MANUAL_CHECKIN", "AUTO_GPS"]
+    assert observations[0].tracking_segment_uuid == "segment-1"
+
+
+def test_checkin_event_key_is_idempotent(db_session: Session):
+    """测试：用户因网络失败重试相同打卡事件时，服务端回传同一观察而不是新增一条。"""
+    _add_trip(db_session, uuid="trip-checkin-retry", user_uuid="user-a", status=2)
+    payload = CheckinCreateRequest(
+        tripUuid="trip-checkin-retry",
+        clientEventUuid="manual-checkin-retry",
+        locationName="机场",
+        latitude=1.3644,
+        longitude=103.9915,
+    )
+    first = service.create_checkin_observation(db_session, "user-a", payload)
+    second = service.create_checkin_observation(db_session, "user-a", payload)
+
+    assert first.uuid == second.uuid
+    assert db_session.query(TravelObservation).count() == 1

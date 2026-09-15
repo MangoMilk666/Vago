@@ -65,6 +65,7 @@ def test_footprint_routes_sync_and_checkin_for_active_trip(client: TestClient):
         json={"tripUuid": trip["uuid"], "locationName": "滨海湾花园", "latitude": 1.2816, "longitude": 103.8636},
     )
     checkins_response = client.get(f"/api/v1/footprints/trips/{trip['uuid']}/checkins")
+    observations_response = client.get(f"/api/v1/footprints/trips/{trip['uuid']}/observations")
 
     assert sync_response.status_code == 200
     assert sync_response.json()["data"]["acceptedCount"] == 1
@@ -77,3 +78,5 @@ def test_footprint_routes_sync_and_checkin_for_active_trip(client: TestClient):
     assert checkin_response.json()["data"]["checkedAt"].endswith("Z")
     assert checkins_response.status_code == 200
     assert checkins_response.json()["data"][0]["locationName"] == "滨海湾花园"
+    assert observations_response.status_code == 200
+    assert [item["observationType"] for item in observations_response.json()["data"]] == ["AUTO_GPS", "MANUAL_CHECKIN"]

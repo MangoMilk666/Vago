@@ -7,7 +7,7 @@ final class FootprintRepository: ObservableObject {
 
     private var userUuid: String?
     private var tripUuid: String?
-    private var remoteLocations: [FootprintLocation] = []
+    private var remoteObservations: [TravelObservation] = []
     // pending 样本来自 UserDefaults；每次远端刷新仍必须参与合并，不能被 GET 快照覆盖。
     private var pendingSamples: [PendingLocationSample] = []
     // 已确认点只保留在本次运行内，直到 GET 返回相同 clientUuid 后由远端快照接管。
@@ -33,19 +33,38 @@ final class FootprintRepository: ObservableObject {
         if self.userUuid != userUuid || self.tripUuid != tripUuid {
             self.userUuid = userUuid
             self.tripUuid = tripUuid
-            remoteLocations = []
+            remoteObservations = []
             pendingSamples = []
             confirmedSamples = []
         }
         refreshLocalSamples(from: tracking)
     }
 
-    func replaceRemoteLocations(_ locations: [FootprintLocation]) {
-        remoteLocations = locations
+    func replaceRemoteObservations(_ observations: [TravelObservation]) {
+        remoteObservations = observations
         // 远端已具备相同幂等键时，内存确认副本已完成交接，可安全释放。
-        let remoteKeys = Set(locations.map { FootprintMergeKey.make(clientUuid: $0.clientUuid, fallbackServerUuid: $0.uuid) })
+        let remoteKeys = Set(observations.map { FootprintMergeKey.normalize($0.clientEventUuid) })
         confirmedSamples.removeAll { remoteKeys.contains(FootprintMergeKey.normalize($0.id.uuidString)) }
         rebuildDisplayPoints()
+    }
+
+    func recordCreatedCheckin(_ observation: TravelObservation) {
+        // 分支条件：POST 成功后先写入内存远端快照，地图不必等待下一次完整 GET 才显示打卡。
+        guard observation.tripUuid == tripUuid, observation.observationType == .manualCheckin else { return }
+        remoteObservations.removeAll { $0.clientEventUuid == observation.clientEventUuid }
+        remoteObservations.append(observation)
+        rebuildDisplayPoints()
+    }
+
+    func manualCheckinCoordinates() -> [ManualCheckinCoordinate] {
+        remoteObservations.compactMap { observation in
+            guard observation.observationType == .manualCheckin else { return nil }
+            return ManualCheckinCoordinate(
+                tripUuid: observation.tripUuid,
+                latitude: observation.latitude,
+                longitude: observation.longitude
+            )
+        }
     }
 
     func refreshLocalSamples(from tracking: LocationTrackingStore) {
@@ -80,8 +99,8 @@ final class FootprintRepository: ObservableObject {
             let point = FootprintDisplayPoint.local(sample, source: .confirmed)
             valuesByKey[point.stableKey] = point
         }
-        for location in remoteLocations {
-            let point = FootprintDisplayPoint.remote(location, tripUuid: tripUuid)
+        for observation in remoteObservations where observation.tripUuid == tripUuid {
+            let point = FootprintDisplayPoint.remote(observation)
             valuesByKey[point.stableKey] = point
         }
         displayPoints = valuesByKey.values.sorted {
