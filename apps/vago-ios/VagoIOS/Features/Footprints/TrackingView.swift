@@ -18,6 +18,8 @@ struct TrackingView: View {
     @State private var isTrackingSheetPresented = false
     @State private var isCheckinSheetPresented = false
     @State private var message = ""
+    // 刷新错误与短暂操作反馈分开保存，成功读取远端数据后可以准确收起。
+    @State private var refreshError: String?
     @State private var loadError = ""
     @State private var checkinError = ""
     // 用户点“打卡”时冻结这一次的新位置，填写表单期间不会因共享位置过期而禁用提交。
@@ -102,6 +104,7 @@ struct TrackingView: View {
                 isRefreshing: isRefreshing,
                 isPreparingCheckin: isPreparingCheckin,
                 message: message,
+                refreshError: refreshError,
                 syncError: tracking.syncError,
                 locationError: tracking.locationError,
                 offlineStatusMessage: isTripStatusUnverified ? "离线状态，行程待联网验证" : nil,
@@ -154,6 +157,8 @@ struct TrackingView: View {
         }
         do {
             let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session)
+            // 分支条件：行程列表成功返回即说明网络已恢复，可清除上次保留的刷新失败状态。
+            refreshError = nil
             trip = trips.first(where: { $0.status == 2 })
             isTripStatusUnverified = false
             // 分支条件：存在进行中行程时才读取其轨迹与打卡，并恢复该用户的待传队列。
@@ -184,8 +189,7 @@ struct TrackingView: View {
             if trip == nil {
                 loadError = error.localizedDescription
             } else {
-                messageDismissTask?.cancel()
-                message = "刷新失败：\(error.localizedDescription)"
+                refreshError = error.localizedDescription
             }
         }
     }
@@ -216,6 +220,8 @@ struct TrackingView: View {
         ) {
             footprintRepository.replaceRemoteObservations(remoteObservations)
             tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
+            // 分支条件：统一观察流读取成功后，地图已恢复最新事实，旧刷新错误不应继续遮挡视图。
+            refreshError = nil
         }
     }
 

@@ -172,6 +172,7 @@ struct TravelMapControls: View {
     let isRefreshing: Bool
     let isPreparingCheckin: Bool
     let message: String
+    let refreshError: String?
     let syncError: String?
     let locationError: String?
     let offlineStatusMessage: String?
@@ -221,9 +222,12 @@ struct TravelMapControls: View {
             Spacer()
 
             VStack(spacing: 8) {
-                // 非空消息可能是短暂打卡成功反馈或保留的刷新错误，展示策略由父视图管理。
+                // 非空消息只承载短暂操作反馈，例如打卡成功。
                 if !message.isEmpty {
                     Text(message).mapStatusPill(tint: .secondary)
+                }
+                if let refreshError {
+                    Text("刷新失败：\(refreshError)").mapStatusPill(tint: .red)
                 }
                 if let syncError {
                     Text("同步未完成：\(syncError)").mapStatusPill(tint: .red)
