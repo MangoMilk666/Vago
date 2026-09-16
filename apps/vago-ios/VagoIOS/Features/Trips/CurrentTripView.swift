@@ -6,6 +6,9 @@ struct CurrentTripView: View {
     @EnvironmentObject private var tripContext: TripContextStore
     @State private var isLoading = true
     @State private var errorMessage = ""
+    @State private var createError = ""
+    @State private var isCreatorPresented = false
+    @State private var isCreating = false
     @State private var loadedUserUuid: String?
     private let client = APIClient()
 
@@ -32,12 +35,23 @@ struct CurrentTripView: View {
             .navigationTitle("行程")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { isCreatorPresented = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel("新增行程")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { await refresh() } } label: { Image(systemName: "arrow.clockwise") }
                         .accessibilityLabel("刷新行程列表")
                 }
             }
             // task(id:) 仅在账号变化时触发，避免每次 Tab 重绘都重复请求 travel/trips。
             .task(id: session.profile?.uuid) { await loadInitially() }
+            .sheet(isPresented: $isCreatorPresented) {
+                TripCreatorSheet(isSaving: isCreating, errorMessage: $createError) { request in
+                    Task { await createTrip(request) }
+                }
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+            }
             .alert("暂时无法读取行程", isPresented: Binding(get: { !errorMessage.isEmpty }, set: { if !$0 { errorMessage = "" } })) {
                 Button("好的", role: .cancel) {}
             } message: {
@@ -83,6 +97,27 @@ struct CurrentTripView: View {
     private func refresh() async {
         errorMessage = ""
         await load()
+    }
+
+    private func createTrip(_ request: TripCreateRequest) async {
+        isCreating = true
+        createError = ""
+        defer { isCreating = false }
+        do {
+            let created: Trip = try await client.request(
+                path: "travel/trips",
+                method: "POST",
+                body: request,
+                tokenProvider: session
+            )
+            guard let userUuid = session.profile?.uuid else { return }
+            // 新增行程只更新列表，不会自动开始定位或覆盖当前正在进行的行程。
+            tripContext.upsert(created, for: userUuid)
+            isCreatorPresented = false
+        } catch {
+            // 创建失败时保留表单和输入内容，由 Sheet 在原位置展示具体错误。
+            createError = error.localizedDescription
+        }
     }
 }
 
@@ -385,3 +420,56 @@ private struct ItineraryDayView: View {
 
 /// POST 行程动作没有请求体时使用的空 JSON 对象，复用 APIClient 的统一认证和错误处理链路。
 private struct EmptyRequest: Encodable {}
+
+/// 手动创建行程表单；日期由 DatePicker 提供，避免用户输入格式错误的日期字符串。
+private struct TripCreatorSheet: View {
+    let isSaving: Bool
+    @Binding var errorMessage: String
+    let create: (TripCreateRequest) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var destination = ""
+    @State private var startDate = Date()
+    @State private var endDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+
+    private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("基本信息") {
+                    TextField("行程名称", text: $title)
+                    TextField("目的地（可选）", text: $destination)
+                }
+                Section("日期") {
+                    DatePicker("开始日期", selection: $startDate, displayedComponents: .date)
+                    DatePicker("结束日期", selection: $endDate, in: startDate..., displayedComponents: .date)
+                }
+                if !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
+            .navigationTitle("新增行程")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }.disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "创建中" : "创建") {
+                        let trimmedDestination = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+                        create(TripCreateRequest(
+                            title: trimmedTitle,
+                            destination: trimmedDestination.isEmpty ? nil : trimmedDestination,
+                            startDate: startDate,
+                            endDate: endDate
+                        ))
+                    }
+                    .disabled(isSaving || trimmedTitle.isEmpty)
+                }
+            }
+        }
+    }
+}

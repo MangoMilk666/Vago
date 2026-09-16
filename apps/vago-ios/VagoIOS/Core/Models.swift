@@ -111,6 +111,26 @@ struct TripUpdateRequest: Encodable {
     }
 }
 
+/// 手动创建正式行程的最小请求；服务端负责将新行程固定初始化为“未开始”。
+struct TripCreateRequest: Encodable {
+    let title: String
+    let destination: String?
+    let startDate: String
+    let endDate: String
+
+    init(title: String, destination: String?, startDate: Date, endDate: Date) {
+        self.title = title
+        self.destination = destination
+        self.startDate = Self.calendarDateString(from: startDate)
+        self.endDate = Self.calendarDateString(from: endDate)
+    }
+
+    private static func calendarDateString(from date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    }
+}
+
 struct ItineraryDay: Decodable, Identifiable {
     // 每日安排记录的主键，而非自然日字符串。
     let uuid: String

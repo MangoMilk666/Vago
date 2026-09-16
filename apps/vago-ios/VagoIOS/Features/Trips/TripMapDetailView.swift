@@ -7,6 +7,8 @@ struct TripMapDetailView: View {
     @State private var points: [FootprintDisplayPoint] = []
     @State private var isLoading = true
     @State private var errorMessage = ""
+    // 仅控制自动 GPS 圆点图层；轨迹折线与手动打卡标记始终保留。
+    @State private var areFootprintSamplesVisible = true
     private let client = APIClient()
 
     var body: some View {
@@ -15,7 +17,7 @@ struct TripMapDetailView: View {
                 locations: points,
                 currentLocation: nil,
                 locateRequestID: 0,
-                areFootprintSamplesVisible: true,
+                areFootprintSamplesVisible: areFootprintSamplesVisible,
                 // 历史浏览页不承担打卡编辑职责，点击标记不会打开会改变事实的编辑流程。
                 onSelectCheckin: { _ in }
             )
@@ -46,6 +48,12 @@ struct TripMapDetailView: View {
         .navigationTitle("旅行地图")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { areFootprintSamplesVisible.toggle() } label: {
+                    Image(systemName: areFootprintSamplesVisible ? "circle.grid.2x2.fill" : "circle.grid.2x2")
+                }
+                .accessibilityLabel(areFootprintSamplesVisible ? "隐藏自动 GPS 采样点" : "显示自动 GPS 采样点")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
                     .accessibilityLabel("刷新旅行地图")
