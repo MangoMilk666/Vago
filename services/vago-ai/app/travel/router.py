@@ -81,6 +81,16 @@ def start_trip(
     return success(service.start_trip(db, user_uuid, trip_uuid), "行程已开始")
 
 
+@router.post("/trips/{trip_uuid}/switch", response_model=ApiResponse[TripResponse])
+def switch_active_trip(
+    trip_uuid: str,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[TripResponse]:
+    """结束当前进行中行程，并开始用户选定的未开始行程。"""
+    return success(service.switch_active_trip(db, user_uuid, trip_uuid), "当前行程已切换")
+
+
 @router.post("/trips/{trip_uuid}/finish", response_model=ApiResponse[TripResponse])
 def finish_trip(
     trip_uuid: str,

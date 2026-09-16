@@ -68,6 +68,47 @@ struct Trip: Codable, Identifiable {
     let status: Int
 
     var id: String { uuid }
+
+    /// struct 是值类型；复制后替换 status，供切换接口仅回传新行程时维持本地列表一致性。
+    func withStatus(_ status: Int) -> Trip {
+        Trip(uuid: uuid, title: title, destination: destination, startDate: startDate, endDate: endDate, status: status)
+    }
+}
+
+/// 与 FastAPI Trip 的状态值保持一致，避免页面散落难以理解的 1/2/3 魔法数字。
+enum TripStatus: Int {
+    case notStarted = 1
+    case inProgress = 2
+    case ended = 3
+
+    var title: String {
+        switch self {
+        case .notStarted: return "未开始"
+        case .inProgress: return "进行中"
+        case .ended: return "已结束"
+        }
+    }
+}
+
+/// 行程详情页编辑时提交的有限字段；封面上传尚未实现，因此不会伪造 coverImageKey 写入能力。
+struct TripUpdateRequest: Encodable {
+    let title: String
+    let destination: String?
+    // Travel API 的日期字段是纯 yyyy-MM-dd，不应把 DatePicker 的本地时区时间编码成完整 UTC 时间戳。
+    let startDate: String
+    let endDate: String
+
+    init(title: String, destination: String?, startDate: Date, endDate: Date) {
+        self.title = title
+        self.destination = destination
+        self.startDate = Self.calendarDateString(from: startDate)
+        self.endDate = Self.calendarDateString(from: endDate)
+    }
+
+    private static func calendarDateString(from date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    }
 }
 
 struct ItineraryDay: Decodable, Identifiable {

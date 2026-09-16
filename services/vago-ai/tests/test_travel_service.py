@@ -96,6 +96,33 @@ def test_trip_lifecycle_allows_one_active_trip_and_locks_history(db_session: Ses
     assert update_exc.value.code == "TRIP_ENDED"
 
 
+def test_switch_active_trip_ends_previous_trip_and_starts_target(db_session: Session):
+    """测试：切换当前行程在同一用户范围内结束旧行程并激活选定未开始行程。"""
+    first_trip = service.create_trip(
+        db_session,
+        "user-a",
+        TripCreateRequest(title="东京行", startDate=date(2026, 9, 1), endDate=date(2026, 9, 3)),
+    )
+    next_trip = service.create_trip(
+        db_session,
+        "user-a",
+        TripCreateRequest(title="大阪行", startDate=date(2026, 10, 1), endDate=date(2026, 10, 3)),
+    )
+    service.start_trip(db_session, "user-a", first_trip.uuid)
+
+    switched = service.switch_active_trip(db_session, "user-a", next_trip.uuid)
+
+    assert switched.uuid == next_trip.uuid
+    assert switched.status == service.TRIP_STATUS_IN_PROGRESS
+    previous = service.get_trip_detail(db_session, "user-a", first_trip.uuid)
+    assert previous.status == service.TRIP_STATUS_ENDED
+    assert [trip.uuid for trip in service.list_history_trips(db_session, "user-a")] == [first_trip.uuid]
+
+    with pytest.raises(AppException) as exc_info:
+        service.switch_active_trip(db_session, "user-a", first_trip.uuid)
+    assert exc_info.value.code == "TRIP_NOT_SWITCHABLE"
+
+
 def test_plan_convert_copies_itinerary_days_and_spots(db_session: Session):
     """测试：计划转正式行程时应复制每日安排和景点。"""
     plan = service.create_plan(

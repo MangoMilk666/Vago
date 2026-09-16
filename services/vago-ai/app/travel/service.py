@@ -219,6 +219,38 @@ def start_trip(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
     return _trip_to_response(trip)
 
 
+def switch_active_trip(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
+    """原子交接当前行程：旧行程结束，新行程开始。"""
+    target_trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
+    # 锁定目标行程与当前行程，避免两个并发切换请求各自读到同一份旧状态后产生双进行中行程。
+    target_trip = db.scalar(select(Trip).where(Trip.id == target_trip.id).with_for_update())
+    assert target_trip is not None
+    # 分支条件：只有未开始行程可以接替当前行程，历史行程不可被重新激活。
+    if target_trip.status != TRIP_STATUS_NOT_STARTED:
+        raise AppException("仅未开始的行程可以切换为当前行程", status_code=409, code="TRIP_NOT_SWITCHABLE")
+
+    active_trip = db.scalar(
+        select(Trip).where(
+            Trip.user_uuid == user_uuid,
+            Trip.status == TRIP_STATUS_IN_PROGRESS,
+            Trip.deleted_at.is_(None),
+        ).with_for_update()
+    )
+    # 分支条件：没有进行中行程时应使用既有 start 接口，避免“切换”悄悄改变其语义。
+    if active_trip is None:
+        raise AppException("当前没有进行中的行程，请直接开始该行程", status_code=409, code="NO_ACTIVE_TRIP")
+
+    now = utc_now_naive()
+    # 同一事务内完成状态交接，任一步失败都不会留下两份进行中行程。
+    active_trip.status = TRIP_STATUS_ENDED
+    active_trip.updated_at = now
+    target_trip.status = TRIP_STATUS_IN_PROGRESS
+    target_trip.updated_at = now
+    db.commit()
+    db.refresh(target_trip)
+    return _trip_to_response(target_trip)
+
+
 def finish_trip(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
     """结束进行中的行程，并将其归入历史行程。"""
     trip = _get_trip_or_raise(db, trip_uuid, user_uuid)

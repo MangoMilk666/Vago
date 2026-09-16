@@ -256,19 +256,19 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 
 ## Phase 6：全类型行程对应地图数据
 
-实施状态：未开始
+实施状态：已完成（2026-09-16，完成有限历史浏览、行程详情编辑、当前行程原子切换与单行程只读地图）
 
 **目标：** 没有进行中行程也可查看自己的旅行地图，限制数据规模。
 
-**涉及现有文件：** TrackingView、TravelMapViewModel、FootprintRepository、`Core/Models.swift`；使用现有 `travel/trips` 和按 Trip 的 footprint/checkin GET。
+**涉及现有文件：** `Features/Trips/CurrentTripView.swift`、`Features/Footprints/TrackingView.swift`、`TravelMapCanvas.swift`、`Core/Models.swift`；使用既有 `travel/trips` 与按 Trip 的 observations GET。
 
-**建议新增文件/类型：** `TripMapPickerSheet.swift`；ViewModel 增加 selectedTrip 与 activeRecordingTrip 的独立状态。
+**新增文件/类型：** `Core/TripContextStore.swift`、`Features/Trips/TripMapDetailView.swift`；`TripContextStore` 维护跨 Tab 的行程摘要和唯一进行中行程，历史地图页复用现有地图画布。
 
-**实施内容与数据流：** 读取行程元数据，区分未开始/进行中/已结束；一次仅加载用户明确选择的一份 Trip。正在记录的 Trip 不随历史浏览切换绑定；状态面板明确告诉用户仍在记录哪份行程。
+**实施内容与数据流：** 行程页按未开始/进行中/已结束展示用户自己的行程，可编辑未结束行程的名称、目的地和日期，并进入单行程只读地图查看已同步的轨迹与打卡。一次只加载用户明确选择的一份 Trip；历史浏览不改变 `TripContextStore.activeTrip`，因此不会影响定位记录和打卡的写入归属。
 
-查看正在记录的trip以外的其他trip，可以从【行程】页面添加多个入口和页面实现。不要在【记录】页面，以免影响正在记录的Trip的打卡情况。
+行程切换是明确的业务状态交接，而非仅在客户端改一个选择值：若用户已有进行中行程，确认后 FastAPI 在一次事务中结束旧行程并开始所选未开始行程；iOS 先停止旧行程的连续采样，待传点仍保留原 `tripUuid`，新行程需由用户再次开始位置记录。这样维持“最多一份进行中行程”与历史行程只读的既有约束。
 
-**后端/API/数据库：** 有限、较小单 Trip 浏览可纯 iOS 完成。现有 GET 无分页；若真实单 Trip 点量达到性能预算，需单独增加可选 cursor/limit 或时间范围及稳定排序，保持旧数组 contract 默认行为，不能截断后仍宣称显示完整行程。分页不是本阶段无条件前置。
+**后端/API/数据库：** 新增 `POST /travel/trips/{tripUuid}/switch`，不改数据库：服务端事务内完成旧进行中行程结束与新行程开始。有限、较小单 Trip 地图浏览复用现有 observations GET；若真实单 Trip 点量达到性能预算，再单独增加可选 cursor/limit 或时间范围及稳定排序，保持旧数组 contract 默认行为。
 
 **主要风险：** 无 active Trip 导致历史页被挡、旧请求污染新 Trip、误向历史 Trip 写入、长行程无界下载。
 

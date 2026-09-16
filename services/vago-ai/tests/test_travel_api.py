@@ -90,6 +90,27 @@ def test_travel_trip_api_returns_java_compatible_envelope(client: TestClient):
     assert history_response.json()["data"][0]["uuid"] == created["uuid"]
 
 
+def test_travel_trip_switch_api_hands_off_the_active_trip(client: TestClient):
+    """测试：行程切换接口应在一次请求内结束旧行程并开始目标行程。"""
+    first = client.post(
+        "/api/v1/travel/trips",
+        json={"title": "东京行", "startDate": "2026-09-01", "endDate": "2026-09-03"},
+    ).json()["data"]
+    second = client.post(
+        "/api/v1/travel/trips",
+        json={"title": "大阪行", "startDate": "2026-10-01", "endDate": "2026-10-03"},
+    ).json()["data"]
+    client.post(f"/api/v1/travel/trips/{first['uuid']}/start")
+
+    response = client.post(f"/api/v1/travel/trips/{second['uuid']}/switch")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["uuid"] == second["uuid"]
+    assert response.json()["data"]["status"] == 2
+    trips = client.get("/api/v1/travel/trips").json()["data"]
+    assert {trip["uuid"]: trip["status"] for trip in trips} == {first["uuid"]: 3, second["uuid"]: 2}
+
+
 def test_travel_plan_days_and_convert_api(client: TestClient):
     """测试：Plan / Itinerary API 应支持每日安排更新并转换为 Trip。"""
     plan_response = client.post(

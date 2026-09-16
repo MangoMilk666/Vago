@@ -1,86 +1,201 @@
 import SwiftUI
 
+/// 行程 Tab 展示用户自己的正式行程，并把唯一“当前行程”同步给记录页。
 struct CurrentTripView: View {
-    // 当前行程 Tab 只关心 status=2 的正式行程，不承担计划草稿列表职责。
     @EnvironmentObject private var session: SessionStore
-    // Optional Trip 让页面能区分“尚未加载”“没有进行中行程”和“已取得行程”。
-    @State private var trip: Trip?
+    @EnvironmentObject private var tripContext: TripContextStore
     @State private var isLoading = true
     @State private var errorMessage = ""
     @State private var loadedUserUuid: String?
-    // View 保持轻量：数据请求委托给 APIClient，页面只负责展示状态。
     private let client = APIClient()
 
+    private var inProgressTrips: [Trip] { tripContext.trips.filter { $0.status == TripStatus.inProgress.rawValue } }
+    private var notStartedTrips: [Trip] { tripContext.trips.filter { $0.status == TripStatus.notStarted.rawValue } }
+    private var endedTrips: [Trip] { tripContext.trips.filter { $0.status == TripStatus.ended.rawValue } }
+
     var body: some View {
-        // Group 只组织条件内容，本身不会产生额外布局容器。
         NavigationStack {
             Group {
-                if isLoading {
-                    ProgressView("正在读取当前行程")
-                } else if let trip {
-                    TripDetailView(trip: trip)
+                if isLoading && tripContext.trips.isEmpty {
+                    ProgressView("正在读取行程")
+                } else if tripContext.trips.isEmpty {
+                    ContentUnavailableView("暂无正式行程", systemImage: "suitcase", description: Text("创建或转换一份计划后，行程会在这里出现。"))
                 } else {
-                    ContentUnavailableView("暂无进行中的行程", systemImage: "suitcase", description: Text("开始一个正式行程后，它会在这里出现。"))
+                    List {
+                        tripSection("进行中", trips: inProgressTrips)
+                        tripSection("未开始", trips: notStartedTrips)
+                        tripSection("已结束", trips: endedTrips)
+                    }
+                    .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("行程")
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { Task { await refresh() } } label: { Image(systemName: "arrow.clockwise") } } }
-            // 用户切换后才重新初始读取；同一用户因视图重算再次出现时不重复请求。
-            // task(id:) 仅在 id 改变时重新执行；它是避免 Tab 重绘造成重复请求的关键。
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                        .accessibilityLabel("刷新行程列表")
+                }
+            }
+            // task(id:) 仅在账号变化时触发，避免每次 Tab 重绘都重复请求 travel/trips。
             .task(id: session.profile?.uuid) { await loadInitially() }
-            .alert("暂时无法读取行程", isPresented: Binding(get: { !errorMessage.isEmpty }, set: { if !$0 { errorMessage = "" } })) { Button("好的", role: .cancel) {} } message: { Text(errorMessage) }
+            .alert("暂时无法读取行程", isPresented: Binding(get: { !errorMessage.isEmpty }, set: { if !$0 { errorMessage = "" } })) {
+                Button("好的", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func tripSection(_ title: String, trips: [Trip]) -> some View {
+        // 分支条件：空状态分类不渲染空 Section，避免列表出现没有内容的分组标题。
+        if !trips.isEmpty {
+            Section(title) {
+                ForEach(trips) { trip in
+                    NavigationLink {
+                        TripDetailView(trip: trip)
+                    } label: {
+                        TripRow(trip: trip)
+                    }
+                }
+            }
         }
     }
 
     private func load() async {
-        // do/catch 与 Python try/except 对应，把网络错误转换为页面可展示状态。
         isLoading = true
         defer { isLoading = false }
         do {
             let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session)
-            // 后端约定 status=2 表示进行中，iOS 首页仅展示当前这一份正式行程。
-            trip = trips.first(where: { $0.status == 2 })
+            guard let userUuid = session.profile?.uuid else { return }
+            tripContext.replaceTrips(trips, for: userUuid)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     private func loadInitially() async {
-        // guard 同时校验用户存在与尚未读取该用户；条件不满足就立即 return。
         guard let userUuid = session.profile?.uuid, loadedUserUuid != userUuid else { return }
-        // 请求开始前即记录用户，避免 SwiftUI 重建期间并发发起相同初始请求。
         loadedUserUuid = userUuid
         await load()
     }
 
     private func refresh() async {
+        errorMessage = ""
         await load()
     }
 }
 
-private struct TripDetailView: View {
-    // private 表示此详情视图只被当前文件使用，避免把内部页面误当作跨模块 API。
-    @EnvironmentObject private var session: SessionStore
+/// 单个行程在列表中的摘要，不把状态只交给颜色表达，方便无障碍与快速扫描。
+private struct TripRow: View {
     let trip: Trip
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(trip.title).font(.headline)
+                Spacer()
+                Text(TripStatus(rawValue: trip.status)?.title ?? "未知")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(statusColor)
+            }
+            if let destination = trip.destination, !destination.isEmpty {
+                Label(destination, systemImage: "mappin.and.ellipse")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Text("\(trip.startDate.formatted(date: .abbreviated, time: .omitted)) - \(trip.endDate.formatted(date: .abbreviated, time: .omitted))")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var statusColor: Color {
+        switch TripStatus(rawValue: trip.status) {
+        case .notStarted: return .orange
+        case .inProgress: return .green
+        case .ended: return .secondary
+        case nil: return .red
+        }
+    }
+}
+
+/// 行程详情保留服务端的可编辑/只读边界，并提供这份行程对应的只读地图入口。
+private struct TripDetailView: View {
+    let initialTrip: Trip
+    @EnvironmentObject private var session: SessionStore
+    @EnvironmentObject private var tracking: LocationTrackingStore
+    @EnvironmentObject private var tripContext: TripContextStore
+    @State private var trip: Trip
     @State private var days: [ItineraryDay] = []
-    @State private var isLoading = true
-    @State private var loadedTripUuid: String?
-    @State private var errorMessage = ""
+    @State private var isLoadingDays = true
+    @State private var isSaving = false
+    @State private var dayError = ""
+    @State private var actionError = ""
+    @State private var isEditorPresented = false
+    @State private var isSwitchConfirmationPresented = false
     private let client = APIClient()
+
+    init(trip: Trip) {
+        initialTrip = trip
+        _trip = State(initialValue: trip)
+    }
+
+    private var canEdit: Bool { trip.status != TripStatus.ended.rawValue }
+    private var activeTrip: Trip? { tripContext.activeTrip }
 
     var body: some View {
         List {
-            Section {
-                Text(trip.destination ?? "未设置目的地").font(.headline)
-                Text("\(trip.startDate.formatted(date: .abbreviated, time: .omitted)) - \(trip.endDate.formatted(date: .abbreviated, time: .omitted))").foregroundStyle(.secondary)
-            } header: { Text(trip.title) }
+            Section("行程信息") {
+                LabeledContent("目的地", value: trip.destination?.isEmpty == false ? trip.destination! : "未设置")
+                LabeledContent("日期") {
+                    Text("\(trip.startDate.formatted(date: .abbreviated, time: .omitted)) - \(trip.endDate.formatted(date: .abbreviated, time: .omitted))")
+                        .multilineTextAlignment(.trailing)
+                }
+                LabeledContent("状态", value: TripStatus(rawValue: trip.status)?.title ?? "未知")
+            }
+
+            Section("旅行记录") {
+                NavigationLink {
+                    TripMapDetailView(trip: trip)
+                } label: {
+                    Label("查看点位与轨迹", systemImage: "map")
+                }
+                Text("地图仅用于浏览这份行程的已同步观察数据，不会改变当前正在记录的行程。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if canEdit {
+                Section("行程操作") {
+                    if trip.status == TripStatus.notStarted.rawValue {
+                        Button(activeTrip == nil ? "开始并设为当前行程" : "切换为当前行程") {
+                            // 分支条件：已有进行中行程时，切换会结束旧行程，必须先取得用户明确确认。
+                            if activeTrip == nil {
+                                Task { await startTrip() }
+                            } else {
+                                isSwitchConfirmationPresented = true
+                            }
+                        }
+                        .disabled(isSaving)
+                    } else if trip.status == TripStatus.inProgress.rawValue {
+                        Button("结束行程", role: .destructive) {
+                            Task { await finishTrip() }
+                        }
+                        .disabled(isSaving)
+                    }
+                }
+            }
+
             Section("每日安排") {
-                if isLoading { ProgressView() }
-                // 分支条件：接口异常时展示真实错误，不能把失败悄悄降级为“没有日程”。
-                if !errorMessage.isEmpty {
-                    ContentUnavailableView("暂时无法读取日程", systemImage: "exclamationmark.icloud", description: Text(errorMessage))
+                if isLoadingDays {
+                    ProgressView()
+                } else if !dayError.isEmpty {
+                    ContentUnavailableView("暂时无法读取日程", systemImage: "exclamationmark.icloud", description: Text(dayError))
+                } else if days.isEmpty {
+                    Text("暂未安排日程").foregroundStyle(.secondary)
                 } else {
-                    // ForEach 依赖 ItineraryDay 的 Identifiable.id 来做增量更新和导航复用。
                     ForEach(days) { day in
                         NavigationLink { ItineraryDayView(day: day) } label: {
                             VStack(alignment: .leading) {
@@ -94,33 +209,161 @@ private struct TripDetailView: View {
             }
         }
         .navigationTitle(trip.title)
-        // 行程 UUID 改变时才读取新的日程，防止 Tab 切换或列表重绘重复请求。
-        .task(id: trip.uuid) { await loadDaysInitially() }
-    }
-
-    private func loadDays() async {
-        // defer 类似 finally，无论请求结果如何都结束 loading 状态。
-        isLoading = true
-        errorMessage = ""
-        defer { isLoading = false }
-        do {
-            days = try await client.request(path: "travel/trips/\(trip.uuid)/days", tokenProvider: session)
-        } catch {
-            // 日程读取失败不能伪装成空日程，否则会掩盖服务端限流等真实故障。
-            errorMessage = error.localizedDescription
+        .toolbar {
+            if canEdit {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { isEditorPresented = true } label: { Image(systemName: "pencil") }
+                        .accessibilityLabel("编辑行程")
+                }
+            }
+        }
+        .task(id: initialTrip.uuid) { await loadDays() }
+        .sheet(isPresented: $isEditorPresented) {
+            TripEditorSheet(trip: trip, isSaving: isSaving) { request in
+                Task { await updateTrip(request) }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .alert("切换当前行程？", isPresented: $isSwitchConfirmationPresented) {
+            Button("取消", role: .cancel) {}
+            Button("结束并切换", role: .destructive) { Task { await switchActiveTrip() } }
+        } message: {
+            Text("“\(activeTrip?.title ?? "当前行程")”会立即结束并进入历史记录，之后不可再编辑。")
+        }
+        .alert("行程操作失败", isPresented: Binding(get: { !actionError.isEmpty }, set: { if !$0 { actionError = "" } })) {
+            Button("好的", role: .cancel) {}
+        } message: {
+            Text(actionError)
         }
     }
 
-    private func loadDaysInitially() async {
-        guard loadedTripUuid != trip.uuid else { return }
-        // 请求开始前记录 UUID，保证同一行程只有一个初始读取任务。
-        loadedTripUuid = trip.uuid
-        await loadDays()
+    private func loadDays() async {
+        isLoadingDays = true
+        dayError = ""
+        defer { isLoadingDays = false }
+        do {
+            days = try await client.request(path: "travel/trips/\(trip.uuid)/days", tokenProvider: session)
+        } catch {
+            dayError = error.localizedDescription
+        }
+    }
+
+    private func updateTrip(_ request: TripUpdateRequest) async {
+        await performTripWrite(path: "travel/trips/\(trip.uuid)", method: "PUT", body: request) { updated in
+            trip = updated
+            isEditorPresented = false
+        }
+    }
+
+    private func startTrip() async {
+        await performTripAction(path: "travel/trips/\(trip.uuid)/start") { started in
+            trip = started
+        }
+    }
+
+    private func finishTrip() async {
+        await performTripAction(path: "travel/trips/\(trip.uuid)/finish") { finished in
+            // 分支条件：唯一进行中行程结束前若正在采样，停止后续定位回调，待传旧点仍保留原 tripUuid。
+            if tracking.isTracking {
+                tracking.stopTracking()
+            }
+            trip = finished
+        }
+    }
+
+    private func switchActiveTrip() async {
+        let previousTripUuid = activeTrip?.uuid
+        // 切换前停止旧行程采样；已在本地队列中的点仍按其原 tripUuid 分批上传。
+        if tracking.isTracking {
+            tracking.stopTracking()
+        }
+        await performTripAction(path: "travel/trips/\(trip.uuid)/switch") { switched in
+            trip = switched
+            guard let userUuid = session.profile?.uuid else { return }
+            tripContext.replaceAfterSwitch(previousTripUuid: previousTripUuid, newActiveTrip: switched, for: userUuid)
+        }
+    }
+
+    private func performTripAction(path: String, onSuccess: @escaping (Trip) -> Void) async {
+        await performTripWrite(path: path, method: "POST", body: EmptyRequest(), onSuccess: onSuccess)
+    }
+
+    private func performTripWrite<Body: Encodable>(path: String, method: String, body: Body, onSuccess: @escaping (Trip) -> Void) async {
+        isSaving = true
+        actionError = ""
+        defer { isSaving = false }
+        do {
+            let updated: Trip = try await client.request(path: path, method: method, body: body, tokenProvider: session)
+            onSuccess(updated)
+            if let userUuid = session.profile?.uuid {
+                tripContext.upsert(updated, for: userUuid)
+            }
+        } catch {
+            actionError = error.localizedDescription
+        }
+    }
+}
+
+/// 输入表单只编辑后端允许的 Trip 元数据；DatePicker 可避免字符串日期解析歧义。
+private struct TripEditorSheet: View {
+    let trip: Trip
+    let isSaving: Bool
+    let save: (TripUpdateRequest) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var destination: String
+    @State private var startDate: Date
+    @State private var endDate: Date
+
+    init(trip: Trip, isSaving: Bool, save: @escaping (TripUpdateRequest) -> Void) {
+        self.trip = trip
+        self.isSaving = isSaving
+        self.save = save
+        _title = State(initialValue: trip.title)
+        _destination = State(initialValue: trip.destination ?? "")
+        _startDate = State(initialValue: trip.startDate)
+        _endDate = State(initialValue: trip.endDate)
+    }
+
+    private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var isDateRangeValid: Bool { startDate <= endDate }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("行程名称", text: $title)
+                TextField("目的地（可选）", text: $destination)
+                DatePicker("开始日期", selection: $startDate, displayedComponents: .date)
+                DatePicker("结束日期", selection: $endDate, in: startDate..., displayedComponents: .date)
+                if !isDateRangeValid {
+                    Text("结束日期不能早于开始日期").foregroundStyle(.red)
+                }
+            }
+            .navigationTitle("编辑行程")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }.disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "保存中" : "保存") {
+                        let trimmedDestination = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+                        save(TripUpdateRequest(
+                            title: trimmedTitle,
+                            destination: trimmedDestination.isEmpty ? nil : trimmedDestination,
+                            startDate: startDate,
+                            endDate: endDate
+                        ))
+                    }
+                    .disabled(isSaving || trimmedTitle.isEmpty || !isDateRangeValid)
+                }
+            }
+        }
     }
 }
 
 private struct ItineraryDayView: View {
-    // let 表示输入日程不可在详情页直接修改，符合已结束行程等只读展示场景。
     let day: ItineraryDay
     var body: some View {
         List {
@@ -128,7 +371,10 @@ private struct ItineraryDayView: View {
             if let accommodation = day.accommodation { Section("住宿") { Text(accommodation) } }
             Section("地点") {
                 ForEach(day.spots) { spot in
-                    VStack(alignment: .leading) { Text(spot.name); if let address = spot.address { Text(address).font(.subheadline).foregroundStyle(.secondary) } }
+                    VStack(alignment: .leading) {
+                        Text(spot.name)
+                        if let address = spot.address { Text(address).font(.subheadline).foregroundStyle(.secondary) }
+                    }
                 }
             }
             if let notes = day.notes, !notes.isEmpty { Section("备注") { Text(notes) } }
@@ -136,3 +382,6 @@ private struct ItineraryDayView: View {
         .navigationTitle("第 \(day.dayIndex) 天")
     }
 }
+
+/// POST 行程动作没有请求体时使用的空 JSON 对象，复用 APIClient 的统一认证和错误处理链路。
+private struct EmptyRequest: Encodable {}

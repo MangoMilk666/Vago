@@ -4,6 +4,7 @@ struct RootView: View {
     // @EnvironmentObject 从根视图注入的共享状态中读取当前认证状态。
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var tracking: LocationTrackingStore
+    @EnvironmentObject private var tripContext: TripContextStore
 
     var body: some View {
         Group {
@@ -25,6 +26,7 @@ struct RootView: View {
             // 分支条件：退出登录后清理旧账号的内存定位状态，UserDefaults 待传队列仍按账号保留。
             if userUuid == nil {
                 tracking.reset()
+                tripContext.reset()
             }
         }
     }
