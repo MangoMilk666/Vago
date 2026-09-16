@@ -238,7 +238,7 @@ CREATE TABLE itinerary_days (
     ref_uuid        VARCHAR(32)     NOT NULL                     COMMENT '所属行程/计划 UUID',
     ref_type        TINYINT         NOT NULL                     COMMENT '归属类型：1=行程 2=计划',
     day_date        DATE            NOT NULL                     COMMENT '当日日期',
-    day_index       TINYINT         NOT NULL                     COMMENT '第几天（1起始）',
+    day_index       SMALLINT        NOT NULL                     COMMENT '第几天（1起始，支持长行程）',
     transportation  VARCHAR(200)    DEFAULT NULL                 COMMENT '出行方式（飞机/高铁/自驾…）',
     accommodation   VARCHAR(300)    DEFAULT NULL                 COMMENT '住宿地点/酒店名称',
     meal_breakfast  VARCHAR(200)    DEFAULT NULL                 COMMENT '早餐地点',

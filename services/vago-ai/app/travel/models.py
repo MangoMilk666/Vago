@@ -6,7 +6,7 @@ Phase 3 先按现有 MySQL DDL 建模，保证 Java 侧历史数据可以被 Fas
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, Numeric, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -117,8 +117,8 @@ class ItineraryDay(Base):
     ref_type: Mapped[int] = mapped_column(nullable=False)
     # 当日日期。
     day_date: Mapped[date] = mapped_column(Date, nullable=False)
-    # 第几天，1-based。
-    day_index: Mapped[int] = mapped_column(nullable=False)
+    # 第几天，1-based；使用 SMALLINT 以支持超过 127 天的长行程，不受旧 TINYINT 上限限制。
+    day_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     # 当日交通安排。
     transportation: Mapped[str | None] = mapped_column(String(200))
     # 当日住宿安排。

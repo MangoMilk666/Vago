@@ -123,6 +123,20 @@ def test_switch_active_trip_ends_previous_trip_and_starts_target(db_session: Ses
     assert exc_info.value.code == "TRIP_NOT_SWITCHABLE"
 
 
+def test_itinerary_initialization_supports_a_trip_longer_than_127_days(db_session: Session):
+    """测试：日期范围跨 128 天时，懒初始化仍可创建完整的每日行程序号。"""
+    trip = service.create_trip(
+        db_session,
+        "user-a",
+        TripCreateRequest(title="长期旅行", startDate=date(2026, 1, 1), endDate=date(2026, 5, 8)),
+    )
+
+    days = service.get_itinerary_days(db_session, "user-a", trip.uuid, ItineraryDay.REF_TYPE_TRIP)
+
+    assert len(days) == 128
+    assert days[-1].day_index == 128
+
+
 def test_plan_convert_copies_itinerary_days_and_spots(db_session: Session):
     """测试：计划转正式行程时应复制每日安排和景点。"""
     plan = service.create_plan(
