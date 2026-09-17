@@ -140,8 +140,8 @@ cd services/vago-ai
 
 - [项目需求文档](docs/prd/PRD.md)
 - [项目架构说明](docs/architecture.md)
-- [重塑迁移盘点](docs/remould-migration-inventory.md)
-- [iOS Travel Map 实施计划](docs/ios-development-plan.md)
+- [重塑迁移盘点](docs/evolution/remould-migration-inventory.md)
+- [iOS Travel Map 实施计划](docs/modules/footprint/ios/implementation-plan.md)
 - [版本更新记录](docs/CHANGELOG.md)
 - [数据库文档](docs/database/schema.md)
 

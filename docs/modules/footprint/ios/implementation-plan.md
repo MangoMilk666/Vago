@@ -1,6 +1,6 @@
 # iOS Travel Map 实施计划
 
-基线日期：2026-09-05。本文基于当前仓库代码、[iOS README](../apps/vago-ios/README.md) 和 [Travel Footprint 设计](design/ios-travel-footprint.md) 编写，参考 project-remould-skill 的渐进迁移原则。本轮仅编写计划，不实施代码变更；以下 Phase 编号是 Travel Map 的局部实施阶段，不替代项目整体 remould Phase 1–9。
+基线日期：2026-09-05。本文基于当前仓库代码、[iOS README](../../../../apps/vago-ios/README.md) 和 [Travel Footprint 设计](design.md) 编写，参考 project-remould-skill 的渐进迁移原则。本轮仅编写计划，不实施代码变更；以下 Phase 编号是 Travel Map 的局部实施阶段，不替代项目整体 remould Phase 1–9。
 
 ## 1. 结论与实施边界
 
@@ -276,6 +276,8 @@ Check-in 的两个简单请求初期放在 ViewModel 即可；只有形成独立
 
 ## Phase 7：简单 World Fog / Explored Area 实验
 
+【除非用户有明确的prompt指令，否则该phase暂时不要自动推进】
+
 实施状态：未开始
 
 **目标：** 使用现有个人旅行事实派生固定半径探索区域，验证“未探索淡化、探索处显露”的体验。
@@ -349,7 +351,7 @@ Phase 3 先发布兼容的响应增量，再发合并客户端；Phase 4B 先升
 
 ## 8. 依据与技术核对
 
-仓库事实主要来源于第 2 节列出的代码与 [设计文档](design/ios-travel-footprint.md)。README 对功能的概述较早，实际代码已存在全屏初版、polyline、GET checkins 和 Annotation，应以代码为准；README 中“打开记录页前台采集”的范围也不能替代生命周期实测。
+仓库事实主要来源于第 2 节列出的代码与[设计文档](design.md)。README 对功能的概述较早，实际代码已存在全屏初版、polyline、GET checkins 和 Annotation，应以代码为准；README 中“打开记录页前台采集”的范围也不能替代生命周期实测。
 
 Launch Screen 的配置候选来自 Apple 的 [UILaunchScreen 文档](https://developer.apple.com/documentation/bundleresources/information-property-list/uilaunchscreen)；本仓库缺失配置是检查结果，其是否导致当前设备视口偏小仍需 Phase 1 实测确认。
 
