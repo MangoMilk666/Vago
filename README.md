@@ -142,6 +142,7 @@ cd services/vago-ai
 - [项目架构说明](docs/architecture.md)
 - [重塑迁移盘点](docs/evolution/remould-migration-inventory.md)
 - [iOS Travel Map 实施计划](docs/modules/footprint/ios/implementation-plan.md)
+- [Agent Runtime 设计与开发参考](docs/modules/agent/agent-runtime.md)
 - [版本更新记录](docs/CHANGELOG.md)
 - [数据库文档](docs/database/schema.md)
 
