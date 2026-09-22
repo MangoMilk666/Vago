@@ -425,9 +425,12 @@ async def stream_agent_chat(
         structured_plan = await extract_structured_plan(complete_answer, current_input)
         if structured_plan:
             yield _sse({"type": "structured_plan", "data": structured_plan.model_dump()})
+        # Phase 10：公开声明本轮执行已结束，不暴露模型内部推理步骤。
+        yield _sse({"type": "agent.completed", "label": "已完成本轮旅行建议"})
 
     except Exception as exc:
         logger.error("[rag_chain] 流式生成失败 user=%s error=%s", user_uuid, exc, exc_info=True)
+        yield _sse({"type": "agent.failed", "label": "本轮建议生成失败"})
         yield _sse({"type": "error", "message": f"生成失败：{exc}"})
 
     yield "data: [DONE]\n\n"

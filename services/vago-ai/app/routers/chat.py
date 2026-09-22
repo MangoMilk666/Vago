@@ -29,7 +29,8 @@ from app.core.database import get_db
 from app.dependencies.auth import get_current_user_uuid
 from app.models.schemas import ChatRequest, ChatResponse, SourceCitation
 from app.agent_conversations import service as conversation_service
-from app.personal_context.service import build_personal_context, format_context_for_agent
+from app.agent_runtime import AgentRuntime
+from app.agent_runtime.runtime import AgentRuntimePreparation
 from app.services.rag_chain import run_agent_chat, stream_agent_chat
 from app.config import settings
 
@@ -79,9 +80,7 @@ async def chat(
         user_uuid, len(request.messages), request.use_rag,
     )
 
-    personal_context, context_labels = _load_personal_context(
-        db, user_uuid, request.use_personal_context, request.use_rag,
-    )
+    preparation = _prepare_agent_runtime(db, user_uuid, request.use_personal_context, request.use_rag)
     # 工具调用的请求参数集合？
     try:
         call_kwargs = {
@@ -89,9 +88,12 @@ async def chat(
             "messages": request.messages,
             "use_rag": request.use_rag,
         }
-        # 分支条件：仅 Web 显式开启 Context 时才扩展既有对话调用参数。
-        if personal_context is not None:
-            call_kwargs.update(personal_context=personal_context, context_labels=context_labels)
+        # 分支条件：仅 客户端 显式开启 Context 时才扩展既有对话调用参数。
+        if preparation.personal_context is not None:
+            call_kwargs.update(
+                personal_context=preparation.personal_context,
+                context_labels=preparation.context_labels,
+            )
         result = await run_agent_chat(**call_kwargs)
     except Exception as exc:
         logger.error("[chat] 非流式生成失败 user=%s error=%s", user_uuid, exc, exc_info=True)
@@ -102,7 +104,7 @@ async def chat(
         sources=result["sources"],
         model=result["model"],
         structured_plan=result.get("structured_plan"),
-        contextLabels=result.get("context_labels", context_labels),
+        contextLabels=result.get("context_labels", preparation.context_labels),
     )
 
 
@@ -148,9 +150,7 @@ async def chat_stream(
         user_uuid, len(request.messages), request.use_rag,
     )
 
-    personal_context, context_labels = _load_personal_context(
-        db, user_uuid, request.use_personal_context, request.use_rag,
-    )
+    preparation = _prepare_agent_runtime(db, user_uuid, request.use_personal_context, request.use_rag)
 
     if request.conversation_uuid:
         # 分支条件：带会话 UUID 的 Web 请求先落下用户原话，刷新后也可恢复此轮问题。
@@ -172,20 +172,29 @@ async def chat_stream(
         """
         answer_parts: list[str] = []
         sources: list[dict] = []
-        response_context_labels: list[str] = context_labels
+        response_context_labels: list[str] = preparation.context_labels
+        agent_events: list[dict[str, str]] = list(preparation.events)
         structured_plan: dict | None = None
         stream_failed = False
         try:
+            # Runtime 事件是可解释的执行轨迹，不包含模型内部推理过程。
+            for event in preparation.events:
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             call_kwargs = {
                 "user_uuid": user_uuid,
                 "messages": request.messages,
                 "use_rag": request.use_rag,
             }
             # 分支条件：只有前端明确授权时才把结构化事实注入 Agent 对话。
-            if personal_context is not None:
-                call_kwargs.update(personal_context=personal_context, context_labels=context_labels)
+            if preparation.personal_context is not None:
+                call_kwargs.update(
+                    personal_context=preparation.personal_context,
+                    context_labels=preparation.context_labels,
+                )
             async for chunk in stream_agent_chat(**call_kwargs):
                 event = _parse_sse_event(chunk)
+                if event and event.get("type", "").startswith(("agent.", "tool.")):
+                    agent_events.append(event)
                 # 分支条件：只有正常文本流才写入长期历史，错误提示仅作为当前界面临时反馈。
                 if event and event.get("type") == "text":
                     content = event.get("content")
@@ -216,6 +225,7 @@ async def chat_stream(
                         "".join(answer_parts),
                         sources=sources,
                         context_labels=response_context_labels,
+                        agent_events=agent_events,
                         structured_plan=structured_plan,
                     )
                 except Exception as exc:
@@ -234,27 +244,23 @@ async def chat_stream(
 
 # ─── 私有工具 ─────────────────────────────────────────────────────────────────
 
-def _load_personal_context(
+def _prepare_agent_runtime(
     db: Session,
     user_uuid: str,
     use_personal_context: bool,
     use_rag: bool,
-) -> tuple[str | None, list[str]]:
-    """按用户授权读取 Context；非关键读取失败时保留普通对话可用性。"""
-    if not use_personal_context and not use_rag:
-        return None, []
+) -> AgentRuntimePreparation:
+    """准备只读 Agent Runtime；整体初始化失败时仍保留普通对话能力。"""
     try:
-        context = build_personal_context(
-            db,
-            user_uuid,
-            include_travel_context=use_personal_context,
-            include_personal_knowledge=use_rag,
+        return AgentRuntime().prepare(
+            db, user_uuid,
+            use_personal_context=use_personal_context,
+            use_rag=use_rag,
         )
     except Exception as exc:
-        # 分支条件：Context 的任一来源暂时不可用时，不阻断现有 AI 对话链路。
-        logger.warning("[chat] Personal Context 读取失败 user=%s error=%s", user_uuid, exc)
-        return None, []
-    return format_context_for_agent(context), context.labels
+        # 分支条件：Runtime 初始化异常时，不阻断现有 AI 对话链路。
+        logger.warning("[chat] Agent Runtime 初始化失败 user=%s error=%s", user_uuid, exc)
+        return AgentRuntimePreparation(trace_id="", personal_context=None, context_labels=[], events=[])
 
 
 def _parse_sse_event(chunk: str) -> dict | None:

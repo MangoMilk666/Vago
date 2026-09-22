@@ -46,5 +46,7 @@ class AgentMessage(Base):
     # JSON 文本仅保存展示所需引用、上下文标签和结构化计划，不保存模型推理过程。
     sources: Mapped[str | None] = mapped_column(Text)
     context_labels: Mapped[str | None] = mapped_column(Text)
+    # 仅保存可回放的公开执行事件，不保存模型推理、原始坐标或 Prompt。
+    agent_events: Mapped[str | None] = mapped_column(Text)
     structured_plan: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)

@@ -45,6 +45,7 @@ class ConversationMessageResponse(BaseModel):
     content: str
     sources: list[SourceCitation] = Field(default_factory=list)
     context_labels: list[str] = Field(default_factory=list, alias="contextLabels")
+    agent_events: list[dict[str, str]] = Field(default_factory=list, alias="agentEvents")
     structured_plan: dict | None = Field(default=None, alias="structuredPlan")
     created_at: datetime = Field(alias="createdAt")
 

@@ -389,7 +389,7 @@ CREATE TABLE agent_conversations (
 
 -- ------------------------------------------------------------
 -- Agent 消息（agent_messages）
--- 保存用户与 Agent 的可回放文本、公开引用、上下文标签和结构化计划展示数据。
+-- 保存用户与 Agent 的可回放文本、公开引用、上下文标签、执行事件和结构化计划展示数据。
 -- ------------------------------------------------------------
 CREATE TABLE agent_messages (
     id                INT             NOT NULL AUTO_INCREMENT  COMMENT '自增排序主键',
@@ -399,6 +399,7 @@ CREATE TABLE agent_messages (
     content           TEXT            NOT NULL                 COMMENT '消息正文',
     sources           TEXT            DEFAULT NULL             COMMENT '个人知识引用 JSON',
     context_labels    TEXT            DEFAULT NULL             COMMENT '本轮已读取上下文类别 JSON',
+    agent_events      TEXT            DEFAULT NULL             COMMENT '可展示 Agent 执行事件 JSON，不含模型推理',
     structured_plan   TEXT            DEFAULT NULL             COMMENT '可保存行程的结构化计划 JSON',
     created_at        DATETIME        NOT NULL                 COMMENT '创建时间（UTC）',
 

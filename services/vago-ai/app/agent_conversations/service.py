@@ -115,6 +115,7 @@ def record_assistant_message(
     content: str,
     sources: list[dict] | None = None,
     context_labels: list[str] | None = None,
+    agent_events: list[dict[str, str]] | None = None,
     structured_plan: dict | None = None,
 ) -> None:
     """仅在流式生成得到有效回答后保存 Agent 消息与可回放展示数据。"""
@@ -130,6 +131,7 @@ def record_assistant_message(
             content=content,
             sources=_dump_json(sources),
             context_labels=_dump_json(context_labels),
+            agent_events=_dump_json(agent_events),
             structured_plan=_dump_json(structured_plan),
         )
     )
@@ -224,6 +226,7 @@ def _to_message_response(item: AgentMessage) -> ConversationMessageResponse:
         content=item.content,
         sources=_load_json(item.sources, []),
         contextLabels=_load_json(item.context_labels, []),
+        agentEvents=_load_json(item.agent_events, []),
         structuredPlan=_load_json(item.structured_plan, None),
         createdAt=item.created_at,
     )

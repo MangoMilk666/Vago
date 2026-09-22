@@ -30,11 +30,20 @@ def test_agent_conversation_persists_messages_and_pages_history():
     conversation = service.create_conversation(db, "user-a", ConversationCreateRequest())
 
     service.record_user_message(db, "user-a", conversation.uuid, "帮我规划京都三日行", True, True)
-    service.record_assistant_message(db, "user-a", conversation.uuid, "可以先确认出行日期。")
+    service.record_assistant_message(
+        db,
+        "user-a",
+        conversation.uuid,
+        "可以先确认出行日期。",
+        agent_events=[
+            {"type": "tool.completed", "tool": "get_current_trip", "label": "已读取当前行程"},
+        ],
+    )
     service.record_user_message(db, "user-a", conversation.uuid, "预算中等", False, True)
 
     page = service.get_messages(db, "user-a", conversation.uuid, limit=2)
     assert [message.content for message in page.messages] == ["可以先确认出行日期。", "预算中等"]
+    assert page.messages[0].agent_events[0]["tool"] == "get_current_trip"
     assert page.next_before_uuid is not None
 
     previous_page = service.get_messages(

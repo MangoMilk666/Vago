@@ -775,6 +775,18 @@ function ChatMessage({ msg }) {
             </div>
           ) : null}
 
+          {/* 仅展示 Agent 实际执行的领域读取，不展示模型的内部推理过程。 */}
+          {msg.activity?.length > 0 && (
+            <div className="border-l-2 border-violet-200 pl-3 py-0.5 space-y-1">
+              {msg.activity.map((event, index) => (
+                <p key={`${event.type}-${event.tool || index}`} className={`text-[11px] leading-5 ${event.type === 'tool.failed' || event.type === 'agent.failed' ? 'text-amber-600' : 'text-slate-500'}`}>
+                  <span className="mr-1 text-violet-500">{event.type === 'tool.failed' || event.type === 'agent.failed' ? '!' : event.type === 'tool.started' || event.type === 'agent.status' ? '·' : '✓'}</span>
+                  {event.label}
+                </p>
+              ))}
+            </div>
+          )}
+
           {/* Phase 9 只显示本轮读取的 Context 类别，不泄露内部 Prompt 或推理过程。 */}
           {msg.contextLabels?.length > 0 && (
             <div className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
@@ -899,7 +911,10 @@ function ChatPanel() {
       const response = await aiApi.conversationMessages(conversationUuid, beforeUuid)
       const page = response.data
       // 分支条件：上拉读取旧页时插到现有消息之前，首次读取则直接替换显示内容。
-      setMessages((previous) => beforeUuid ? [...(page.messages ?? []), ...previous] : (page.messages ?? []))
+      setMessages((previous) => beforeUuid ? [...(page.messages ?? []), ...previous] : (page.messages ?? []).map((message) => ({
+        ...message,
+        activity: message.agentEvents ?? [],
+      })))
       setNextBeforeUuid(page.nextBeforeUuid ?? null)
     } finally {
       setLoadingMessages(false)
@@ -998,7 +1013,7 @@ function ChatPanel() {
     setMessages((prev) => [
       ...prev,
       { uuid: `local-${Date.now()}`, role: 'user', content: text },
-      { uuid: localAssistantUuid, role: 'assistant', content: '', sources: [], contextLabels: [], streaming: true },
+      { uuid: localAssistantUuid, role: 'assistant', content: '', sources: [], contextLabels: [], activity: [], streaming: true },
     ])
     setInput('')
     setStreaming(true)
@@ -1051,7 +1066,16 @@ function ChatPanel() {
           const event = parseEventData(raw)
           if (!event) continue
 
-          if (event.type === 'text') {
+          if (event.type.startsWith('agent.') || event.type.startsWith('tool.')) {
+            // 执行轨迹来自服务端公开事件，避免将模型推理过程暴露到 UI。
+            setMessages((prev) => {
+              const copy = [...prev]
+              const last = { ...copy[copy.length - 1] }
+              last.activity = [...(last.activity ?? []), event]
+              copy[copy.length - 1] = last
+              return copy
+            })
+          } else if (event.type === 'text') {
             // 逐 token 追加内容；首个文本到达时清除检索提示（兜底：
             // 当 RAG 无命中结果时 sources 事件不发送，searchingQuery 可能残留）
             setSearchingQuery(null)

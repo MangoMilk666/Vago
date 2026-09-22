@@ -2,8 +2,6 @@
 
 > 状态：目标设计。当前已具备 SSE 对话、可选个人知识检索与结构化计划保存；尚未实现完整 Agent Runtime、Travel Memory、跨领域协调或外部工具接入。
 
-
-
 ## 定位
 
 Vago 是 **AI-Native Personal Travel Intelligence / Personal Travel Agent System**。Agent 的价值不是生成一次行程文本，而是在用户保有意图、重要决定与批准权的前提下，降低资料、行程、实时旅行状态和外部信息之间的协调成本。
