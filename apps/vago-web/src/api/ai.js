@@ -123,6 +123,13 @@ export const aiApi = {
     },
   ),
 
+  /** 更新用户为会话指定的标题。 */
+  updateConversation: (conversationUuid, payload) => http.patch(
+    `/agent/conversations/${conversationUuid}`,
+    payload,
+    { baseURL: '/api/v1' },
+  ),
+
   /** 删除一整段 Agent 会话及其已保存的消息。 */
   deleteConversation: (conversationUuid) => http.delete(
     `/agent/conversations/${conversationUuid}`,

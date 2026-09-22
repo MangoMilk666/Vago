@@ -858,6 +858,8 @@ function ExtractingIndicator() {
 function ChatPanel() {
   const [conversations, setConversations] = useState([])
   const [activeConversation, setActiveConversation] = useState(null)
+  const [editingConversationUuid, setEditingConversationUuid] = useState(null)
+  const [editingTitle, setEditingTitle] = useState('')
   const [nextBeforeUuid, setNextBeforeUuid] = useState(null)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [messages,       setMessages]       = useState([])
@@ -924,6 +926,7 @@ function ChatPanel() {
     if (streaming) return
     // 新会话在首次发送时创建，避免仅浏览页面就留下无内容记录。
     setActiveConversation(null)
+    setEditingConversationUuid(null)
     setMessages([])
     setNextBeforeUuid(null)
     setInput('')
@@ -1190,25 +1193,78 @@ function ChatPanel() {
     }
   }
 
+  const beginRenameConversation = (conversation, event) => {
+    event.stopPropagation()
+    if (streaming) return
+    setEditingConversationUuid(conversation.uuid)
+    setEditingTitle(conversation.title)
+  }
+
+  const saveConversationTitle = async (conversation) => {
+    const title = editingTitle.trim()
+    if (!title || title === conversation.title) {
+      setEditingConversationUuid(null)
+      return
+    }
+    try {
+      const response = await aiApi.updateConversation(conversation.uuid, { title })
+      const updated = response.data
+      setConversations((previous) => previous.map((item) => item.uuid === updated.uuid ? updated : item))
+      setActiveConversation((current) => current?.uuid === updated.uuid ? updated : current)
+      setEditingConversationUuid(null)
+    } catch (error) {
+      setContextPreviewError(error.message || '更新对话标题失败')
+    }
+  }
+
   return (
     <section className="flex h-full min-w-0 bg-white">
       <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-slate-50/70 p-3">
         <button type="button" onClick={startNewConversation} disabled={streaming}
-          className="flex h-10 items-center justify-center gap-2 rounded-lg bg-violet-600 px-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-45">
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v14m-7-7h14" /></svg>
+          className="flex h-10 items-center justify-center gap-2.5 rounded-lg bg-violet-600 px-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-45">
+          <svg className="h-5 w-5 shrink-0 overflow-visible" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.25} d="M12 5v14M5 12h14" />
+          </svg>
           新对话
         </button>
         <p className="mt-5 px-2 text-[11px] font-semibold uppercase text-slate-400">近期对话</p>
         <div className="mt-2 flex-1 space-y-1 overflow-y-auto">
           {conversations.map((conversation) => (
             <div key={conversation.uuid} className={`group flex items-center gap-1 rounded-lg px-2 py-2 transition-colors ${activeConversation?.uuid === conversation.uuid ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200' : 'text-slate-600 hover:bg-white/80'}`}>
-              <button type="button" onClick={() => selectConversation(conversation)} className="min-w-0 flex-1 truncate text-left text-xs leading-5" title={conversation.title}>
-                {conversation.title}
+              {editingConversationUuid === conversation.uuid ? (
+                <input
+                  autoFocus
+                  value={editingTitle}
+                  maxLength={120}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setEditingTitle(event.target.value)}
+                  onBlur={() => saveConversationTitle(conversation)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur()
+                    if (event.key === 'Escape') setEditingConversationUuid(null)
+                  }}
+                  className="min-w-0 flex-1 border-b border-violet-300 bg-transparent py-0.5 text-xs leading-5 text-slate-800 outline-none focus:border-violet-600"
+                  aria-label="对话标题"
+                />
+              ) : (
+                <button type="button" onClick={() => selectConversation(conversation)} className="min-w-0 flex-1 truncate text-left text-xs leading-5" title={conversation.title}>
+                  {conversation.title}
+                </button>
+              )}
+              <button type="button" onClick={(event) => beginRenameConversation(conversation, event)} disabled={streaming}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 transition hover:bg-violet-50 hover:text-violet-700 group-hover:opacity-100 focus:opacity-100 disabled:hidden"
+                aria-label={`重命名对话：${conversation.title}`} title="重命名对话">
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="m4.75 19.25 3.45-.7L18.35 8.4a2.4 2.4 0 0 0-3.4-3.4L4.8 15.15l-.05 4.1Z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="m13.65 6.3 4.05 4.05" />
+                </svg>
               </button>
               <button type="button" onClick={(event) => deleteConversation(conversation, event)} disabled={streaming}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 transition hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 focus:opacity-100 disabled:hidden"
                 aria-label={`删除对话：${conversation.title}`} title="删除对话">
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 7h12m-9 0V4h6v3m-7 4v6m4-6v6m4-10-.8 12.1a2 2 0 01-2 1.9H8.8a2 2 0 01-2-1.9L6 7" /></svg>
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="M4.75 7.25h14.5M9 7.25V4.9h6v2.35m-8.2 0 .65 12.1c.05.95.84 1.7 1.8 1.7h5.5c.96 0 1.75-.75 1.8-1.7l.65-12.1M10 11v6.2m4-6.2v6.2" />
+                </svg>
               </button>
             </div>
           ))}

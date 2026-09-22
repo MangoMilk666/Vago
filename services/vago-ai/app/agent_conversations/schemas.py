@@ -18,6 +18,12 @@ class ConversationCreateRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class ConversationUpdateRequest(BaseModel):
+    """用户对会话元数据的显式修改；当前仅开放标题。"""
+
+    title: str = Field(min_length=1, max_length=120)
+
+
 class ConversationResponse(BaseModel):
     """侧栏展示的轻量会话摘要。"""
 

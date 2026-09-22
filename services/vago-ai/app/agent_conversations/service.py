@@ -12,6 +12,7 @@ from app.agent_conversations.schemas import (
     ConversationMessageResponse,
     ConversationMessagesPage,
     ConversationResponse,
+    ConversationUpdateRequest,
 )
 from app.core.exceptions import AppException
 from app.travel.models import utc_now_naive
@@ -142,6 +143,25 @@ def delete_conversation(db: Session, user_uuid: str, conversation_uuid: str) -> 
     db.execute(delete(AgentMessage).where(AgentMessage.conversation_uuid == conversation.uuid))
     db.delete(conversation)
     db.commit()
+
+
+def update_conversation(
+    db: Session,
+    user_uuid: str,
+    conversation_uuid: str,
+    payload: ConversationUpdateRequest,
+) -> ConversationResponse:
+    """更新用户主动维护的会话标题，不影响已保存的消息内容。"""
+    conversation = get_owned_conversation(db, user_uuid, conversation_uuid)
+    title = " ".join(payload.title.split())
+    # 分支条件：全空白标题没有识别价值，拒绝写入而不是退回默认标题掩盖用户输入错误。
+    if not title:
+        raise AppException("对话标题不能为空", status_code=400, code="AGENT_CONVERSATION_TITLE_EMPTY")
+    conversation.title = title[:120]
+    conversation.updated_at = utc_now_naive()
+    db.commit()
+    db.refresh(conversation)
+    return _to_conversation_response(conversation)
 
 
 def _resolve_before_id(db: Session, conversation_uuid: str, before_uuid: str | None) -> int | None:

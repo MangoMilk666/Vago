@@ -8,6 +8,7 @@ from app.agent_conversations.schemas import (
     ConversationCreateRequest,
     ConversationMessagesPage,
     ConversationResponse,
+    ConversationUpdateRequest,
 )
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user_uuid
@@ -45,6 +46,17 @@ def list_agent_messages(
 ) -> ApiResponse[ConversationMessagesPage]:
     """读取会话消息；携带 beforeUuid 可继续加载更早历史。"""
     return success(service.get_messages(db, user_uuid, conversation_uuid, before_uuid, limit))
+
+
+@router.patch("/conversations/{conversation_uuid}", response_model=ApiResponse[ConversationResponse])
+def update_agent_conversation(
+    conversation_uuid: str,
+    payload: ConversationUpdateRequest,
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[ConversationResponse]:
+    """更新当前用户的会话标题。"""
+    return success(service.update_conversation(db, user_uuid, conversation_uuid, payload), "对话标题已更新")
 
 
 @router.delete("/conversations/{conversation_uuid}", response_model=ApiResponse[None])

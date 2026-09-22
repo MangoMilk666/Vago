@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.agent_conversations import service
-from app.agent_conversations.schemas import ConversationCreateRequest
+from app.agent_conversations.schemas import ConversationCreateRequest, ConversationUpdateRequest
 from app.core.database import Base
 from app.core.exceptions import AppException
 
@@ -64,3 +64,29 @@ def test_agent_conversation_is_isolated_per_user_and_deletes_messages():
 
     service.delete_conversation(db, "user-a", conversation.uuid)
     assert service.list_conversations(db, "user-a") == []
+
+
+def test_agent_conversation_title_can_be_renamed_by_its_owner():
+    """测试：用户重命名应覆盖自动标题，并拒绝全空白输入。"""
+    db = _make_session()
+    conversation = service.create_conversation(db, "user-a", ConversationCreateRequest())
+
+    updated = service.update_conversation(
+        db,
+        "user-a",
+        conversation.uuid,
+        ConversationUpdateRequest(title="  京都秋日安排  "),
+    )
+    assert updated.title == "京都秋日安排"
+
+    try:
+        service.update_conversation(
+            db,
+            "user-a",
+            conversation.uuid,
+            ConversationUpdateRequest(title="   "),
+        )
+    except AppException as exc:
+        assert exc.code == "AGENT_CONVERSATION_TITLE_EMPTY"
+    else:
+        raise AssertionError("空白会话标题应被拒绝")
