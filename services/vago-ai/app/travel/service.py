@@ -157,6 +157,62 @@ def list_history_trips(db: Session, user_uuid: str) -> list[TripResponse]:
     return [_trip_to_response(trip) for trip in trips]
 
 
+def get_agent_travel_context(db: Session, user_uuid: str) -> dict:
+    """输出 Agent 可读取的当前正在进行的与最近的若干条历史旅行摘要，不触发日程懒初始化写入。"""
+    current_trip = db.scalar(
+        select(Trip).where(
+            Trip.user_uuid == user_uuid,
+            Trip.status == TRIP_STATUS_IN_PROGRESS,
+            Trip.deleted_at.is_(None),
+        )
+    )
+    # 取最近三条已结束的trip记录
+    history = db.scalars(
+        select(Trip)
+        .where(
+            Trip.user_uuid == user_uuid,
+            Trip.status == TRIP_STATUS_ENDED,
+            Trip.deleted_at.is_(None),
+        )
+        .order_by(Trip.end_date.desc(), Trip.updated_at.desc())
+        .limit(3)
+    ).all()
+    return {
+        "currentTrip": _to_agent_trip_summary(db, current_trip) if current_trip else None,
+        "travelHistory": [_to_agent_trip_summary(db, trip) for trip in history],
+    }
+
+
+def _to_agent_trip_summary(db: Session, trip: Trip) -> dict:
+    """以已保存的日程组装行程摘要，读路径不会创建空 itinerary_days。"""
+    days = db.scalars(
+        select(ItineraryDay)
+        .where(
+            ItineraryDay.ref_uuid == trip.uuid,
+            ItineraryDay.ref_type == ItineraryDay.REF_TYPE_TRIP,
+        )
+        .order_by(ItineraryDay.day_index.asc())
+    ).all()
+    day_uuids = [day.uuid for day in days]
+    spots = []
+    # 分支条件：没有已保存日程时跳过景点查询，Agent 仍可使用 Trip 的基础事实。
+    if day_uuids:
+        spots = db.scalars(
+            select(ItinerarySpot)
+            .where(ItinerarySpot.day_uuid.in_(day_uuids))
+            .order_by(ItinerarySpot.sort_order.asc())
+        ).all()
+    return {
+        "uuid": trip.uuid,
+        "title": trip.title,
+        "destination": trip.destination,
+        "startDate": trip.start_date.isoformat(),
+        "endDate": trip.end_date.isoformat(),
+        "status": trip.status,
+        "itinerarySpotNames": [spot.name for spot in spots[:20]],
+    }
+
+
 def get_trip_detail(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
     """读取行程详情。"""
     return _trip_to_response(_get_trip_or_raise(db, trip_uuid, user_uuid))

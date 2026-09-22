@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from math import asin, cos, radians, sin, sqrt
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -204,6 +204,42 @@ def list_trip_observations(db: Session, user_uuid: str, trip_uuid: str) -> list[
         .order_by(TravelObservation.occurred_at.asc(), TravelObservation.uuid.asc())
     ).all()
     return [_to_observation_response(observation) for observation in observations]
+
+
+def get_agent_observation_context(db: Session, user_uuid: str, trip_uuid: str) -> dict:
+    """读取当前行程的 Live Context 摘要，不向 Agent 暴露原始坐标。"""
+    _get_owned_trip(db, user_uuid, trip_uuid)
+    automatic_sample_count = db.scalar(
+        select(func.count())
+        .select_from(TravelObservation)
+        .where(
+            TravelObservation.user_uuid == user_uuid,
+            TravelObservation.trip_uuid == trip_uuid,
+            TravelObservation.observation_type == AUTO_GPS,
+        )
+    ) or 0
+    # 手动打卡点取最近新增的5个
+    checkins = db.scalars(
+        select(TravelObservation)
+        .where(
+            TravelObservation.user_uuid == user_uuid,
+            TravelObservation.trip_uuid == trip_uuid,
+            TravelObservation.observation_type == MANUAL_CHECKIN,
+        )
+        .order_by(TravelObservation.occurred_at.desc())
+        .limit(5)
+    ).all()
+    return {
+        "automaticSampleCount": automatic_sample_count,
+        "recentCheckins": [
+            {
+                "locationName": item.location_name or "未命名地点",
+                "occurredAt": item.occurred_at.isoformat(),
+                "note": (item.note or "")[:300] or None,
+            }
+            for item in checkins
+        ],
+    }
 
 
 def list_trip_locations(db: Session, user_uuid: str, trip_uuid: str) -> list[LocationSampleResponse]:

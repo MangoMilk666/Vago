@@ -18,6 +18,11 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // Phase 9：Web Agent 预览并读取 Personal Travel Context。
+      '/api/v1/agent': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       // Phase 4：个人旅行知识源 CRUD 已迁移到 FastAPI。
       '/api/v1/knowledge': {
         target: 'http://localhost:8000',

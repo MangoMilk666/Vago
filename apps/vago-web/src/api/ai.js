@@ -36,7 +36,9 @@ export const aiApi = {
    * 非流式对话：等待完整回答后返回。
    * @param {Array<{role: string, content: string}>} messages 完整消息历史
    */
-  chat: (messages, useRag = true) => http.post('/chat', { messages, useRag }),
+  chat: (messages, useRag = true, usePersonalContext = false) => (
+    http.post('/chat', { messages, useRag, usePersonalContext })
+  ),
 
   /**
    * 保存 AI 生成的结构化行程为草稿计划。
@@ -51,10 +53,27 @@ export const aiApi = {
   saveTrip: (planData) => http.post('/plans/save-trip', planData),
 
   /**
+   * 读取 Web Agent 本轮可用的 Personal Travel Context 摘要。
+   * 返回内容不含 GPS 经纬度或模型内部 Prompt，仅用于用户核对授权范围。
+   */
+  contextPreview: async () => {
+    const token = getAuth()?.accessToken
+    const response = await fetch('/api/v1/agent/context-preview', {
+      headers: token ? { authorization: token } : {},
+    })
+    const body = await response.json()
+    if (!response.ok || body.code !== 200) {
+      throw new Error(body.message || '读取旅行上下文失败')
+    }
+    return body.data
+  },
+
+  /**
    * 流式对话（SSE）：返回 fetch Response，调用方自行消费 ReadableStream。
    *
    * SSE 事件格式（每行 `data: <json>\n\n`）：
    *   {"type": "text",            "content": "..."}  — 文本 token（逐字追加）
+   *   {"type": "context",         "labels":  [...]}   — 本轮读取的个人上下文类别
    *   {"type": "searching",       "query":   "..."}  — Agent 正在检索
    *   {"type": "sources",         "sources": [...]}  — 引用来源列表
    *   {"type": "extracting_plan"}                     — 文本回答完毕，正在提取结构化行程
@@ -66,7 +85,7 @@ export const aiApi = {
    * @param {AbortSignal} [signal] 可选：用于超时/取消的 AbortSignal
    * @returns {Promise<Response>} fetch Response，body 为 SSE 流
    */
-  chatStream: (messages, signal, useRag = true) => {
+  chatStream: (messages, signal, useRag = true, usePersonalContext = false) => {
     const token = getAuth()?.accessToken
     return fetch('/api/v1/ai/chat/stream', {
       method: 'POST',
@@ -74,7 +93,7 @@ export const aiApi = {
         'Content-Type': 'application/json',
         ...(token ? { authorization: token } : {}),
       },
-      body: JSON.stringify({ messages, useRag }),
+      body: JSON.stringify({ messages, useRag, usePersonalContext }),
       ...(signal ? { signal } : {}),
     })
   },

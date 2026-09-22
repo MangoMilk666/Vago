@@ -22,9 +22,12 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
+from app.core.database import get_db
 from app.dependencies.auth import get_current_user_uuid
 from app.models.schemas import ChatRequest, ChatResponse, SourceCitation
+from app.personal_context.service import build_personal_context, format_context_for_agent
 from app.services.rag_chain import run_agent_chat, stream_agent_chat
 from app.config import settings
 
@@ -46,6 +49,7 @@ logger = logging.getLogger(__name__)
 )
 async def chat(
     request: ChatRequest,
+    db: Session = Depends(get_db),
     user_uuid: str = Depends(get_current_user_uuid),
 ) -> ChatResponse:
     """
@@ -73,12 +77,18 @@ async def chat(
         user_uuid, len(request.messages), request.use_rag,
     )
 
+    personal_context, context_labels = _load_personal_context(db, user_uuid, request.use_personal_context)
+    # 工具调用的请求参数集合？
     try:
-        result = await run_agent_chat(
-            user_uuid=user_uuid,
-            messages=request.messages,
-            use_rag=request.use_rag,
-        )
+        call_kwargs = {
+            "user_uuid": user_uuid,
+            "messages": request.messages,
+            "use_rag": request.use_rag,
+        }
+        # 分支条件：仅 Web 显式开启 Context 时才扩展既有对话调用参数。
+        if personal_context is not None:
+            call_kwargs.update(personal_context=personal_context, context_labels=context_labels)
+        result = await run_agent_chat(**call_kwargs)
     except Exception as exc:
         logger.error("[chat] 非流式生成失败 user=%s error=%s", user_uuid, exc, exc_info=True)
         raise HTTPException(status_code=503, detail=f"AI 服务暂时不可用：{exc}") from exc
@@ -87,6 +97,8 @@ async def chat(
         answer=result["answer"],
         sources=result["sources"],
         model=result["model"],
+        structured_plan=result.get("structured_plan"),
+        contextLabels=result.get("context_labels", context_labels),
     )
 
 
@@ -103,6 +115,7 @@ async def chat(
 )
 async def chat_stream(
     request: ChatRequest,
+    db: Session = Depends(get_db),
     user_uuid: str = Depends(get_current_user_uuid),
 ) -> StreamingResponse:
     """
@@ -131,6 +144,8 @@ async def chat_stream(
         user_uuid, len(request.messages), request.use_rag,
     )
 
+    personal_context, context_labels = _load_personal_context(db, user_uuid, request.use_personal_context)
+
     async def event_generator():
         """
         异步事件生成器，包装 stream_agent_chat 并统一异常处理。
@@ -139,11 +154,15 @@ async def chat_stream(
         此处捕获并推送 error 事件，确保前端不会收到空流。
         """
         try:
-            async for chunk in stream_agent_chat(
-                user_uuid=user_uuid,
-                messages=request.messages,
-                use_rag=request.use_rag,
-            ):
+            call_kwargs = {
+                "user_uuid": user_uuid,
+                "messages": request.messages,
+                "use_rag": request.use_rag,
+            }
+            # 分支条件：只有前端明确授权时才把结构化事实注入 Agent 对话。
+            if personal_context is not None:
+                call_kwargs.update(personal_context=personal_context, context_labels=context_labels)
+            async for chunk in stream_agent_chat(**call_kwargs):
                 yield chunk
         except Exception as exc:
             logger.error("[chat] 事件生成器异常 user=%s error=%s", user_uuid, exc)
@@ -162,6 +181,22 @@ async def chat_stream(
 
 
 # ─── 私有工具 ─────────────────────────────────────────────────────────────────
+
+def _load_personal_context(
+    db: Session,
+    user_uuid: str,
+    enabled: bool,
+) -> tuple[str | None, list[str]]:
+    """按用户授权读取 Context；非关键读取失败时保留普通对话可用性。"""
+    if not enabled:
+        return None, []
+    try:
+        context = build_personal_context(db, user_uuid)
+    except Exception as exc:
+        # 分支条件：Context 的任一来源暂时不可用时，不阻断现有 AI 对话链路。
+        logger.warning("[chat] Personal Context 读取失败 user=%s error=%s", user_uuid, exc)
+        return None, []
+    return format_context_for_agent(context), context.labels
 
 def _validate_messages(request: ChatRequest) -> None:
     """

@@ -187,7 +187,7 @@ MCP 是接入外部工具的一种标准化协议，不是 Agent Runtime 本身�
 
 | Phase | 目标 | 当前状态 |
 | --- | --- | --- |
-| 9 | Travel Memory & Personal Context Foundation：grounded Memory、历史上下文、明确偏好与可审视 signal | 未来 |
+| 9 | Travel Memory & Personal Context Foundation：grounded Memory、历史上下文、明确偏好与可审视 signal | 进行中：已完成 Memory / 显式偏好 / Web Context 注入；signals 待后续真实数据验证 |
 | 10 | Agent Runtime & Vago Domain Tools：Agent loop、上下文获取、工具边界、约束检查、审批原则、最小 tracing/testability | 未来 |
 | 11 | Context-aware Coordination & Replanning：以 Adaptive Day Planner 为代表的旅行中协调与确认后更新 | 未来 |
 | 12 | External Tool / MCP Integration：在有真实 workflow 后接入外部能力 | 未来 |
@@ -197,5 +197,5 @@ MCP 是接入外部工具的一种标准化协议，不是 Agent Runtime 本身�
 - 不引入不必要微服务、复杂事件总线、多 Agent、GIS 或 MCP 基础设施。
 - 不把 RAG 描述为 Memory，也不把 Qdrant 当作所有 Personal Travel Context 的存储。
 - 当前仅支持纯文本和 `.md/.txt` 知识源；复杂文档解析不在当前范围。
-- Travel Memory、Photos、Notes、Preference signals、Adaptive Day Planner、MCP 和外部工具均属于未来能力。
-- 当前 Alembic head 为 `20260913_01`；全新数据库使用 [db_schema.sql](database/db_schema.sql)，已有数据库使用 Alembic 增量升级。
+- Travel Memory 已具备事实快照与用户叙事的最小基础；Photos、Notes、Preference signals、Adaptive Day Planner、MCP 和外部工具仍属于未来能力。
+- 当前 Alembic head 为 `20260922_01`；全新数据库使用 [db_schema.sql](database/db_schema.sql)，已有数据库使用 Alembic 增量升级。

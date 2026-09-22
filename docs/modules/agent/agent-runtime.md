@@ -270,7 +270,7 @@ DONE
 
 | 阶段     | 目标与最小交付                                               | 不做什么                                                 |
 | -------- | ------------------------------------------------------------ | -------------------------------------------------------- |
-| Phase 9  | Grounded Travel Memory、历史旅行上下文、明确偏好与可审视 signal | 不把模型推断写成确认事实，不做复杂记忆系统               |
+| Phase 9  | 进行中：已实现 Grounded Travel Memory、历史上下文、明确偏好与 Web Context 注入；signals 待真实数据验证 | 不把模型推断写成确认事实，不做复杂记忆系统               |
 | Phase 10 | 最小 Think-Execute-Observe Runtime、Tool Registry、内部 Domain Tools、Agent Event Stream、错误与最大步数控制、Tracing | 不直连数据库，不为了框架引入 Multi-Agent / Graph Runtime |
 | Phase 11 | Adaptive Day Planner：真实旅行 Context、确定性 Constraint Check、Replanning、Approval、Write Action 与 Verification | 不未经确认修改重要旅行状态                               |
 | Phase 12 | 为已验证 workflow 接入 POI、路线、天气、Calendar、Flights 等 External Tools / MCP | 不为展示 MCP 创造工作流                                  |

@@ -5,6 +5,9 @@ from fastapi import APIRouter
 from app.auth import router as auth_router
 from app.footprints import router as footprints_router
 from app.knowledge import router as knowledge_router
+from app.memory import router as memory_router
+from app.personal_context import router as personal_context_router
+from app.preferences import router as preferences_router
 from app.routers import ai, chat
 from app.travel import router as travel_router
 from app.users import router as users_router
@@ -19,6 +22,7 @@ api_v1_router.include_router(auth_router.router, prefix="/auth", tags=["认证"]
 api_v1_router.include_router(auth_router.router, prefix="/user", tags=["认证兼容"])
 api_v1_router.include_router(users_router.router, prefix="/users", tags=["用户"])
 api_v1_router.include_router(users_router.router, prefix="/user", tags=["用户兼容"])
+api_v1_router.include_router(preferences_router.router, prefix="/users", tags=["旅行偏好"])
 
 # Phase 3 迁移 Trip / Plan / Itinerary，暂不迁移 Guides / Collections。
 api_v1_router.include_router(travel_router.router, prefix="/travel", tags=["旅行核心"])
@@ -28,3 +32,7 @@ api_v1_router.include_router(knowledge_router.router, prefix="/knowledge", tags=
 
 # Phase 8 的足迹 API 由移动端采集并同步，服务端保存长期事实数据。
 api_v1_router.include_router(footprints_router.router, prefix="/footprints", tags=["旅行足迹"])
+
+# Phase 9 的 Memory 与 Context 均只读或用户显式写入，不让 Agent 绕过领域服务。
+api_v1_router.include_router(memory_router.router, prefix="/memories", tags=["旅行回忆"])
+api_v1_router.include_router(personal_context_router.router, prefix="/agent", tags=["Agent 调试"])

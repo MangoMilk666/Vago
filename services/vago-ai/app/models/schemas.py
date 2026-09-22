@@ -251,6 +251,12 @@ class ChatRequest(BaseModel):
         alias="useRag",
         description="是否允许使用个人知识语义检索；False 时直接调用 LLM 通用知识。",
     )
+    # 是否允许本轮读取结构化 Personal Travel Context；默认关闭以兼容既有客户端。
+    use_personal_context: bool = Field(
+        False,
+        alias="usePersonalContext",
+        description="是否允许读取当前行程、历史、观察、明确偏好与 Grounded Memory 摘要。",
+    )
     # RAG 检索返回的最大文本块数。
     top_k: int = Field(6, ge=1, le=20, description="RAG 检索返回的最大文本块数")
     # RAG 检索相似度阈值。
@@ -369,3 +375,7 @@ class ChatResponse(BaseModel):
         None,
         description="结构化行程计划（仅当回答包含行程规划时）",
     )
+    # 本轮实际读取的 Personal Context 来源，供客户端说明而非暴露内部推理。
+    context_labels: list[str] = Field(default_factory=list, alias="contextLabels")
+
+    model_config = {"populate_by_name": True}

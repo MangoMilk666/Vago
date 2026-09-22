@@ -8,13 +8,15 @@
 --   1. users              用户主表
 --   2. user_oauth_bindings 第三方登录绑定
 --   3. user_settings      用户偏好设置
---   4. trips              正式行程
---   5. plans              旅行计划（草稿）
---   6. guides             旅游攻略
---   7. knowledge_sources  个人知识来源
---   8. itinerary_days     每日行程主表
---   9. itinerary_spots    每日景点/活动
---  10. travel_observations 统一旅行空间观察（自动 GPS / 手动打卡）
+--   4. travel_preferences 用户明确旅行偏好
+--   5. trips              正式行程
+--   6. plans              旅行计划（草稿）
+--   7. guides             旅游攻略
+--   8. knowledge_sources  个人知识来源
+--   9. itinerary_days     每日行程主表
+--  10. itinerary_spots    每日景点/活动
+--  11. travel_observations 统一旅行空间观察（自动 GPS / 手动打卡）
+--  12. travel_memories    Grounded Travel Memory
 -- ============================================================
 
 SET NAMES utf8mb4;
@@ -24,6 +26,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- 清空旧表（按依赖逆序 DROP，重建时幂等）
 -- ------------------------------------------------------------
 DROP TABLE IF EXISTS travel_observations;
+DROP TABLE IF EXISTS travel_memories;
 DROP TABLE IF EXISTS itinerary_spots;
 DROP TABLE IF EXISTS itinerary_days;
 DROP TABLE IF EXISTS guides;
@@ -31,6 +34,7 @@ DROP TABLE IF EXISTS knowledge_sources;
 DROP TABLE IF EXISTS plans;
 DROP TABLE IF EXISTS trips;
 DROP TABLE IF EXISTS user_settings;
+DROP TABLE IF EXISTS travel_preferences;
 DROP TABLE IF EXISTS user_oauth_bindings;
 DROP TABLE IF EXISTS users;
 
@@ -101,6 +105,23 @@ CREATE TABLE user_settings (
 
     PRIMARY KEY (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户偏好设置（一对一）';
+
+
+-- ------------------------------------------------------------
+-- 用户明确旅行偏好（travel_preferences）
+-- 不存储模型推断的偏好信号；所有字段均由用户主动维护。
+-- ------------------------------------------------------------
+CREATE TABLE travel_preferences (
+    user_uuid       VARCHAR(36)     NOT NULL                     COMMENT '归属 users.uuid，一位用户一份明确偏好',
+    pace            VARCHAR(32)     DEFAULT NULL                 COMMENT '旅行节奏，如 leisurely / balanced / packed',
+    budget_level    VARCHAR(32)     DEFAULT NULL                 COMMENT '预算倾向，如 budget / mid / premium',
+    interests       TEXT            DEFAULT NULL                 COMMENT '兴趣标签 JSON 数组',
+    notes           TEXT            DEFAULT NULL                 COMMENT '用户补充的旅行偏好或约束',
+    created_at      DATETIME        NOT NULL                     COMMENT '创建时间（UTC）',
+    updated_at      DATETIME        NOT NULL                     COMMENT '更新时间（UTC）',
+
+    PRIMARY KEY (user_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户明确旅行偏好';
 
 
 -- ============================================================
@@ -312,6 +333,34 @@ CREATE TABLE travel_observations (
     INDEX      idx_travel_observations_user_uuid  (user_uuid),
     INDEX      idx_travel_observations_trip_time  (trip_uuid, occurred_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户旅行空间观察事实';
+
+
+-- ============================================================
+-- 模块五：Grounded Travel Memory
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 旅行回忆（travel_memories）
+-- fact_snapshot 是从 Trip / Itinerary / Observation 生成的可追溯事实；
+-- narrative 是用户可编辑叙事，不能覆盖原始旅行事实。
+-- ------------------------------------------------------------
+CREATE TABLE travel_memories (
+    id                  INT             NOT NULL AUTO_INCREMENT  COMMENT '自增主键',
+    uuid                VARCHAR(32)     NOT NULL                 COMMENT '对外业务 ID',
+    user_uuid           VARCHAR(36)     NOT NULL                 COMMENT '归属 users.uuid',
+    trip_uuid           VARCHAR(32)     NOT NULL                 COMMENT '对应已结束行程 UUID',
+    title               VARCHAR(100)    NOT NULL                 COMMENT '用户可编辑回忆标题',
+    fact_snapshot       TEXT            NOT NULL                 COMMENT '结构化旅行事实 JSON 快照',
+    narrative           TEXT            DEFAULT NULL             COMMENT '可编辑回忆叙事，不等同原始事实',
+    facts_refreshed_at  DATETIME        NOT NULL                 COMMENT '事实快照最近刷新时间（UTC）',
+    created_at          DATETIME        NOT NULL                 COMMENT '创建时间（UTC）',
+    updated_at          DATETIME        NOT NULL                 COMMENT '更新时间（UTC）',
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_travel_memories_uuid      (uuid),
+    UNIQUE KEY uk_travel_memories_user_trip (user_uuid, trip_uuid),
+    INDEX      idx_travel_memories_user_uuid (user_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='基于旅行事实的个人回忆';
 
 
 SET FOREIGN_KEY_CHECKS = 1;

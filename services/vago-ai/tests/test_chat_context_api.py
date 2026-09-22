@@ -35,3 +35,45 @@ def test_chat_forwards_use_rag_flag(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert captured["use_rag"] is False
+
+
+def test_chat_injects_authorized_personal_context(monkeypatch) -> None:
+    """测试：Web 显式授权后，对话链路收到结构化 Context 与可展示来源标签。"""
+    captured: dict[str, object] = {}
+
+    class FakeContext:
+        labels = ["当前行程与日程", "明确旅行偏好"]
+
+    async def fake_run_agent_chat(**kwargs):
+        captured.update(kwargs)
+        return {
+            "answer": "我会结合当前行程给出建议。",
+            "sources": [],
+            "model": "test-model",
+            "context_labels": kwargs["context_labels"],
+        }
+
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(api_v1_router, prefix="/api/v1")
+
+    async def override_current_user_uuid() -> str:
+        return "context-test-user"
+
+    app.dependency_overrides[get_current_user_uuid] = override_current_user_uuid
+    monkeypatch.setattr(chat, "build_personal_context", lambda _db, _user_uuid: FakeContext())
+    monkeypatch.setattr(chat, "format_context_for_agent", lambda _context: '{"currentTrip": {}}')
+    monkeypatch.setattr(chat, "run_agent_chat", fake_run_agent_chat)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/ai/chat",
+            json={
+                "messages": [{"role": "user", "content": "看看我今天的行程"}],
+                "usePersonalContext": True,
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured["personal_context"] == '{"currentTrip": {}}'
+    assert response.json()["contextLabels"] == ["当前行程与日程", "明确旅行偏好"]

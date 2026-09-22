@@ -249,6 +249,7 @@ Phase 4 已从 AI 保存链路开始整合：
 - `KnowledgeSource` 是技术无关的个人知识实体。MySQL 保存其 metadata、文本与状态，原始文件经 storage abstraction 保存；Qdrant/RAG 仅是可选 indexing / semantic retrieval capability。
 - iOS 已实现当前行程、前台定位、用户隔离的离线 pending 队列、批量幂等同步、本地与远端合并显示、轨迹质量过滤/分段、方向指示和手动 Check-in。GPS 与 Check-in 是不可由 AI 覆盖的旅行事实。
 - 现有 AI 主要是 SSE 对话、按需个人知识检索、来源引用和结构化计划保存。它尚未具备跨领域 context acquisition、constraint checking、replanning、approval engine 或 external tool execution。
+- Phase 9 已启动：FastAPI 新增用户明确旅行偏好、基于已结束 Trip / Itinerary / Travel Observation 的 Grounded Travel Memory，以及只读 Personal Travel Context 组装层；Web `/ai` 作为首个测试入口，可在用户授权时把当前行程、历史、观察摘要、显式偏好、Memory 与知识资料摘要交给现有对话链路。它不是完整 Agent Runtime，也不包含 learned preference signals。
 
 ## 19. 第二阶段产品深化：Agent evolution gap
 
@@ -280,7 +281,7 @@ Personal Travel Knowledge
 
 | 阶段 | 目标 | 不做什么 |
 | --- | --- | --- |
-| Phase 9 | **Travel Memory & Personal Context Foundation**：基于真实旅行事实形成 grounded Memory、历史上下文与可审视 preference signals | 不让模型把推断当确认事实；不建立复杂自主记忆系统 |
+| Phase 9 | **Travel Memory & Personal Context Foundation**：已建立 grounded Memory、历史上下文与明确偏好；后续再以真实数据验证可审视 preference signals | 不让模型把推断当确认事实；不建立复杂自主记忆系统 |
 | Phase 10 | **Agent Runtime & Vago Domain Tools**：定义 Agent loop、内部工具边界、上下文获取、观察、约束检查、确认原则与最小 tracing/testability | 不直接由 Agent 操作数据库；不以框架/MCP 代替领域设计 |
 | Phase 11 | **Context-aware Coordination & Replanning**：以 Adaptive Day Planner 为代表，基于当前旅行状态提出并确认日程调整 | 不未经确认修改重要 itinerary 或 Trip 状态 |
 | Phase 12 | **External Tool / MCP Integration**：在已有明确 workflow 后引入地图、日历、天气、航班等候选外部能力 | 不为了接入 MCP 创造没有用户价值的工作流 |

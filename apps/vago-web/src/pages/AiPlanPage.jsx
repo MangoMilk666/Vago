@@ -775,6 +775,20 @@ function ChatMessage({ msg }) {
             </div>
           ) : null}
 
+          {/* Phase 9 只显示本轮读取的 Context 类别，不泄露内部 Prompt 或推理过程。 */}
+          {msg.contextLabels?.length > 0 && (
+            <div className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
+              <p className="text-[11px] font-medium text-violet-700">本轮已参考个人旅行上下文</p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {msg.contextLabels.map((label) => (
+                  <span key={label} className="rounded-full bg-white px-2 py-0.5 text-[11px] text-violet-600">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 引用来源 */}
           {msg.sources?.length > 0 && (
             <div className="space-y-1">
@@ -846,8 +860,12 @@ function ChatPanel() {
   const [input,          setInput]          = useState('')
   const [streaming,      setStreaming]      = useState(false)
   const [useRag,         setUseRag]         = useState(true)
+  const [usePersonalContext, setUsePersonalContext] = useState(true)
   const [searchingQuery, setSearchingQuery] = useState(null)
   const [extractingPlan, setExtractingPlan] = useState(false)
+  const [contextPreview, setContextPreview] = useState(null)
+  const [contextPreviewError, setContextPreviewError] = useState('')
+  const [loadingContextPreview, setLoadingContextPreview] = useState(false)
   const bottomRef  = useRef(null)
   const inputRef   = useRef(null)
   const abortRef   = useRef(null)   // AbortController 引用，用于超时取消
@@ -899,7 +917,7 @@ function ChatPanel() {
     setMessages((prev) => [
       ...prev,
       { role: 'user',      content: text },
-      { role: 'assistant', content: '', sources: [], streaming: true },
+      { role: 'assistant', content: '', sources: [], contextLabels: [], streaming: true },
     ])
     setInput('')
     setStreaming(true)
@@ -912,7 +930,12 @@ function ChatPanel() {
     const timeoutId   = setTimeout(() => controller.abort(), 120000)
 
     try {
-      const response = await aiApi.chatStream(historyForApi, controller.signal, useRag)
+      const response = await aiApi.chatStream(
+        historyForApi,
+        controller.signal,
+        useRag,
+        usePersonalContext,
+      )
 
       if (!response.ok) {
         throw new Error(`服务响应异常（HTTP ${response.status}）`)
@@ -964,6 +987,14 @@ function ChatPanel() {
                 return copy
               })
             }
+          } else if (event.type === 'context') {
+            setMessages((prev) => {
+              const copy = [...prev]
+              const last = { ...copy[copy.length - 1] }
+              last.contextLabels = event.labels ?? []
+              copy[copy.length - 1] = last
+              return copy
+            })
           } else if (event.type === 'searching') {
             setSearchingQuery(event.query ?? '')
           } else if (event.type === 'sources') {
@@ -1048,6 +1079,19 @@ function ChatPanel() {
     setExtractingPlan(false)
   }
 
+  const previewPersonalContext = async () => {
+    setLoadingContextPreview(true)
+    setContextPreviewError('')
+    try {
+      setContextPreview(await aiApi.contextPreview())
+    } catch (error) {
+      setContextPreview(null)
+      setContextPreviewError(error.message || '读取旅行上下文失败')
+    } finally {
+      setLoadingContextPreview(false)
+    }
+  }
+
   return (
     <section className="flex flex-col h-full">
       {/* 标题栏 */}
@@ -1058,11 +1102,28 @@ function ChatPanel() {
                              flex items-center justify-center text-white text-[10px] font-bold">
               AI
             </span>
-            旅行规划助手
+            Vago Agent 测试
           </h2>
-          <p className="text-xs text-gray-400 mt-0.5">按当前问题选择通用知识或个人旅行资料</p>
+          <p className="text-xs text-gray-400 mt-0.5">本轮可按需参考你的旅行事实、偏好与知识资料</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={previewPersonalContext}
+            disabled={streaming || loadingContextPreview}
+            className="text-xs text-violet-600 hover:text-violet-700 disabled:opacity-40"
+          >
+            {loadingContextPreview ? '读取中…' : '预览上下文'}
+          </button>
+          <label className="flex items-center gap-1 text-xs text-gray-400">
+            <input
+              type="checkbox"
+              checked={usePersonalContext}
+              onChange={(event) => setUsePersonalContext(event.target.checked)}
+              disabled={streaming}
+            />
+            使用旅行上下文
+          </label>
           <label className="flex items-center gap-1 text-xs text-gray-400">
             <input type="checkbox" checked={useRag} onChange={(event) => setUseRag(event.target.checked)} disabled={streaming} />
             使用个人资料
@@ -1080,6 +1141,21 @@ function ChatPanel() {
         </div>
       </div>
 
+      {(contextPreview || contextPreviewError) && (
+        <div className="mx-5 mt-3 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
+          {contextPreview ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-medium text-violet-700">可用上下文：</span>
+              {contextPreview.labels?.length > 0 ? contextPreview.labels.map((label) => (
+                <span key={label} className="rounded-full bg-white px-2 py-0.5 text-[11px] text-violet-600">
+                  {label}
+                </span>
+              )) : <span className="text-[11px] text-violet-500">暂时没有可用的个人旅行资料</span>}
+            </div>
+          ) : <p className="text-[11px] text-red-500">{contextPreviewError}</p>}
+        </div>
+      )}
+
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {messages.length === 0 && (
@@ -1092,15 +1168,15 @@ function ChatPanel() {
                      a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
               </svg>
             </div>
-            <p className="text-gray-600 font-medium mb-2">你好！我是叠迹旅行规划助手</p>
+            <p className="text-gray-600 font-medium mb-2">你好！我是 Vago Agent 助手</p>
             <p className="text-sm text-gray-400 max-w-xs leading-relaxed mb-6">
-              我会根据当前问题选择通用知识或个人旅行资料，试着问我：
+              我会在你授权时参考个人旅行上下文，但不会自行修改行程，试着问我：
             </p>
             <div className="flex flex-col gap-2 w-full max-w-xs">
               {[
-                '帮我规划一个 5 天的京都行程',
-                '推荐清迈有哪些值得去的地方',
-                '冬天去北海道需要注意什么',
+                '结合我最近的旅行记录，推荐下次旅行的节奏',
+                '总结我当前行程已完成和待安排的内容',
+                '我有点累了，接下来四小时可以怎样安排？',
               ].map((q) => (
                 <button key={q}
                   onClick={() => { setInput(q); inputRef.current?.focus() }}

@@ -4,7 +4,7 @@ import json
 import logging
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
@@ -88,6 +88,26 @@ def list_sources(db: Session, user_uuid: str) -> list[KnowledgeSourceResponse]:
         .order_by(KnowledgeSource.created_at.desc())
     ).all()
     return [_source_to_response(source) for source in sources]
+
+
+def get_agent_knowledge_summary(db: Session, user_uuid: str) -> dict[str, int]:
+    """返回知识资料数量摘要；完整内容仍只允许经 RAG 工具按需检索。"""
+    source_count = db.scalar(
+        select(func.count())
+        .select_from(KnowledgeSource)
+        .where(KnowledgeSource.user_uuid == user_uuid, KnowledgeSource.deleted_at.is_(None))
+    ) or 0
+    # 已经向量化的资料数量
+    indexed_count = db.scalar(
+        select(func.count())
+        .select_from(KnowledgeSource)
+        .where(
+            KnowledgeSource.user_uuid == user_uuid,
+            KnowledgeSource.deleted_at.is_(None),
+            KnowledgeSource.index_status == "INDEXED",
+        )
+    ) or 0
+    return {"sourceCount": source_count, "indexedSourceCount": indexed_count}
 
 
 def get_source(db: Session, user_uuid: str, source_uuid: str) -> KnowledgeSourceResponse:
