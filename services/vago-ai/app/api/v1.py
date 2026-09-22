@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from app.agent_conversations import router as agent_conversations_router
 from app.auth import router as auth_router
 from app.footprints import router as footprints_router
 from app.knowledge import router as knowledge_router
@@ -36,3 +37,4 @@ api_v1_router.include_router(footprints_router.router, prefix="/footprints", tag
 # Phase 9 的 Memory 与 Context 均只读或用户显式写入，不让 Agent 绕过领域服务。
 api_v1_router.include_router(memory_router.router, prefix="/memories", tags=["旅行回忆"])
 api_v1_router.include_router(personal_context_router.router, prefix="/agent", tags=["Agent 调试"])
+api_v1_router.include_router(agent_conversations_router.router, prefix="/agent", tags=["Agent 对话"])

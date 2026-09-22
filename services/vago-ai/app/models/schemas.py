@@ -257,6 +257,13 @@ class ChatRequest(BaseModel):
         alias="usePersonalContext",
         description="是否允许读取当前行程、历史、观察、明确偏好与 Grounded Memory 摘要。",
     )
+    # 可选会话 UUID；缺省时保留原有无状态聊天接口兼容性。
+    conversation_uuid: str | None = Field(
+        None,
+        alias="conversationUuid",
+        max_length=32,
+        description="需要持久化的 Agent 对话 UUID。",
+    )
     # RAG 检索返回的最大文本块数。
     top_k: int = Field(6, ge=1, le=20, description="RAG 检索返回的最大文本块数")
     # RAG 检索相似度阈值。

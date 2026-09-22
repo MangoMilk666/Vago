@@ -18,6 +18,7 @@ SSE 事件类型说明（流式接口）：
   data: [DONE]                             — 流结束标记
 """
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user_uuid
 from app.models.schemas import ChatRequest, ChatResponse, SourceCitation
+from app.agent_conversations import service as conversation_service
 from app.personal_context.service import build_personal_context, format_context_for_agent
 from app.services.rag_chain import run_agent_chat, stream_agent_chat
 from app.config import settings
@@ -77,7 +79,9 @@ async def chat(
         user_uuid, len(request.messages), request.use_rag,
     )
 
-    personal_context, context_labels = _load_personal_context(db, user_uuid, request.use_personal_context)
+    personal_context, context_labels = _load_personal_context(
+        db, user_uuid, request.use_personal_context, request.use_rag,
+    )
     # 工具调用的请求参数集合？
     try:
         call_kwargs = {
@@ -144,7 +148,20 @@ async def chat_stream(
         user_uuid, len(request.messages), request.use_rag,
     )
 
-    personal_context, context_labels = _load_personal_context(db, user_uuid, request.use_personal_context)
+    personal_context, context_labels = _load_personal_context(
+        db, user_uuid, request.use_personal_context, request.use_rag,
+    )
+
+    if request.conversation_uuid:
+        # 分支条件：带会话 UUID 的 Web 请求先落下用户原话，刷新后也可恢复此轮问题。
+        conversation_service.record_user_message(
+            db,
+            user_uuid,
+            request.conversation_uuid,
+            request.messages[-1].content,
+            request.use_rag,
+            request.use_personal_context,
+        )
 
     async def event_generator():
         """
@@ -153,6 +170,11 @@ async def chat_stream(
         若 stream_agent_chat 在首个 yield 前抛出异常，
         此处捕获并推送 error 事件，确保前端不会收到空流。
         """
+        answer_parts: list[str] = []
+        sources: list[dict] = []
+        response_context_labels: list[str] = context_labels
+        structured_plan: dict | None = None
+        stream_failed = False
         try:
             call_kwargs = {
                 "user_uuid": user_uuid,
@@ -163,12 +185,42 @@ async def chat_stream(
             if personal_context is not None:
                 call_kwargs.update(personal_context=personal_context, context_labels=context_labels)
             async for chunk in stream_agent_chat(**call_kwargs):
+                event = _parse_sse_event(chunk)
+                # 分支条件：只有正常文本流才写入长期历史，错误提示仅作为当前界面临时反馈。
+                if event and event.get("type") == "text":
+                    content = event.get("content")
+                    if isinstance(content, str):
+                        answer_parts.append(content)
+                elif event and event.get("type") == "sources":
+                    sources = event.get("sources") or []
+                elif event and event.get("type") == "context":
+                    response_context_labels = event.get("labels") or []
+                elif event and event.get("type") == "structured_plan":
+                    structured_plan = event.get("data")
+                elif event and event.get("type") == "error":
+                    stream_failed = True
                 yield chunk
         except Exception as exc:
+            stream_failed = True
             logger.error("[chat] 事件生成器异常 user=%s error=%s", user_uuid, exc)
-            import json
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
+        finally:
+            # 分支条件：仅有持久化会话且本轮未报错时，保存完整 Agent 回答供后续回放。
+            if request.conversation_uuid and not stream_failed:
+                try:
+                    conversation_service.record_assistant_message(
+                        db,
+                        user_uuid,
+                        request.conversation_uuid,
+                        "".join(answer_parts),
+                        sources=sources,
+                        context_labels=response_context_labels,
+                        structured_plan=structured_plan,
+                    )
+                except Exception as exc:
+                    # 历史保存失败不应反向中断已成功返回给用户的模型回答。
+                    logger.error("[chat] 保存会话历史失败 user=%s error=%s", user_uuid, exc, exc_info=True)
 
     return StreamingResponse(
         event_generator(),
@@ -185,18 +237,38 @@ async def chat_stream(
 def _load_personal_context(
     db: Session,
     user_uuid: str,
-    enabled: bool,
+    use_personal_context: bool,
+    use_rag: bool,
 ) -> tuple[str | None, list[str]]:
     """按用户授权读取 Context；非关键读取失败时保留普通对话可用性。"""
-    if not enabled:
+    if not use_personal_context and not use_rag:
         return None, []
     try:
-        context = build_personal_context(db, user_uuid)
+        context = build_personal_context(
+            db,
+            user_uuid,
+            include_travel_context=use_personal_context,
+            include_personal_knowledge=use_rag,
+        )
     except Exception as exc:
         # 分支条件：Context 的任一来源暂时不可用时，不阻断现有 AI 对话链路。
         logger.warning("[chat] Personal Context 读取失败 user=%s error=%s", user_uuid, exc)
         return None, []
     return format_context_for_agent(context), context.labels
+
+
+def _parse_sse_event(chunk: str) -> dict | None:
+    """从既有 Agent SSE 文本中读取可持久化的公开事件字段。"""
+    if not chunk.startswith("data:"):
+        return None
+    raw = chunk[5:].strip()
+    if raw == "[DONE]":
+        return None
+    try:
+        event = json.loads(raw)
+        return event if isinstance(event, dict) else None
+    except json.JSONDecodeError:
+        return None
 
 def _validate_messages(request: ChatRequest) -> None:
     """

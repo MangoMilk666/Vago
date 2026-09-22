@@ -56,9 +56,13 @@ export const aiApi = {
    * 读取 Web Agent 本轮可用的 Personal Travel Context 摘要。
    * 返回内容不含 GPS 经纬度或模型内部 Prompt，仅用于用户核对授权范围。
    */
-  contextPreview: async () => {
+  contextPreview: async (usePersonalContext = true, useRag = true) => {
     const token = getAuth()?.accessToken
-    const response = await fetch('/api/v1/agent/context-preview', {
+    const params = new URLSearchParams({
+      usePersonalContext: String(usePersonalContext),
+      useRag: String(useRag),
+    })
+    const response = await fetch(`/api/v1/agent/context-preview?${params}`, {
       headers: token ? { authorization: token } : {},
     })
     const body = await response.json()
@@ -85,7 +89,13 @@ export const aiApi = {
    * @param {AbortSignal} [signal] 可选：用于超时/取消的 AbortSignal
    * @returns {Promise<Response>} fetch Response，body 为 SSE 流
    */
-  chatStream: (messages, signal, useRag = true, usePersonalContext = false) => {
+  chatStream: (
+    messages,
+    signal,
+    useRag = true,
+    usePersonalContext = false,
+    conversationUuid = null,
+  ) => {
     const token = getAuth()?.accessToken
     return fetch('/api/v1/ai/chat/stream', {
       method: 'POST',
@@ -93,8 +103,29 @@ export const aiApi = {
         'Content-Type': 'application/json',
         ...(token ? { authorization: token } : {}),
       },
-      body: JSON.stringify({ messages, useRag, usePersonalContext }),
+      body: JSON.stringify({ messages, useRag, usePersonalContext, conversationUuid }),
       ...(signal ? { signal } : {}),
     })
   },
+
+  /** 读取当前用户保存的 Agent 会话，用于左侧会话栏。 */
+  conversations: () => http.get('/agent/conversations', { baseURL: '/api/v1' }),
+
+  /** 创建一段独立对话；首条用户消息会由服务端生成摘要标题。 */
+  createConversation: (payload) => http.post('/agent/conversations', payload, { baseURL: '/api/v1' }),
+
+  /** 获取最近一页或指定游标之前的历史消息。 */
+  conversationMessages: (conversationUuid, beforeUuid = null) => http.get(
+    `/agent/conversations/${conversationUuid}/messages`,
+    {
+      baseURL: '/api/v1',
+      params: beforeUuid ? { beforeUuid } : {},
+    },
+  ),
+
+  /** 删除一整段 Agent 会话及其已保存的消息。 */
+  deleteConversation: (conversationUuid) => http.delete(
+    `/agent/conversations/${conversationUuid}`,
+    { baseURL: '/api/v1' },
+  ),
 }

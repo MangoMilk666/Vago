@@ -198,4 +198,4 @@ MCP 是接入外部工具的一种标准化协议，不是 Agent Runtime 本身�
 - 不把 RAG 描述为 Memory，也不把 Qdrant 当作所有 Personal Travel Context 的存储。
 - 当前仅支持纯文本和 `.md/.txt` 知识源；复杂文档解析不在当前范围。
 - Travel Memory 已具备事实快照与用户叙事的最小基础；Photos、Notes、Preference signals、Adaptive Day Planner、MCP 和外部工具仍属于未来能力。
-- 当前 Alembic head 为 `20260922_01`；全新数据库使用 [db_schema.sql](database/db_schema.sql)，已有数据库使用 Alembic 增量升级。
+- 当前 Alembic head 为 `20260922_02`；全新数据库使用 [db_schema.sql](database/db_schema.sql)，已有数据库使用 Alembic 增量升级。

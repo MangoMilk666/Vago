@@ -12,18 +12,37 @@ from app.preferences import service as preference_service
 from app.travel import service as travel_service
 
 
-def build_personal_context(db: Session, user_uuid: str) -> PersonalContextPreview:
-    """组合当前任务可安全使用的旅行事实摘要。"""
-    travel_context = travel_service.get_agent_travel_context(db, user_uuid)
-    current_trip = travel_context["currentTrip"]
-    live_observations = (
-        footprint_service.get_agent_observation_context(db, user_uuid, current_trip["uuid"])
-        if current_trip is not None
-        else None
+def build_personal_context(
+    db: Session,
+    user_uuid: str,
+    include_travel_context: bool = True,
+    include_personal_knowledge: bool = True,
+) -> PersonalContextPreview:
+    """按本轮授权组合 Agent 可安全读取的旅行事实摘要。"""
+    # 分支条件：用户关闭旅行上下文时，完全跳过结构化旅行事实及偏好/回忆读取。
+    if include_travel_context:
+        travel_context = travel_service.get_agent_travel_context(db, user_uuid)
+        current_trip = travel_context["currentTrip"]
+        live_observations = (
+            footprint_service.get_agent_observation_context(db, user_uuid, current_trip["uuid"])
+            if current_trip is not None
+            else None
+        )
+        preferences = preference_service.get_agent_preference_context(db, user_uuid)
+        memories = memory_service.get_agent_memory_context(db, user_uuid)
+    else:
+        current_trip = None
+        travel_context = {"travelHistory": []}
+        live_observations = None
+        preferences = {}
+        memories = []
+
+    # 分支条件：关闭个人资料时，不读取来源数量，也不把知识资料摘要注入 Prompt。
+    knowledge_summary = (
+        knowledge_service.get_agent_knowledge_summary(db, user_uuid)
+        if include_personal_knowledge
+        else {}
     )
-    preferences = preference_service.get_agent_preference_context(db, user_uuid)
-    memories = memory_service.get_agent_memory_context(db, user_uuid)
-    knowledge_summary = knowledge_service.get_agent_knowledge_summary(db, user_uuid)
     labels = _build_labels(
         current_trip=current_trip,
         travel_history=travel_context["travelHistory"],

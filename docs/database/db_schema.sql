@@ -363,4 +363,50 @@ CREATE TABLE travel_memories (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='基于旅行事实的个人回忆';
 
 
+-- ============================================================
+-- 模块六：Agent 对话历史
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- Agent 会话（agent_conversations）
+-- 每个用户可保存多段独立对话；两个开关记录用户本段会话的授权选择。
+-- ------------------------------------------------------------
+CREATE TABLE agent_conversations (
+    id                   INT             NOT NULL AUTO_INCREMENT  COMMENT '自增主键',
+    uuid                 VARCHAR(32)     NOT NULL                 COMMENT '对外会话 UUID',
+    user_uuid            VARCHAR(36)     NOT NULL                 COMMENT '归属 users.uuid',
+    title                VARCHAR(120)    NOT NULL                 COMMENT '首条问题自动生成或用户指定的会话标题',
+    use_rag              BOOLEAN         NOT NULL DEFAULT TRUE    COMMENT '是否允许个人知识语义检索',
+    use_personal_context BOOLEAN         NOT NULL DEFAULT TRUE    COMMENT '是否允许读取旅行结构化上下文',
+    created_at           DATETIME        NOT NULL                 COMMENT '创建时间（UTC）',
+    updated_at           DATETIME        NOT NULL                 COMMENT '最近活跃时间（UTC）',
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_agent_conversations_uuid (uuid),
+    INDEX idx_agent_conversations_user_uuid (user_uuid),
+    INDEX idx_agent_conversations_user_updated (user_uuid, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户持久化 Agent 对话';
+
+-- ------------------------------------------------------------
+-- Agent 消息（agent_messages）
+-- 保存用户与 Agent 的可回放文本、公开引用、上下文标签和结构化计划展示数据。
+-- ------------------------------------------------------------
+CREATE TABLE agent_messages (
+    id                INT             NOT NULL AUTO_INCREMENT  COMMENT '自增排序主键',
+    uuid              VARCHAR(32)     NOT NULL                 COMMENT '对外消息 UUID',
+    conversation_uuid VARCHAR(32)     NOT NULL                 COMMENT '所属 agent_conversations.uuid',
+    role              VARCHAR(16)     NOT NULL                 COMMENT 'user 或 assistant',
+    content           TEXT            NOT NULL                 COMMENT '消息正文',
+    sources           TEXT            DEFAULT NULL             COMMENT '个人知识引用 JSON',
+    context_labels    TEXT            DEFAULT NULL             COMMENT '本轮已读取上下文类别 JSON',
+    structured_plan   TEXT            DEFAULT NULL             COMMENT '可保存行程的结构化计划 JSON',
+    created_at        DATETIME        NOT NULL                 COMMENT '创建时间（UTC）',
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_agent_messages_uuid (uuid),
+    INDEX idx_agent_messages_conversation_uuid (conversation_uuid),
+    INDEX idx_agent_messages_conversation_id (conversation_uuid, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Agent 对话消息回放记录';
+
+
 SET FOREIGN_KEY_CHECKS = 1;

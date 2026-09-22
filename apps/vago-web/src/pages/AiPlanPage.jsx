@@ -856,6 +856,10 @@ function ExtractingIndicator() {
 
 /** ─── 对话面板 ──────────────────────────────────────────────────────────────── */
 function ChatPanel() {
+  const [conversations, setConversations] = useState([])
+  const [activeConversation, setActiveConversation] = useState(null)
+  const [nextBeforeUuid, setNextBeforeUuid] = useState(null)
+  const [loadingMessages, setLoadingMessages] = useState(false)
   const [messages,       setMessages]       = useState([])
   const [input,          setInput]          = useState('')
   const [streaming,      setStreaming]      = useState(false)
@@ -870,9 +874,74 @@ function ChatPanel() {
   const inputRef   = useRef(null)
   const abortRef   = useRef(null)   // AbortController 引用，用于超时取消
 
+  const refreshConversations = useCallback(async () => {
+    const response = await aiApi.conversations()
+    const items = response.data ?? []
+    setConversations(items)
+    // 分支条件：当前会话仍在列表中时，同步服务端自动生成的首条问题标题与授权状态。
+    setActiveConversation((current) => items.find((item) => item.uuid === current?.uuid) ?? current)
+    return items
+  }, [])
+
+  useEffect(() => {
+    refreshConversations().catch(() => setConversations([]))
+  }, [refreshConversations])
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, searchingQuery, extractingPlan])
+
+  const loadConversationMessages = async (conversationUuid, beforeUuid = null) => {
+    setLoadingMessages(true)
+    try {
+      const response = await aiApi.conversationMessages(conversationUuid, beforeUuid)
+      const page = response.data
+      // 分支条件：上拉读取旧页时插到现有消息之前，首次读取则直接替换显示内容。
+      setMessages((previous) => beforeUuid ? [...(page.messages ?? []), ...previous] : (page.messages ?? []))
+      setNextBeforeUuid(page.nextBeforeUuid ?? null)
+    } finally {
+      setLoadingMessages(false)
+    }
+  }
+
+  const selectConversation = async (conversation) => {
+    if (streaming || conversation.uuid === activeConversation?.uuid) return
+    setActiveConversation(conversation)
+    setUseRag(conversation.useRag)
+    setUsePersonalContext(conversation.usePersonalContext)
+    setContextPreview(null)
+    setContextPreviewError('')
+    setMessages([])
+    setNextBeforeUuid(null)
+    try {
+      await loadConversationMessages(conversation.uuid)
+    } catch (error) {
+      setContextPreviewError(error.message || '读取对话历史失败')
+    }
+  }
+
+  const startNewConversation = () => {
+    if (streaming) return
+    // 新会话在首次发送时创建，避免仅浏览页面就留下无内容记录。
+    setActiveConversation(null)
+    setMessages([])
+    setNextBeforeUuid(null)
+    setInput('')
+    setUseRag(true)
+    setUsePersonalContext(true)
+    setContextPreview(null)
+    setContextPreviewError('')
+    inputRef.current?.focus()
+  }
+
+  const ensureConversation = async () => {
+    if (activeConversation) return activeConversation
+    const response = await aiApi.createConversation({ useRag, usePersonalContext })
+    const conversation = response.data
+    setActiveConversation(conversation)
+    setConversations((previous) => [conversation, ...previous])
+    return conversation
+  }
 
   // ── SSE 解析工具 ──────────────────────────────────────────────────────────
 
@@ -904,6 +973,14 @@ function ChatPanel() {
     const text = input.trim()
     if (!text || streaming) return
 
+    let conversation
+    try {
+      conversation = await ensureConversation()
+    } catch (error) {
+      setContextPreviewError(error.message || '创建新对话失败')
+      return
+    }
+
     // 过滤掉 content 为空或标记了 error 的历史消息，再拼入本轮用户消息。
     // 必要性：前一轮流式失败时 assistant 消息可能 content=''，若原样带入
     // 会触发 Java @NotBlank 校验报 4001；error 消息是前端提示文案，不属于对话语义。
@@ -914,10 +991,11 @@ function ChatPanel() {
       { role: 'user', content: text },
     ]
 
+    const localAssistantUuid = `stream-${Date.now()}`
     setMessages((prev) => [
       ...prev,
-      { role: 'user',      content: text },
-      { role: 'assistant', content: '', sources: [], contextLabels: [], streaming: true },
+      { uuid: `local-${Date.now()}`, role: 'user', content: text },
+      { uuid: localAssistantUuid, role: 'assistant', content: '', sources: [], contextLabels: [], streaming: true },
     ])
     setInput('')
     setStreaming(true)
@@ -935,6 +1013,7 @@ function ChatPanel() {
         controller.signal,
         useRag,
         usePersonalContext,
+        conversation.uuid,
       )
 
       if (!response.ok) {
@@ -1062,6 +1141,8 @@ function ChatPanel() {
       setSearchingQuery(null)
       setExtractingPlan(false)
       inputRef.current?.focus()
+      // 服务端会在流结束后持久化 Agent 回答；刷新侧栏以同步首条问题生成的新标题。
+      refreshConversations().catch(() => {})
     }
   }
 
@@ -1072,18 +1153,11 @@ function ChatPanel() {
     }
   }
 
-  const clearChat = () => {
-    if (streaming) return
-    setMessages([])
-    setSearchingQuery(null)
-    setExtractingPlan(false)
-  }
-
   const previewPersonalContext = async () => {
     setLoadingContextPreview(true)
     setContextPreviewError('')
     try {
-      setContextPreview(await aiApi.contextPreview())
+      setContextPreview(await aiApi.contextPreview(usePersonalContext, useRag))
     } catch (error) {
       setContextPreview(null)
       setContextPreviewError(error.message || '读取旅行上下文失败')
@@ -1098,66 +1172,100 @@ function ChatPanel() {
     setContextPreviewError('')
   }
 
+  const updateAuthorization = (setter) => (event) => {
+    setter(event.target.checked)
+    // 授权范围一旦改变，旧预览不再对应本轮 Agent 的真实读取范围。
+    dismissContextPreview()
+  }
+
+  const deleteConversation = async (conversation, event) => {
+    event.stopPropagation()
+    if (streaming || !window.confirm(`删除“${conversation.title}”？此操作无法撤销。`)) return
+    try {
+      await aiApi.deleteConversation(conversation.uuid)
+      setConversations((previous) => previous.filter((item) => item.uuid !== conversation.uuid))
+      if (activeConversation?.uuid === conversation.uuid) startNewConversation()
+    } catch (error) {
+      setContextPreviewError(error.message || '删除对话失败')
+    }
+  }
+
   return (
-    <section className="flex flex-col h-full">
+    <section className="flex h-full min-w-0 bg-white">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-slate-50/70 p-3">
+        <button type="button" onClick={startNewConversation} disabled={streaming}
+          className="flex h-10 items-center justify-center gap-2 rounded-lg bg-violet-600 px-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-45">
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v14m-7-7h14" /></svg>
+          新对话
+        </button>
+        <p className="mt-5 px-2 text-[11px] font-semibold uppercase text-slate-400">近期对话</p>
+        <div className="mt-2 flex-1 space-y-1 overflow-y-auto">
+          {conversations.map((conversation) => (
+            <div key={conversation.uuid} className={`group flex items-center gap-1 rounded-lg px-2 py-2 transition-colors ${activeConversation?.uuid === conversation.uuid ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200' : 'text-slate-600 hover:bg-white/80'}`}>
+              <button type="button" onClick={() => selectConversation(conversation)} className="min-w-0 flex-1 truncate text-left text-xs leading-5" title={conversation.title}>
+                {conversation.title}
+              </button>
+              <button type="button" onClick={(event) => deleteConversation(conversation, event)} disabled={streaming}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-0 transition hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 focus:opacity-100 disabled:hidden"
+                aria-label={`删除对话：${conversation.title}`} title="删除对话">
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 7h12m-9 0V4h6v3m-7 4v6m4-6v6m4-10-.8 12.1a2 2 0 01-2 1.9H8.8a2 2 0 01-2-1.9L6 7" /></svg>
+              </button>
+            </div>
+          ))}
+          {conversations.length === 0 && <p className="px-2 pt-3 text-xs leading-relaxed text-slate-400">首次发送后，新的对话会保存在这里。</p>}
+        </div>
+        <p className="px-2 pt-3 text-[11px] leading-relaxed text-slate-400">重要旅行操作仍由你确认。</p>
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col">
       {/* 标题栏 */}
-      <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
+      <div className="flex min-h-[76px] items-center justify-between gap-5 border-b border-slate-100 px-6 py-3 shrink-0">
         <div>
-          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-            <span className="w-5 h-5 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600
-                             flex items-center justify-center text-white text-[10px] font-bold">
+          <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-violet-600 flex items-center justify-center text-white text-[11px] font-bold">
               AI
             </span>
-            Vago Agent
+            {activeConversation?.title || 'Vago Agent'}
           </h2>
-          <p className="text-xs text-gray-400 mt-0.5">本轮可按需参考你的旅行事实、偏好与知识资料</p>
+          <p className="text-xs text-slate-400 mt-1">协调旅行信息与约束，不会自行修改你的行程</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={previewPersonalContext}
             disabled={streaming || loadingContextPreview}
-            className="text-xs text-violet-600 hover:text-violet-700 disabled:opacity-40"
+            className="text-xs font-medium text-violet-600 hover:text-violet-800 disabled:opacity-40"
           >
             {loadingContextPreview ? '读取中…' : '预览上下文'}
           </button>
-          <label className="flex items-center gap-1 text-xs text-gray-400">
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
             <input
               type="checkbox"
               checked={usePersonalContext}
-              onChange={(event) => setUsePersonalContext(event.target.checked)}
+              onChange={updateAuthorization(setUsePersonalContext)}
               disabled={streaming}
+              className="h-3.5 w-3.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
             />
             使用旅行上下文
           </label>
-          <label className="flex items-center gap-1 text-xs text-gray-400">
-            <input type="checkbox" checked={useRag} onChange={(event) => setUseRag(event.target.checked)} disabled={streaming} />
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
+            <input type="checkbox" checked={useRag} onChange={updateAuthorization(setUseRag)} disabled={streaming} className="h-3.5 w-3.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
             使用个人资料
           </label>
-          {messages.length > 0 && (<button onClick={clearChat} disabled={streaming}
-            className="text-xs text-gray-400 hover:text-red-400 disabled:opacity-40
-                       transition-colors flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-red-50">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5
-                   4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-            </svg>
-            清空对话
-          </button>)}
         </div>
       </div>
 
       {(contextPreview || contextPreviewError) && (
-        <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
+        <div className="mx-6 mt-3 flex items-start gap-3 border border-violet-100 bg-violet-50 px-3 py-2.5">
           <div className="min-w-0 flex-1">
             {contextPreview ? (
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-medium text-violet-700">可用上下文：</span>
+                <span className="text-[11px] font-semibold text-violet-800">本轮可用上下文</span>
                 {contextPreview.labels?.length > 0 ? contextPreview.labels.map((label) => (
                   <span key={label} className="rounded-full bg-white px-2 py-0.5 text-[11px] text-violet-600">
                     {label}
                   </span>
-                )) : <span className="text-[11px] text-violet-500">暂时没有可用的个人旅行资料</span>}
+                )) : <span className="text-[11px] text-violet-600">当前授权范围内没有可用的个人资料</span>}
               </div>
             ) : <p className="text-[11px] text-red-500">{contextPreviewError}</p>}
           </div>
@@ -1176,7 +1284,15 @@ function ChatPanel() {
       )}
 
       {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+        {nextBeforeUuid && (
+          <div className="text-center">
+            <button type="button" onClick={() => loadConversationMessages(activeConversation.uuid, nextBeforeUuid)} disabled={loadingMessages || streaming}
+              className="text-xs text-violet-600 hover:text-violet-800 disabled:opacity-40">
+              {loadingMessages ? '加载中…' : '加载更早消息'}
+            </button>
+          </div>
+        )}
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center py-10">
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600
@@ -1210,7 +1326,7 @@ function ChatPanel() {
         )}
 
         {messages.map((msg, i) => (
-          <ChatMessage key={i} msg={msg} />
+          <ChatMessage key={msg.uuid || i} msg={msg} />
         ))}
         {searchingQuery !== null && <SearchingIndicator query={searchingQuery} />}
         {extractingPlan && <ExtractingIndicator />}
@@ -1218,10 +1334,10 @@ function ChatPanel() {
       </div>
 
       {/* 输入区 */}
-      <div className="px-4 pb-4 pt-3 border-t border-gray-100 shrink-0">
-        <div className="flex items-end gap-2 bg-white rounded-2xl border border-gray-200
-                        shadow-sm focus-within:border-indigo-400 focus-within:ring-2
-                        focus-within:ring-indigo-100 transition-all px-3 py-2">
+      <div className="px-6 pb-5 pt-3 border-t border-slate-100 shrink-0">
+        <div className="mx-auto flex max-w-3xl items-end gap-3 bg-white border border-slate-200
+                        shadow-sm focus-within:border-violet-400 focus-within:ring-2
+                        focus-within:ring-violet-100 transition-all px-3 py-2">
           <textarea
             ref={inputRef}
             value={input}
@@ -1230,7 +1346,7 @@ function ChatPanel() {
             disabled={streaming}
             rows={1}
             placeholder="描述你的旅行需求，按 Enter 发送…"
-            className="flex-1 text-sm text-gray-800 placeholder-gray-400 resize-none
+            className="flex-1 text-sm text-slate-800 placeholder-slate-400 resize-none
                        focus:outline-none bg-transparent leading-relaxed py-1 min-h-[36px]
                        max-h-[120px] disabled:opacity-50"
             onInput={(e) => {
@@ -1241,9 +1357,9 @@ function ChatPanel() {
           <button
             onClick={sendMessage}
             disabled={!input.trim() || streaming}
-            className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center
+            className="w-8 h-8 bg-violet-600 flex items-center justify-center
                        text-white shrink-0 self-end mb-0.5
-                       hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                       hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
             {streaming ? (
               <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"/>
             ) : (
@@ -1253,11 +1369,12 @@ function ChatPanel() {
             )}
           </button>
         </div>
-        <p className="text-xs text-gray-300 mt-1.5 text-center">
-          AI 生成内容仅供参考，具体行程以实际情况为准
+        <p className="text-[11px] text-slate-400 mt-2 text-center">
+          Agent 的建议仅供参考；重要的持久化旅行操作会由你确认。
         </p>
       </div>
 
+      </div>
     </section>
   )
 }
@@ -1268,10 +1385,10 @@ export default function AiPlanPage() {
     <div className="app-page">
       <Navbar />
 
-      <main className="app-main py-6">
-        <div className="h-[calc(100vh-7.5rem)]">
+      <main className="app-main py-5">
+        <div className="h-[calc(100vh-7rem)] min-h-[620px]">
           {/* AI 仅在 Agent 判断资料确有帮助时才触发可选语义检索。 */}
-          <div className="h-full min-w-0 bg-white rounded-2xl border border-gray-100
+          <div className="h-full min-w-0 bg-white border border-slate-200
                           shadow-sm flex flex-col overflow-hidden">
             <ChatPanel />
           </div>

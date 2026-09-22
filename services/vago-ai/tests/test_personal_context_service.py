@@ -101,6 +101,21 @@ def test_memory_is_grounded_in_ended_trip_facts_and_keeps_user_narrative(db_sess
     assert refreshed.facts.trip_uuid == trip.uuid
 
 
+def test_personal_context_respects_travel_and_knowledge_authorization(db_session: Session):
+    """测试：关闭授权时，预览与 Agent 注入都不应显示被关闭类别。"""
+    context = build_personal_context(
+        db_session,
+        "user-a",
+        include_travel_context=False,
+        include_personal_knowledge=False,
+    )
+
+    assert context.labels == []
+    assert context.current_trip is None
+    assert context.travel_history == []
+    assert context.knowledge_summary == {}
+
+
 def test_memory_rejects_trip_that_has_not_ended(db_session: Session):
     """测试：进行中的旅行事实仍会变化，不能被错误固化成 Memory。"""
     trip = _add_trip(db_session, uuid="active-trip", user_uuid="user-a", status=2)

@@ -61,7 +61,7 @@ def test_chat_injects_authorized_personal_context(monkeypatch) -> None:
         return "context-test-user"
 
     app.dependency_overrides[get_current_user_uuid] = override_current_user_uuid
-    monkeypatch.setattr(chat, "build_personal_context", lambda _db, _user_uuid: FakeContext())
+    monkeypatch.setattr(chat, "build_personal_context", lambda _db, _user_uuid, **_kwargs: FakeContext())
     monkeypatch.setattr(chat, "format_context_for_agent", lambda _context: '{"currentTrip": {}}')
     monkeypatch.setattr(chat, "run_agent_chat", fake_run_agent_chat)
 
