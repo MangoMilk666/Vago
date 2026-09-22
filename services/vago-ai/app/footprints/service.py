@@ -37,7 +37,8 @@ def _new_uuid() -> str:
 
 
 def _get_owned_trip(db: Session, user_uuid: str, trip_uuid: str) -> Trip:
-    """读取当前用户未删除的正式行程。"""
+    """读取当前用户未删除的正式行程。
+    若无法读取抛出异常"""
     trip = db.scalar(
         select(Trip).where(
             Trip.uuid == trip_uuid,
@@ -61,7 +62,7 @@ def _distance_meters(latitude_a: float, longitude_a: float, latitude_b: float, l
 
 
 def _to_observation_response(observation: TravelObservation) -> TravelObservationResponse:
-    """将 ORM 事实转换为统一观察 API 契约。"""
+    """将 ORM 事实转换为统一的TravelObservationResponse API 对象。"""
     return TravelObservationResponse(
         uuid=observation.uuid,
         clientEventUuid=observation.client_event_uuid,
@@ -113,6 +114,7 @@ def sync_location_samples(
     """批量写入自动 GPS 样本；按客户端 UUID 幂等并避开已有打卡。"""
     _get_owned_trip(db, user_uuid, payload.trip_uuid)
     client_uuids = [sample.client_uuid for sample in payload.samples]
+    # 已经写入db的数据的client_uuid
     existing_uuids = set(
         db.scalars(
             select(TravelObservation.client_event_uuid).where(
@@ -133,10 +135,10 @@ def sync_location_samples(
     new_rows: list[TravelObservation] = []
     skipped_client_uuids: set[str] = set()
     for sample in payload.samples:
-        # 分支条件：客户端样本已被成功接收过时,不再写入，让移动端可安全重试整批数据。
+        # 分支条件：客户端样本已被成功接收过时,不再写入。
         if sample.client_uuid in existing_uuids:
             continue
-        # 分支条件：自动采样距已有用户打卡不足 15 米时不再新增冗余 GPS 事实。
+        # 分支条件：自动采样距已有用户手动打卡点不足 15 米时不再新增冗余 GPS 事实。
         if any(
             _distance_meters(sample.latitude, sample.longitude, checkin.latitude, checkin.longitude)
             < MINIMUM_AUTOMATIC_SAMPLE_DISTANCE_TO_CHECKIN_METERS
