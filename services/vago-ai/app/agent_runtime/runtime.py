@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -31,6 +32,13 @@ class AgentRuntimePreparation:
     personal_context: str | None
     context_labels: list[str]
     events: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class AgentRuntimeProgress:
+    """Runtime 正在执行时可立即推送给客户端的公开事件。"""
+
+    event: dict[str, str]
 
 
 class AgentRuntime:
@@ -100,6 +108,77 @@ class AgentRuntime:
         events.append(_event("agent.status", "已完成上下文整理，正在生成旅行建议", trace_id=trace_id))
         # 最终组装为一个 记录了agent event的 快照对象
         return AgentRuntimePreparation(
+            trace_id=trace_id,
+            personal_context=format_context_for_agent(context),
+            context_labels=context.labels,
+            events=events,
+        )
+
+    async def stream_prepare(
+        self,
+        db: Session,
+        user_uuid: str,
+        *,
+        use_personal_context: bool,
+        use_rag: bool,
+    ) -> AsyncIterator[AgentRuntimeProgress | AgentRuntimePreparation]:
+        """边执行边发送 Runtime 事件，避免快速读取在客户端被压缩为同一帧。"""
+        trace_id = uuid4().hex
+        state: dict[str, Any] = {
+            "travelContext": {"currentTrip": None, "travelHistory": []},
+            "liveObservations": None,
+            "preferences": {},
+            "memories": [],
+            "knowledgeSummary": {},
+        }
+        tool_names = _select_read_tools(use_personal_context, use_rag)
+        yield AgentRuntimeProgress(_event("agent.started", "开始整理本轮旅行上下文", trace_id=trace_id))
+
+        # 分支条件：用户未授权任何个人数据时，直接进入通用 LLM 对话，不读取领域事实。
+        if not tool_names:
+            yield AgentRuntimeProgress(_event("agent.status", "本轮未启用个人旅行上下文", trace_id=trace_id))
+            yield AgentRuntimePreparation(trace_id, None, [], [])
+            return
+
+        yield AgentRuntimeProgress(_event("agent.status", "正在获取已授权的旅行信息", trace_id=trace_id))
+        events: list[dict[str, str]] = []
+        for index, tool_name in enumerate(tool_names[:MAX_READ_STEPS], start=1):
+            tool = self._registry.get(tool_name)
+            started_event = _event("tool.started", tool.label, tool=tool.name, trace_id=trace_id)
+            events.append(started_event)
+            yield AgentRuntimeProgress(started_event)
+            # 主动让出事件循环，使 ASGI 有机会将“开始调用”刷新到客户端后再做下一步读取。
+            await _yield_to_event_loop()
+            # 尝试调用tool，把输出结果存入state
+            try:
+                output = tool.handler(db, user_uuid, state)
+                _store_tool_output(state, tool.name, output)
+                completed_event = _event(
+                    "tool.completed", _summary_for_tool(tool.name, output), tool=tool.name, trace_id=trace_id,
+                )
+                events.append(completed_event)
+                yield AgentRuntimeProgress(completed_event)
+            except Exception as exc:
+                # 分支条件：tool调用失败 / 单一数据源不可用时，发送失败 Observation 并继续读取其他可用领域。
+                logger.warning("[agent_runtime] tool failed trace=%s tool=%s error=%s", trace_id, tool.name, exc)
+                failed_event = _event(
+                    "tool.failed", f"{tool.label.replace('正在', '')}暂时不可用，已继续处理", tool=tool.name, trace_id=trace_id,
+                )
+                events.append(failed_event)
+                yield AgentRuntimeProgress(failed_event)
+            await _yield_to_event_loop()
+            if index == MAX_READ_STEPS:
+                limit_event = _event("agent.status", "已达到本轮读取上限，开始生成建议", trace_id=trace_id)
+                events.append(limit_event)
+                yield AgentRuntimeProgress(limit_event)
+
+        # state已经存储了tools调用的输出结果
+        # 再把state对象封装为统一的context对象
+        context = _to_context_preview(state)
+        ready_event = _event("agent.status", "已完成上下文整理，正在生成旅行建议", trace_id=trace_id)
+        events.append(ready_event)
+        yield AgentRuntimeProgress(ready_event)
+        yield AgentRuntimePreparation(
             trace_id=trace_id,
             personal_context=format_context_for_agent(context),
             context_labels=context.labels,
@@ -209,3 +288,10 @@ def _summary_for_tool(tool_name: str, output: Any) -> str:
 def _event(event_type: str, label: str, **extra: str) -> dict[str, str]:
     """统一构造可安全展示的执行事件，不包含模型推理或原始事实。"""
     return {"type": event_type, "label": label, **extra}
+
+
+async def _yield_to_event_loop() -> None:
+    """不添加人为等待，只让 StreamingResponse 有机会及时写出当前 SSE 事件。"""
+    import asyncio
+
+    await asyncio.sleep(0)

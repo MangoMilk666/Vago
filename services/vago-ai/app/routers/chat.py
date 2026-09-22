@@ -29,8 +29,9 @@ from app.core.database import get_db
 from app.dependencies.auth import get_current_user_uuid
 from app.models.schemas import ChatRequest, ChatResponse, SourceCitation
 from app.agent_conversations import service as conversation_service
-from app.agent_runtime import AgentRuntime
-from app.agent_runtime.runtime import AgentRuntimePreparation
+from collections.abc import AsyncIterator
+
+from app.agent_runtime import AgentRuntime, AgentRuntimePreparation, AgentRuntimeProgress
 from app.services.rag_chain import run_agent_chat, stream_agent_chat
 from app.config import settings
 
@@ -150,8 +151,6 @@ async def chat_stream(
         user_uuid, len(request.messages), request.use_rag,
     )
 
-    preparation = _prepare_agent_runtime(db, user_uuid, request.use_personal_context, request.use_rag)
-
     if request.conversation_uuid:
         # 分支条件：带会话 UUID 的 Web 请求先落下用户原话，刷新后也可恢复此轮问题。
         conversation_service.record_user_message(
@@ -172,14 +171,25 @@ async def chat_stream(
         """
         answer_parts: list[str] = []
         sources: list[dict] = []
-        response_context_labels: list[str] = preparation.context_labels
-        agent_events: list[dict[str, str]] = list(preparation.events)
+        response_context_labels: list[str] = []
+        agent_events: list[dict[str, str]] = []
         structured_plan: dict | None = None
         stream_failed = False
         try:
-            # Runtime 事件是可解释的执行轨迹，不包含模型内部推理过程。
-            for event in preparation.events:
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            preparation: AgentRuntimePreparation | None = None
+            # Runtime 逐步产出公开事件；准备完成后才把真实上下文交给既有 LLM/RAG 链路。
+            async for update in _stream_agent_runtime(
+                db, user_uuid, request.use_personal_context, request.use_rag,
+            ):
+                if isinstance(update, AgentRuntimeProgress):
+                    agent_events.append(update.event)
+                    yield f"data: {json.dumps(update.event, ensure_ascii=False)}\n\n"
+                else:
+                    preparation = update
+
+            if preparation is None:
+                raise RuntimeError("Agent Runtime 未返回上下文准备结果")
+            response_context_labels = preparation.context_labels
             call_kwargs = {
                 "user_uuid": user_uuid,
                 "messages": request.messages,
@@ -261,6 +271,28 @@ def _prepare_agent_runtime(
         # 分支条件：Runtime 初始化异常时，不阻断现有 AI 对话链路。
         logger.warning("[chat] Agent Runtime 初始化失败 user=%s error=%s", user_uuid, exc)
         return AgentRuntimePreparation(trace_id="", personal_context=None, context_labels=[], events=[])
+
+
+async def _stream_agent_runtime(
+    db: Session,
+    user_uuid: str,
+    use_personal_context: bool,
+    use_rag: bool,
+) -> AsyncIterator[AgentRuntimeProgress | AgentRuntimePreparation]:
+    """为 SSE 路由提供逐步 Runtime 事件；异常时回退为普通对话。"""
+    try:
+        async for update in AgentRuntime().stream_prepare(
+            db,
+            user_uuid,
+            use_personal_context=use_personal_context,
+            use_rag=use_rag,
+        ):
+            yield update
+    except Exception as exc:
+        # 分支条件：Runtime 自身初始化失败时保留既有 LLM 对话可用性，并发送可见降级事件。
+        logger.warning("[chat] Agent Runtime 流式初始化失败 user=%s error=%s", user_uuid, exc)
+        yield AgentRuntimeProgress({"type": "agent.failed", "label": "旅行上下文暂时不可用，已切换为通用建议"})
+        yield AgentRuntimePreparation(trace_id="", personal_context=None, context_labels=[], events=[])
 
 
 def _parse_sse_event(chunk: str) -> dict | None:

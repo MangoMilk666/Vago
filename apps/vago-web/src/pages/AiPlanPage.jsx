@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import Navbar from '../components/Navbar'
 import { aiApi } from '../api/ai'
 
@@ -731,6 +733,73 @@ function StructuredPlanCard({ plan }) {
   )
 }
 
+/** 将 Agent 文本按 Markdown 呈现；不启用原始 HTML，避免模型输出注入页面。 */
+function MarkdownAnswer({ content }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1: ({ children }) => <h3 className="mt-3 text-base font-semibold text-slate-900 first:mt-0">{children}</h3>,
+        h2: ({ children }) => <h4 className="mt-3 text-sm font-semibold text-slate-900 first:mt-0">{children}</h4>,
+        h3: ({ children }) => <h5 className="mt-2 text-sm font-medium text-slate-800 first:mt-0">{children}</h5>,
+        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+        ul: ({ children }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>,
+        ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
+        li: ({ children }) => <li>{children}</li>,
+        blockquote: ({ children }) => <blockquote className="my-2 border-l-2 border-violet-200 pl-3 text-slate-500">{children}</blockquote>,
+        code: ({ className, children }) => (
+          <code className={className || 'rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.82em] text-slate-700'}>{children}</code>
+        ),
+        pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">{children}</pre>,
+        a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer" className="text-violet-700 underline underline-offset-2 hover:text-violet-900">{children}</a>,
+        table: ({ children }) => <table className="my-2 w-full border-collapse text-xs">{children}</table>,
+        th: ({ children }) => <th className="border border-slate-200 bg-slate-50 px-2 py-1 text-left font-medium">{children}</th>,
+        td: ({ children }) => <td className="border border-slate-200 px-2 py-1 align-top">{children}</td>,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  )
+}
+
+/** 本轮公开执行轨迹；完成后默认折叠，用户仍可回看。 */
+function AgentActivityTrace({ activity, streaming, pending }) {
+  const isRunning = streaming || pending
+  const [expanded, setExpanded] = useState(isRunning)
+
+  useEffect(() => {
+    // 分支条件：最后一个公开事件展示完后才收起，避免快速回答截断事件的播放过程。
+    if (!isRunning) setExpanded(false)
+  }, [isRunning])
+
+  if (!activity?.length) return null
+  return (
+    <div className="overflow-hidden rounded-lg border border-violet-100 bg-violet-50/60">
+      <button
+        type="button"
+        onClick={() => setExpanded((current) => !current)}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-medium text-violet-700 hover:bg-violet-50"
+        aria-expanded={expanded}
+      >
+        <span>{isRunning ? '正在协调旅行上下文' : `查看本轮执行过程（${activity.length} 步）`}</span>
+        <svg className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {expanded && (
+        <div className="space-y-1 border-t border-violet-100 px-3 py-2">
+          {activity.map((event, index) => (
+            <p key={`${event.type}-${event.tool || index}-${index}`} className={`text-[11px] leading-5 ${event.type === 'tool.failed' || event.type === 'agent.failed' ? 'text-amber-700' : 'text-slate-600'}`}>
+              <span className="mr-1 text-violet-500">{event.type === 'tool.failed' || event.type === 'agent.failed' ? '!' : event.type === 'tool.started' || event.type === 'agent.status' ? '·' : '✓'}</span>
+              {event.label}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** 单条消息气泡 */
 function ChatMessage({ msg }) {
   const isUser = msg.role === 'user'
@@ -754,13 +823,15 @@ function ChatMessage({ msg }) {
           AI
         </div>
         <div className="flex-1 min-w-0 space-y-2">
+          <AgentActivityTrace activity={msg.activity} streaming={msg.streaming} pending={msg.activityPending} />
+
           {/* 回答内容 */}
           {msg.content ? (
-            <div className={`px-4 py-3 rounded-2xl rounded-tl-sm text-sm leading-relaxed whitespace-pre-wrap
+            <div className={`px-4 py-3 rounded-2xl rounded-tl-sm text-sm leading-relaxed break-words
               ${msg.error
                 ? 'bg-red-50 text-red-600 border border-red-100'
                 : 'bg-white border border-gray-100 text-gray-800 shadow-sm'}`}>
-              {msg.content}
+              {msg.error ? msg.content : <MarkdownAnswer content={msg.content} />}
               {msg.streaming && (
                 <span className="inline-block w-0.5 h-4 ml-0.5 bg-indigo-500 animate-pulse align-middle"/>
               )}
@@ -774,18 +845,6 @@ function ChatMessage({ msg }) {
               </div>
             </div>
           ) : null}
-
-          {/* 仅展示 Agent 实际执行的领域读取，不展示模型的内部推理过程。 */}
-          {msg.activity?.length > 0 && (
-            <div className="border-l-2 border-violet-200 pl-3 py-0.5 space-y-1">
-              {msg.activity.map((event, index) => (
-                <p key={`${event.type}-${event.tool || index}`} className={`text-[11px] leading-5 ${event.type === 'tool.failed' || event.type === 'agent.failed' ? 'text-amber-600' : 'text-slate-500'}`}>
-                  <span className="mr-1 text-violet-500">{event.type === 'tool.failed' || event.type === 'agent.failed' ? '!' : event.type === 'tool.started' || event.type === 'agent.status' ? '·' : '✓'}</span>
-                  {event.label}
-                </p>
-              ))}
-            </div>
-          )}
 
           {/* Phase 9 只显示本轮读取的 Context 类别，不泄露内部 Prompt 或推理过程。 */}
           {msg.contextLabels?.length > 0 && (
@@ -887,6 +946,41 @@ function ChatPanel() {
   const bottomRef  = useRef(null)
   const inputRef   = useRef(null)
   const abortRef   = useRef(null)   // AbortController 引用，用于超时取消
+  const activityQueueRef = useRef([])
+  const activityTimerRef = useRef(null)
+
+  const flushActivityQueue = useCallback(() => {
+    const next = activityQueueRef.current.shift()
+    if (!next) {
+      activityTimerRef.current = null
+      return
+    }
+    setMessages((previous) => {
+      const messageIndex = previous.findIndex((message) => message.uuid === next.messageUuid)
+      // 分支条件：用户已删除或切换会话时，不把旧会话事件错误写到当前最后一条消息。
+      if (messageIndex < 0) return previous
+      const copy = [...previous]
+      const message = { ...copy[messageIndex] }
+      message.activity = [...(message.activity ?? []), next.event]
+      // 分支条件：只有结束事件真正显示后才允许面板自动折叠，确保事件队列完整播放。
+      if (next.event.type === 'agent.completed' || next.event.type === 'agent.failed') {
+        message.activityPending = false
+      }
+      copy[messageIndex] = message
+      return copy
+    })
+    // 即使领域读取很快，也保留短间隔，让调用与结果的顺序对用户可感知。
+    activityTimerRef.current = window.setTimeout(flushActivityQueue, 180)
+  }, [])
+
+  const enqueueActivityEvent = useCallback((messageUuid, event) => {
+    activityQueueRef.current.push({ messageUuid, event })
+    if (activityTimerRef.current === null) flushActivityQueue()
+  }, [flushActivityQueue])
+
+  useEffect(() => () => {
+    if (activityTimerRef.current !== null) window.clearTimeout(activityTimerRef.current)
+  }, [])
 
   const refreshConversations = useCallback(async () => {
     const response = await aiApi.conversations()
@@ -911,10 +1005,11 @@ function ChatPanel() {
       const response = await aiApi.conversationMessages(conversationUuid, beforeUuid)
       const page = response.data
       // 分支条件：上拉读取旧页时插到现有消息之前，首次读取则直接替换显示内容。
-      setMessages((previous) => beforeUuid ? [...(page.messages ?? []), ...previous] : (page.messages ?? []).map((message) => ({
+      const restoredMessages = (page.messages ?? []).map((message) => ({
         ...message,
         activity: message.agentEvents ?? [],
-      })))
+      }))
+      setMessages((previous) => beforeUuid ? [...restoredMessages, ...previous] : restoredMessages)
       setNextBeforeUuid(page.nextBeforeUuid ?? null)
     } finally {
       setLoadingMessages(false)
@@ -1013,7 +1108,7 @@ function ChatPanel() {
     setMessages((prev) => [
       ...prev,
       { uuid: `local-${Date.now()}`, role: 'user', content: text },
-      { uuid: localAssistantUuid, role: 'assistant', content: '', sources: [], contextLabels: [], activity: [], streaming: true },
+      { uuid: localAssistantUuid, role: 'assistant', content: '', sources: [], contextLabels: [], activity: [], activityPending: true, streaming: true },
     ])
     setInput('')
     setStreaming(true)
@@ -1067,14 +1162,8 @@ function ChatPanel() {
           if (!event) continue
 
           if (event.type.startsWith('agent.') || event.type.startsWith('tool.')) {
-            // 执行轨迹来自服务端公开事件，避免将模型推理过程暴露到 UI。
-            setMessages((prev) => {
-              const copy = [...prev]
-              const last = { ...copy[copy.length - 1] }
-              last.activity = [...(last.activity ?? []), event]
-              copy[copy.length - 1] = last
-              return copy
-            })
+            // 执行轨迹来自服务端公开事件，排队展示以保留调用与结果的视觉顺序。
+            enqueueActivityEvent(localAssistantUuid, event)
           } else if (event.type === 'text') {
             // 逐 token 追加内容；首个文本到达时清除检索提示（兜底：
             // 当 RAG 无命中结果时 sources 事件不发送，searchingQuery 可能残留）
@@ -1143,6 +1232,11 @@ function ChatPanel() {
       const errMsg    = isTimeout
         ? '系统繁忙，请稍后再试（请确认 AI 服务已启动）'
         : `连接失败：${err.message}`
+      // 分支条件：浏览器中断而未收到服务端结束事件时，补充终止事件以结束本地活动队列。
+      enqueueActivityEvent(localAssistantUuid, {
+        type: 'agent.failed',
+        label: isTimeout ? '本轮 Agent 请求已取消' : '本轮 Agent 请求未能完成',
+      })
 
       setMessages((prev) => {
         const copy = [...prev]

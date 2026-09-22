@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.api.v1 import api_v1_router
 from app.core.exceptions import register_exception_handlers
 from app.dependencies.auth import get_current_user_uuid
-from app.agent_runtime.runtime import AgentRuntimePreparation
+from app.agent_runtime.runtime import AgentRuntimePreparation, AgentRuntimeProgress
 from app.routers import chat
 
 
@@ -97,16 +97,12 @@ def test_stream_emits_runtime_events_before_agent_text(monkeypatch) -> None:
         return "context-test-user"
 
     app.dependency_overrides[get_current_user_uuid] = override_current_user_uuid
-    monkeypatch.setattr(
-        chat,
-        "_prepare_agent_runtime",
-        lambda *_args: AgentRuntimePreparation(
-            trace_id="test",
-            personal_context=None,
-            context_labels=[],
-            events=[{"type": "agent.started", "label": "开始整理本轮旅行上下文"}],
-        ),
-    )
+
+    async def fake_stream_runtime(*_args):
+        yield AgentRuntimeProgress({"type": "agent.started", "label": "开始整理本轮旅行上下文"})
+        yield AgentRuntimePreparation(trace_id="test", personal_context=None, context_labels=[], events=[])
+
+    monkeypatch.setattr(chat, "_stream_agent_runtime", fake_stream_runtime)
     monkeypatch.setattr(chat, "stream_agent_chat", fake_stream_agent_chat)
 
     with TestClient(app) as client:
