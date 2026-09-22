@@ -1092,6 +1092,12 @@ function ChatPanel() {
     }
   }
 
+  const dismissContextPreview = () => {
+    // 关闭仅影响本次预览展示，不会关闭用户对 Agent 读取旅行上下文的授权开关。
+    setContextPreview(null)
+    setContextPreviewError('')
+  }
+
   return (
     <section className="flex flex-col h-full">
       {/* 标题栏 */}
@@ -1102,7 +1108,7 @@ function ChatPanel() {
                              flex items-center justify-center text-white text-[10px] font-bold">
               AI
             </span>
-            Vago Agent 测试
+            Vago Agent
           </h2>
           <p className="text-xs text-gray-400 mt-0.5">本轮可按需参考你的旅行事实、偏好与知识资料</p>
         </div>
@@ -1142,17 +1148,30 @@ function ChatPanel() {
       </div>
 
       {(contextPreview || contextPreviewError) && (
-        <div className="mx-5 mt-3 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
-          {contextPreview ? (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-medium text-violet-700">可用上下文：</span>
-              {contextPreview.labels?.length > 0 ? contextPreview.labels.map((label) => (
-                <span key={label} className="rounded-full bg-white px-2 py-0.5 text-[11px] text-violet-600">
-                  {label}
-                </span>
-              )) : <span className="text-[11px] text-violet-500">暂时没有可用的个人旅行资料</span>}
-            </div>
-          ) : <p className="text-[11px] text-red-500">{contextPreviewError}</p>}
+        <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2">
+          <div className="min-w-0 flex-1">
+            {contextPreview ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-medium text-violet-700">可用上下文：</span>
+                {contextPreview.labels?.length > 0 ? contextPreview.labels.map((label) => (
+                  <span key={label} className="rounded-full bg-white px-2 py-0.5 text-[11px] text-violet-600">
+                    {label}
+                  </span>
+                )) : <span className="text-[11px] text-violet-500">暂时没有可用的个人旅行资料</span>}
+              </div>
+            ) : <p className="text-[11px] text-red-500">{contextPreviewError}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={dismissContextPreview}
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-violet-400 transition-colors hover:bg-violet-100 hover:text-violet-700"
+            aria-label="关闭上下文预览"
+            title="关闭"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       )}
 
