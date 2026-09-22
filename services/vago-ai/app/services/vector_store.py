@@ -66,7 +66,7 @@ async def init_collection() -> None:
 
     应在应用启动时（lifespan）调用一次。
     Collection 使用 COSINE 距离度量，与 OpenAI text-embedding-3-small 匹配。
-    向量维度由配置 openai_embedding_dim 决定（默认 1536）。
+    向量维度由配置 embedding_dim 决定（默认 1536）。
 
     幂等操作：若 Collection 已存在则跳过创建，不会抛出异常。
     """
@@ -78,7 +78,7 @@ async def init_collection() -> None:
         await client.create_collection(
             collection_name=settings.qdrant_collection,
             vectors_config=qm.VectorParams(
-                size=settings.openai_embedding_dim,
+                size=settings.embedding_dim,
                 distance=qm.Distance.COSINE,
             ),
         )

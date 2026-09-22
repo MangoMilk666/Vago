@@ -8,7 +8,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from sqlalchemy.engine import URL
 
@@ -29,10 +29,16 @@ class Settings(BaseSettings):
         ]
     )
 
-    # Embedding 模型配置，保留旧字段以兼容现有向量化管道。
+    # Embedding 模型与具体 Provider 无关；保留 OPENAI_* 环境变量仅兼容旧部署。
     openai_api_key: str = ""
-    openai_embedding_model: str = "text-embedding-3-small"
-    openai_embedding_dim: int = 1536
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        validation_alias=AliasChoices("EMBEDDING_MODEL", "OPENAI_EMBEDDING_MODEL"),
+    )
+    embedding_dim: int = Field(
+        default=1536,
+        validation_alias=AliasChoices("EMBEDDING_DIM", "OPENAI_EMBEDDING_DIM"),
+    )
     embed_api_key: str = ""
     embed_base_url: str = ""
 
@@ -103,6 +109,8 @@ class Settings(BaseSettings):
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
+        # validation_alias 存在时，仍允许测试和应用代码使用 Python 字段名初始化配置。
+        "populate_by_name": True,
         "extra": "ignore",
     }
 

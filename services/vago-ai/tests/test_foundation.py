@@ -22,6 +22,29 @@ def test_settings_keep_legacy_provider_fallbacks():
     assert settings.get_llm_base_url() is None
 
 
+def test_settings_use_provider_neutral_embedding_variables_first():
+    """测试：Embedding 配置优先读取中性变量，并兼容旧 OPENAI_* 变量。"""
+    # 分支条件：新旧变量同时存在时，以不绑定具体 Provider 的新变量作为最终配置。
+    settings = Settings(
+        EMBEDDING_MODEL="text-embedding-v3",
+        EMBEDDING_DIM=1024,
+        OPENAI_EMBEDDING_MODEL="legacy-embedding-model",
+        OPENAI_EMBEDDING_DIM=1536,
+    )
+
+    assert settings.embedding_model == "text-embedding-v3"
+    assert settings.embedding_dim == 1024
+
+    # 分支条件：旧环境尚未迁移时，继续读取旧变量，避免升级后索引维度发生意外变化。
+    legacy_settings = Settings(
+        OPENAI_EMBEDDING_MODEL="text-embedding-v1",
+        OPENAI_EMBEDDING_DIM=1536,
+    )
+
+    assert legacy_settings.embedding_model == "text-embedding-v1"
+    assert legacy_settings.embedding_dim == 1536
+
+
 def test_settings_build_database_url_from_mysql_parts():
     """数据库连接应由分开的 MySQL 配置字段构造。"""
     settings = Settings(

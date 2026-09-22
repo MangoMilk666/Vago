@@ -68,7 +68,7 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     for i in range(0, len(texts), BATCH_SIZE):
         batch = texts[i : i + BATCH_SIZE]
         response = await client.embeddings.create(
-            model=settings.openai_embedding_model,
+            model=settings.embedding_model,
             input=batch,
         )
         # response.data 按输入顺序返回，直接 extend
@@ -96,7 +96,7 @@ async def embed_query(query: str) -> list[float]:
     """
     client = _get_client()
     response = await client.embeddings.create(
-        model=settings.openai_embedding_model,
+        model=settings.embedding_model,
         input=[query],
     )
     return response.data[0].embedding
