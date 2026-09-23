@@ -10,85 +10,94 @@ struct AgentChatView: View {
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            NavigationStack {
-                VStack(spacing: 0) {
-                    conversationHeader
-                    Divider()
-                    messageList
-                }
-                .navigationTitle("Vago Agent")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { withAnimation { isConversationListPresented = true } } label: {
-                            Image(systemName: "sidebar.left")
-                        }
-                        .accessibilityLabel("打开对话侧栏")
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                NavigationStack {
+                    VStack(spacing: 0) {
+                        conversationHeader
+                        Divider()
+                        messageList
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { viewModel.startNewConversation() } label: {
-                            Image(systemName: "square.and.pencil")
+                    .navigationTitle("Vago Agent")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button { withAnimation { isConversationListPresented = true } } label: {
+                                Image(systemName: "sidebar.left")
+                            }
+                            .accessibilityLabel("打开对话侧栏")
                         }
-                        .disabled(viewModel.isStreaming)
-                        .accessibilityLabel("新对话")
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Toggle("使用旅行上下文", isOn: $viewModel.usePersonalContext)
-                            Toggle("使用个人资料", isOn: $viewModel.useRag)
-                        } label: {
-                            Image(systemName: "slider.horizontal.3")
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button { viewModel.startNewConversation() } label: {
+                                Image(systemName: "square.and.pencil")
+                            }
+                            .disabled(viewModel.isStreaming)
+                            .accessibilityLabel("新对话")
                         }
-                        .accessibilityLabel("Agent 上下文设置")
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Menu {
+                                Toggle("使用旅行上下文", isOn: $viewModel.usePersonalContext)
+                                Toggle("使用个人资料", isOn: $viewModel.useRag)
+                            } label: {
+                                Image(systemName: "slider.horizontal.3")
+                            }
+                            .accessibilityLabel("Agent 上下文设置")
+                        }
+                    }
+                    .safeAreaInset(edge: .bottom) { composer }
+                    .task(id: session.profile?.uuid) {
+                        await viewModel.loadConversations(session: session)
+                    }
+                    .alert("Agent 对话提示", isPresented: Binding(
+                        get: { !viewModel.errorMessage.isEmpty },
+                        set: { if !$0 { viewModel.errorMessage = "" } }
+                    )) {
+                        Button("好的", role: .cancel) {}
+                    } message: {
+                        Text(viewModel.errorMessage)
                     }
                 }
-                .safeAreaInset(edge: .bottom) { composer }
-                .task(id: session.profile?.uuid) {
-                    await viewModel.loadConversations(session: session)
-                }
-                .alert("Agent 对话提示", isPresented: Binding(
-                    get: { !viewModel.errorMessage.isEmpty },
-                    set: { if !$0 { viewModel.errorMessage = "" } }
-                )) {
-                    Button("好的", role: .cancel) {}
-                } message: {
-                    Text(viewModel.errorMessage)
-                }
-            }
 
-            if isConversationListPresented {
-                Color.black.opacity(0.24)
-                    .ignoresSafeArea()
-                    .onTapGesture { withAnimation { isConversationListPresented = false } }
-                ConversationSidebar(
-                    conversations: viewModel.conversations,
-                    activeConversationUuid: viewModel.activeConversation?.uuid,
-                    isStreaming: viewModel.isStreaming,
-                    onClose: { withAnimation { isConversationListPresented = false } },
-                    onNewConversation: {
-                        viewModel.startNewConversation()
-                        withAnimation { isConversationListPresented = false }
-                    },
-                    onSelect: { conversation in
-                        Task {
-                            await viewModel.selectConversation(conversation, session: session)
+                if isConversationListPresented {
+                    Color.black.opacity(0.24)
+                        .contentShape(Rectangle())
+                        .onTapGesture { withAnimation { isConversationListPresented = false } }
+                    ConversationSidebar(
+                        conversations: viewModel.conversations,
+                        activeConversationUuid: viewModel.activeConversation?.uuid,
+                        isStreaming: viewModel.isStreaming,
+                        onClose: { withAnimation { isConversationListPresented = false } },
+                        onNewConversation: {
+                            viewModel.startNewConversation()
                             withAnimation { isConversationListPresented = false }
+                        },
+                        onSelect: { conversation in
+                            Task {
+                                await viewModel.selectConversation(conversation, session: session)
+                                withAnimation { isConversationListPresented = false }
+                            }
+                        },
+                        onRename: { conversation, title in
+                            Task { await viewModel.renameConversation(conversation, title: title, session: session) }
+                        },
+                        onDelete: { conversation in
+                            Task { await viewModel.deleteConversation(conversation, session: session) }
                         }
-                    },
-                    onRename: { conversation, title in
-                        Task { await viewModel.renameConversation(conversation, title: title, session: session) }
-                    },
-                    onDelete: { conversation in
-                        Task { await viewModel.deleteConversation(conversation, session: session) }
-                    }
-                )
-                .frame(width: min(UIScreen.main.bounds.width * 0.84, 340))
-                .frame(maxHeight: .infinity, alignment: .leading)
-                .transition(.move(edge: .leading).combined(with: .opacity))
+                    )
+                    // 分支条件：以当前可用容器宽度计算抽屉，旋转或分屏后不会继续沿用旧屏幕尺寸。
+                    .frame(width: drawerWidth(for: proxy.size.width), height: proxy.size.height, alignment: .topLeading)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                }
             }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .animation(.easeInOut(duration: 0.2), value: isConversationListPresented)
+    }
+
+    private func drawerWidth(for availableWidth: CGFloat) -> CGFloat {
+        // 小屏至少留出可点击的遮罩区域；大屏限制最大宽度，避免会话栏吞掉聊天主界面。
+        let maximumWidth = min(360, max(availableWidth - 32, 0))
+        return min(max(availableWidth * 0.84, 280), maximumWidth)
     }
 
     private var conversationHeader: some View {
@@ -653,7 +662,7 @@ private struct ConversationSidebar: View {
     @State private var deletingConversation: AgentConversation?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Label("Agent 对话", systemImage: "brain.head.profile")
                     .font(.headline)
@@ -661,53 +670,80 @@ private struct ConversationSidebar: View {
                 Button(action: onClose) { Image(systemName: "xmark") }
                     .accessibilityLabel("关闭对话侧栏")
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 14)
             Button(action: onNewConversation) {
                 Label("新对话", systemImage: "square.and.pencil")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .disabled(isStreaming)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 18)
 
-            Text("近期对话")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(conversations) { conversation in
-                        HStack(spacing: 8) {
-                            Button { onSelect(conversation) } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(conversation.title).lineLimit(1)
-                                    Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
+            Divider()
+            HStack {
+                Text("近期对话")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(conversations.count)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            if conversations.isEmpty {
+                ContentUnavailableView("还没有对话", systemImage: "bubble.left.and.bubble.right", description: Text("新建对话后，记录会保存在这里。"))
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 16)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 5) {
+                        ForEach(conversations) { conversation in
+                            HStack(spacing: 6) {
+                                Button { onSelect(conversation) } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(conversation.title)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.leading)
+                                        Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .buttonStyle(.plain)
+                                if conversation.uuid == activeConversationUuid {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.indigo)
+                                }
+                                Menu {
+                                    Button { beginRename(conversation) } label: { Label("重命名", systemImage: "pencil") }
+                                    Button(role: .destructive) { deletingConversation = conversation } label: { Label("删除", systemImage: "trash") }
+                                } label: {
+                                    Image(systemName: "ellipsis")
+                                        .frame(width: 30, height: 30)
+                                }
+                                .accessibilityLabel("管理对话")
                             }
-                            if conversation.uuid == activeConversationUuid {
-                                Image(systemName: "checkmark").foregroundStyle(.indigo)
-                            }
-                            Menu {
-                                Button { beginRename(conversation) } label: { Label("重命名", systemImage: "pencil") }
-                                Button(role: .destructive) { deletingConversation = conversation } label: { Label("删除", systemImage: "trash") }
-                            } label: {
-                                Image(systemName: "ellipsis")
-                                    .frame(width: 28, height: 28)
-                            }
-                            .accessibilityLabel("管理对话")
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 9)
+                            .background(conversation.uuid == activeConversationUuid ? Color.indigo.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(conversation.uuid == activeConversationUuid ? Color.indigo.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 12)
                 }
             }
         }
-        .padding(.top, 18)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(.regularMaterial)
-        .ignoresSafeArea(edges: .vertical)
         .alert("重命名对话", isPresented: Binding(get: { editingConversation != nil }, set: { if !$0 { editingConversation = nil } })) {
             TextField("对话标题", text: $titleDraft)
             Button("保存") {
