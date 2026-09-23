@@ -12,16 +12,16 @@ from sqlalchemy.orm import Session
 
 from app.agent_runtime.registry import AgentTool, ToolRegistry
 from app.footprints import service as footprint_service
-from app.knowledge import service as knowledge_service
 from app.memory import service as memory_service
 from app.personal_context.schemas import PersonalContextPreview
 from app.personal_context.service import format_context_for_agent
 from app.preferences import service as preference_service
 from app.travel import service as travel_service
+from app.agent_runtime.selection import ToolSelectionPolicy
 
 logger = logging.getLogger(__name__)
 
-MAX_READ_STEPS = 5
+MAX_READ_STEPS = 3
 
 
 @dataclass(frozen=True)
@@ -44,14 +44,18 @@ class AgentRuntimeProgress:
 class AgentRuntime:
     """只读上下文协调器；写操作、审批与外部工具仍留待后续 Phase。"""
 
-    def __init__(self, registry: ToolRegistry | None = None) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry | None = None,
+        selection_policy: ToolSelectionPolicy | None = None,
+    ) -> None:
         self._registry = registry or ToolRegistry([
             AgentTool("get_current_trip", "正在读取当前行程与近期历史", _get_travel_context),
             AgentTool("get_recent_footprint", "正在查看近期旅行足迹", _get_live_observations),
             AgentTool("get_user_preferences", "正在读取明确旅行偏好", _get_preferences),
             AgentTool("get_travel_memories", "正在读取旅行回忆摘要", _get_memories),
-            AgentTool("get_personal_knowledge_summary", "正在确认个人资料范围", _get_knowledge_summary),
         ])
+        self._selection_policy = selection_policy or ToolSelectionPolicy()
 
     def prepare(
         self,
@@ -60,6 +64,8 @@ class AgentRuntime:
         *,
         use_personal_context: bool,
         use_rag: bool,
+        prompt: str = "",
+        recent_user_messages: tuple[str, ...] = (),
     ) -> AgentRuntimePreparation:
         """执行有限次只读工具调用，并将真实结果组装为本轮 Context。"""
         trace_id = uuid4().hex
@@ -73,14 +79,14 @@ class AgentRuntime:
             "memories": [],
             "knowledgeSummary": {},
         }
-        tool_names = _select_read_tools(use_personal_context, use_rag)
+        tool_names = self._select_tools(prompt, recent_user_messages, use_personal_context, use_rag)
 
-        # 分支条件：用户未授权任何个人数据时，保留通用对话但不执行任何领域读取。
+        # 分支条件：未授权或本轮问题无需个人事实时直接进入通用建议，空工具计划是正常结果。
         if not tool_names:
-            events.append(_event("agent.status", "本轮未启用个人旅行上下文", trace_id=trace_id))
+            events.append(_event("agent.status", _no_tool_status(use_personal_context, use_rag), trace_id=trace_id))
             return AgentRuntimePreparation(trace_id, None, [], events)
 
-        events.append(_event("agent.status", "正在获取已授权的旅行信息", trace_id=trace_id))
+        events.append(_event("agent.status", "正在读取与本轮问题相关的旅行信息", trace_id=trace_id))
 
         for index, tool_name in enumerate(tool_names[:MAX_READ_STEPS], start=1):
             tool = self._registry.get(tool_name)
@@ -121,6 +127,8 @@ class AgentRuntime:
         *,
         use_personal_context: bool,
         use_rag: bool,
+        prompt: str = "",
+        recent_user_messages: tuple[str, ...] = (),
     ) -> AsyncIterator[AgentRuntimeProgress | AgentRuntimePreparation]:
         """边执行边发送 Runtime 事件，避免快速读取在客户端被压缩为同一帧。"""
         trace_id = uuid4().hex
@@ -131,16 +139,16 @@ class AgentRuntime:
             "memories": [],
             "knowledgeSummary": {},
         }
-        tool_names = _select_read_tools(use_personal_context, use_rag)
+        tool_names = self._select_tools(prompt, recent_user_messages, use_personal_context, use_rag)
         yield AgentRuntimeProgress(_event("agent.started", "开始整理本轮旅行上下文", trace_id=trace_id))
 
-        # 分支条件：用户未授权任何个人数据时，直接进入通用 LLM 对话，不读取领域事实。
+        # 分支条件：未授权或本轮问题无需个人事实时，直接进入通用 LLM 对话，不读取领域事实。
         if not tool_names:
-            yield AgentRuntimeProgress(_event("agent.status", "本轮未启用个人旅行上下文", trace_id=trace_id))
+            yield AgentRuntimeProgress(_event("agent.status", _no_tool_status(use_personal_context, use_rag), trace_id=trace_id))
             yield AgentRuntimePreparation(trace_id, None, [], [])
             return
 
-        yield AgentRuntimeProgress(_event("agent.status", "正在获取已授权的旅行信息", trace_id=trace_id))
+        yield AgentRuntimeProgress(_event("agent.status", "正在读取与本轮问题相关的旅行信息", trace_id=trace_id))
         events: list[dict[str, str]] = []
         for index, tool_name in enumerate(tool_names[:MAX_READ_STEPS], start=1):
             tool = self._registry.get(tool_name)
@@ -185,15 +193,29 @@ class AgentRuntime:
             events=events,
         )
 
+    def _select_tools(
+        self,
+        prompt: str,
+        recent_user_messages: tuple[str, ...],
+        use_personal_context: bool,
+        use_rag: bool,
+    ) -> tuple[str, ...]:
+        """授权决定可读取范围，确定性 Policy 决定本轮是否真的需要读取领域事实。"""
+        # use_rag 仅决定既有 LangChain RAG 工具是否可注册；不在 Runtime 固定读取知识库摘要。
+        _ = use_rag
+        plan = self._selection_policy.select(
+            prompt,
+            recent_user_messages=recent_user_messages,
+            use_personal_context=use_personal_context,
+        )
+        return plan.tool_names[:MAX_READ_STEPS]
 
-def _select_read_tools(use_personal_context: bool, use_rag: bool) -> list[str]:
-    """根据用户授权选择可调用的只读工具；语义检索仍由现有 LLM Tool Calling 按需触发。"""
-    tools: list[str] = []
-    if use_personal_context:
-        tools.extend(["get_current_trip", "get_recent_footprint", "get_user_preferences", "get_travel_memories"])
-    if use_rag:
-        tools.append("get_personal_knowledge_summary")
-    return tools
+
+def _no_tool_status(use_personal_context: bool, use_rag: bool) -> str:
+    """区分用户未授权与问题无需读取，避免客户端把正常零工具误解为故障。"""
+    if not use_personal_context and not use_rag:
+        return "本轮未启用个人旅行上下文"
+    return "本轮问题无需读取个人旅行资料，正在生成建议"
 
 
 def _get_travel_context(db: Session, user_uuid: str, _: dict[str, Any]) -> dict[str, Any]:
@@ -219,11 +241,6 @@ def _get_memories(db: Session, user_uuid: str, _: dict[str, Any]) -> list[dict[s
     return memory_service.get_agent_memory_context(db, user_uuid)
 
 
-def _get_knowledge_summary(db: Session, user_uuid: str, _: dict[str, Any]) -> dict[str, Any]:
-    """只确认知识资料范围；具体文本必须继续经 RAG Tool 获取。"""
-    return knowledge_service.get_agent_knowledge_summary(db, user_uuid)
-
-
 def _store_tool_output(state: dict[str, Any], tool_name: str, output: Any) -> None:
     """将工具 Observation 放入 Runtime State，供后续工具和 Prompt 使用。"""
     # 工具名 和 读取数据的字段名一一对应
@@ -232,7 +249,6 @@ def _store_tool_output(state: dict[str, Any], tool_name: str, output: Any) -> No
         "get_recent_footprint": "liveObservations",
         "get_user_preferences": "preferences",
         "get_travel_memories": "memories",
-        "get_personal_knowledge_summary": "knowledgeSummary",
     }
     state[mapping[tool_name]] = output
 
@@ -280,8 +296,6 @@ def _summary_for_tool(tool_name: str, output: Any) -> str:
         return "已读取明确旅行偏好" if output and output.get("hasExplicitPreference") else "尚未设置明确旅行偏好"
     if tool_name == "get_travel_memories":
         return "已读取旅行回忆摘要" if output else "暂无已生成的旅行回忆"
-    if tool_name == "get_personal_knowledge_summary":
-        return "已确认个人资料范围" if output and output.get("sourceCount") else "暂无个人知识资料"
     return "已完成读取"
 
 

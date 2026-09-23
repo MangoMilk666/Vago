@@ -59,6 +59,22 @@ description: Vago 项目的编码规范。仅在用户明确要求新增、修�
 '''
 ```
 
+具体场景的注释规范：
+
+- 对于`if-else`分支代码: 注释统一写成`如果+<具体条件>`的形式
+- 对于单元测试，注释时要标注`测试：xxx`
+
+```python
+# 如果用户授权了xxx, xxx
+if user_allow:
+    do something
+def test_something_work:
+    '''
+    测试：xxx逻辑是否生效
+    '''
+    xxx
+```
+
 ### Other Languages
 
 TypeScript / JavaScript / Swift 等语言使用该语言原生合法的注释语法，并保持中文说明：

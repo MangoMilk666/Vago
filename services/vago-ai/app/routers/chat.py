@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user_uuid
-from app.models.schemas import ChatRequest, ChatResponse, SourceCitation
+from app.models.schemas import ChatMessage, ChatRequest, ChatResponse, SourceCitation
 from app.agent_conversations import service as conversation_service
 from collections.abc import AsyncIterator
 
@@ -81,7 +81,9 @@ async def chat(
         user_uuid, len(request.messages), request.use_rag,
     )
 
-    preparation = _prepare_agent_runtime(db, user_uuid, request.use_personal_context, request.use_rag)
+    preparation = _prepare_agent_runtime(
+        db, user_uuid, request.use_personal_context, request.use_rag, request.messages,
+    )
     # 工具调用的请求参数集合？
     try:
         call_kwargs = {
@@ -179,7 +181,7 @@ async def chat_stream(
             preparation: AgentRuntimePreparation | None = None
             # Runtime 逐步产出公开事件；准备完成后才把真实上下文交给既有 LLM/RAG 链路。
             async for update in _stream_agent_runtime(
-                db, user_uuid, request.use_personal_context, request.use_rag,
+                db, user_uuid, request.use_personal_context, request.use_rag, request.messages,
             ):
                 if isinstance(update, AgentRuntimeProgress):
                     agent_events.append(update.event)
@@ -259,6 +261,7 @@ def _prepare_agent_runtime(
     user_uuid: str,
     use_personal_context: bool,
     use_rag: bool,
+    messages: list[ChatMessage],
 ) -> AgentRuntimePreparation:
     """准备只读 Agent Runtime；整体初始化失败时仍保留普通对话能力。"""
     try:
@@ -266,6 +269,8 @@ def _prepare_agent_runtime(
             db, user_uuid,
             use_personal_context=use_personal_context,
             use_rag=use_rag,
+            prompt=messages[-1].content,
+            recent_user_messages=_recent_user_messages(messages),
         )
     except Exception as exc:
         # 分支条件：Runtime 初始化异常时，不阻断现有 AI 对话链路。
@@ -278,6 +283,7 @@ async def _stream_agent_runtime(
     user_uuid: str,
     use_personal_context: bool,
     use_rag: bool,
+    messages: list[ChatMessage],
 ) -> AsyncIterator[AgentRuntimeProgress | AgentRuntimePreparation]:
     """为 SSE 路由提供逐步 Runtime 事件；异常时回退为普通对话。"""
     try:
@@ -286,6 +292,8 @@ async def _stream_agent_runtime(
             user_uuid,
             use_personal_context=use_personal_context,
             use_rag=use_rag,
+            prompt=messages[-1].content,
+            recent_user_messages=_recent_user_messages(messages),
         ):
             yield update
     except Exception as exc:
@@ -293,6 +301,15 @@ async def _stream_agent_runtime(
         logger.warning("[chat] Agent Runtime 流式初始化失败 user=%s error=%s", user_uuid, exc)
         yield AgentRuntimeProgress({"type": "agent.failed", "label": "旅行上下文暂时不可用，已切换为通用建议"})
         yield AgentRuntimePreparation(trace_id="", personal_context=None, context_labels=[], events=[])
+
+
+def _recent_user_messages(messages: list[ChatMessage]) -> tuple[str, ...]:
+    """只取最近三条用户原话帮助理解类似于“那明天呢”这样的追问，避免把完整会话再次用于路由。"""
+    return tuple(
+        message.content
+        for message in messages[:-1]
+        if message.role == "user"
+    )[-3:]
 
 
 def _parse_sse_event(chunk: str) -> dict | None:
