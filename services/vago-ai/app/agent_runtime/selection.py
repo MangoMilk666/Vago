@@ -16,6 +16,8 @@ class ToolSelectionPlan:
 
     intent: str
     tool_names: tuple[str, ...]
+    # 是否允许既有 LangChain 注册个人知识 RAG 工具；是否实际调用由 LLM 根据本轮问题决定。
+    allow_rag_search: bool
 
 
 class ToolSelectionPolicy:
@@ -23,6 +25,7 @@ class ToolSelectionPolicy:
 
     _CURRENT_TRIP_TERMS = (
         "当前行程", "我的行程", "本次行程", "这次行程", "今天的行程", "今天行程",
+        "当前日程", "当前的日程",
         "我的日程", "今日日程", "今天安排", "今天有什么安排", "接下来", "还剩",
         "剩余", "行程里", "日程里",
     )
@@ -47,21 +50,26 @@ class ToolSelectionPolicy:
         *,
         recent_user_messages: Sequence[str] = (),
         use_personal_context: bool,
+        use_rag: bool,
     ) -> ToolSelectionPlan:
         """从当前 prompt 选择工具；只有明显的追问才借用有限的历史用户问题。"""
         if not use_personal_context:
-            return ToolSelectionPlan(intent="general", tool_names=())
+            return ToolSelectionPlan(
+                intent="general",
+                tool_names=(),
+                allow_rag_search=use_rag,
+            )
 
         normalized_prompt = _normalize(prompt)
         routed_text = normalized_prompt
-        # 分支条件：短追问通常省略“当前行程”等主语，才使用有限历史恢复其指代，普通问题不扩大读取范围。
+        # 如果短追问省略“当前行程”等主语，才使用有限历史恢复其指代，普通问题不扩大读取范围。
         if _contains_any(normalized_prompt, self._FOLLOW_UP_TERMS):
             # 最近三条用户的消息文本
             recent_context = " ".join(_normalize(message) for message in recent_user_messages[-3:])
             # 最近三条，连同当前的最新prompt
             routed_text = f"{recent_context} {normalized_prompt}".strip()
 
-        # 判断是否和对应话题有关
+        # 根据路由文本判断是否命中对应话题。
         is_live_travel = _contains_any(routed_text, self._LIVE_TRAVEL_TERMS)
         is_current_trip = _contains_any(routed_text, self._CURRENT_TRIP_TERMS)
         is_preferences = _contains_any(routed_text, self._PREFERENCE_TERMS)
@@ -69,7 +77,7 @@ class ToolSelectionPolicy:
         is_memory = _contains_any(routed_text, self._MEMORY_TERMS)
 
         selected: list[str] = []
-        # 足迹必须绑定具体 Trip，先读取当前行程只是满足工具依赖，不代表固定预取旅行历史。
+        # 如果问题涉及足迹，足迹必须绑定具体 Trip，先读取当前行程只是满足工具依赖。
         if is_live_travel:
             selected.extend(("get_current_trip", "get_recent_footprint"))
         elif is_current_trip or is_history:
@@ -82,7 +90,11 @@ class ToolSelectionPolicy:
 
         # 保持固定、可测试的执行顺序，重复命中多个意图时不重复调用同一工具。
         tool_names = tuple(dict.fromkeys(selected))[:MAX_INITIAL_READ_TOOLS]
-        return ToolSelectionPlan(intent=_intent_name(tool_names), tool_names=tool_names)
+        return ToolSelectionPlan(
+            intent=_intent_name(tool_names),
+            tool_names=tool_names,
+            allow_rag_search=use_rag,
+        )
 
 
 def _normalize(text: str) -> str:

@@ -89,7 +89,8 @@ async def chat(
         call_kwargs = {
             "user_uuid": user_uuid,
             "messages": request.messages,
-            "use_rag": request.use_rag,
+            # 如果客户端开启个人资料检索，保留 RAG 工具供 LLM 按需调用。
+            "use_rag": request.use_rag and preparation.allow_rag_search,
         }
         # 分支条件：仅 客户端 显式开启 Context 时才扩展既有对话调用参数。
         if preparation.personal_context is not None:
@@ -195,7 +196,8 @@ async def chat_stream(
             call_kwargs = {
                 "user_uuid": user_uuid,
                 "messages": request.messages,
-                "use_rag": request.use_rag,
+                # 如果客户端开启个人资料检索，保留 RAG 工具供 LLM 按需调用。
+                "use_rag": request.use_rag and preparation.allow_rag_search,
             }
             # 分支条件：只有前端明确授权时才把结构化事实注入 Agent 对话。
             if preparation.personal_context is not None:

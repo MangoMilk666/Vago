@@ -17,7 +17,7 @@ from app.personal_context.schemas import PersonalContextPreview
 from app.personal_context.service import format_context_for_agent
 from app.preferences import service as preference_service
 from app.travel import service as travel_service
-from app.agent_runtime.selection import ToolSelectionPolicy
+from app.agent_runtime.selection import ToolSelectionPlan, ToolSelectionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,8 @@ class AgentRuntimePreparation:
     personal_context: str | None
     context_labels: list[str]
     events: list[dict[str, str]]
+    # 是否向既有 LangChain Agent 注册个人知识检索工具；默认值兼容异常降级与旧测试构造。
+    allow_rag_search: bool = True
 
 
 @dataclass(frozen=True)
@@ -79,12 +81,13 @@ class AgentRuntime:
             "memories": [],
             "knowledgeSummary": {},
         }
-        tool_names = self._select_tools(prompt, recent_user_messages, use_personal_context, use_rag)
+        selection_plan = self._select_plan(prompt, recent_user_messages, use_personal_context, use_rag)
+        tool_names = selection_plan.tool_names
 
         # 分支条件：未授权或本轮问题无需个人事实时直接进入通用建议，空工具计划是正常结果。
         if not tool_names:
             events.append(_event("agent.status", _no_tool_status(use_personal_context, use_rag), trace_id=trace_id))
-            return AgentRuntimePreparation(trace_id, None, [], events)
+            return AgentRuntimePreparation(trace_id, None, [], events, selection_plan.allow_rag_search)
 
         events.append(_event("agent.status", "正在读取与本轮问题相关的旅行信息", trace_id=trace_id))
 
@@ -118,6 +121,7 @@ class AgentRuntime:
             personal_context=format_context_for_agent(context),
             context_labels=context.labels,
             events=events,
+            allow_rag_search=selection_plan.allow_rag_search,
         )
 
     async def stream_prepare(
@@ -139,13 +143,14 @@ class AgentRuntime:
             "memories": [],
             "knowledgeSummary": {},
         }
-        tool_names = self._select_tools(prompt, recent_user_messages, use_personal_context, use_rag)
+        selection_plan = self._select_plan(prompt, recent_user_messages, use_personal_context, use_rag)
+        tool_names = selection_plan.tool_names
         yield AgentRuntimeProgress(_event("agent.started", "开始整理本轮旅行上下文", trace_id=trace_id))
 
         # 分支条件：未授权或本轮问题无需个人事实时，直接进入通用 LLM 对话，不读取领域事实。
         if not tool_names:
             yield AgentRuntimeProgress(_event("agent.status", _no_tool_status(use_personal_context, use_rag), trace_id=trace_id))
-            yield AgentRuntimePreparation(trace_id, None, [], [])
+            yield AgentRuntimePreparation(trace_id, None, [], [], selection_plan.allow_rag_search)
             return
 
         yield AgentRuntimeProgress(_event("agent.status", "正在读取与本轮问题相关的旅行信息", trace_id=trace_id))
@@ -191,24 +196,29 @@ class AgentRuntime:
             personal_context=format_context_for_agent(context),
             context_labels=context.labels,
             events=events,
+            allow_rag_search=selection_plan.allow_rag_search,
         )
 
-    def _select_tools(
+    def _select_plan(
         self,
         prompt: str,
         recent_user_messages: tuple[str, ...],
         use_personal_context: bool,
         use_rag: bool,
-    ) -> tuple[str, ...]:
+    ) -> ToolSelectionPlan:
         """授权决定可读取范围，确定性 Policy 决定本轮是否真的需要读取领域事实。"""
         # use_rag 仅决定既有 LangChain RAG 工具是否可注册；不在 Runtime 固定读取知识库摘要。
-        _ = use_rag
         plan = self._selection_policy.select(
             prompt,
             recent_user_messages=recent_user_messages,
             use_personal_context=use_personal_context,
+            use_rag=use_rag,
         )
-        return plan.tool_names[:MAX_READ_STEPS]
+        return ToolSelectionPlan(
+            intent=plan.intent,
+            tool_names=plan.tool_names[:MAX_READ_STEPS],
+            allow_rag_search=plan.allow_rag_search,
+        )
 
 
 def _no_tool_status(use_personal_context: bool, use_rag: bool) -> str:

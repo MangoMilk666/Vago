@@ -789,10 +789,17 @@ function AgentActivityTrace({ activity, streaming, pending }) {
       {expanded && (
         <div className="space-y-1 border-t border-violet-100 px-3 py-2">
           {activity.map((event, index) => (
-            <p key={`${event.type}-${event.tool || index}-${index}`} className={`text-[11px] leading-5 ${event.type === 'tool.failed' || event.type === 'agent.failed' ? 'text-amber-700' : 'text-slate-600'}`}>
-              <span className="mr-1 text-violet-500">{event.type === 'tool.failed' || event.type === 'agent.failed' ? '!' : event.type === 'tool.started' || event.type === 'agent.status' ? '·' : '✓'}</span>
-              {event.label}
-            </p>
+            <div key={`${event.type}-${event.tool || index}-${index}`} className={`text-[11px] leading-5 ${event.type === 'tool.failed' || event.type === 'agent.failed' ? 'text-amber-700' : 'text-slate-600'}`}>
+              <p>
+                <span className="mr-1 text-violet-500">{event.type === 'tool.failed' || event.type === 'agent.failed' ? '!' : event.type === 'tool.started' || event.type === 'agent.status' ? '·' : '✓'}</span>
+                {event.label}
+              </p>
+              {event.debug && (
+                <code className="ml-3 block break-words font-mono text-[10px] leading-4 text-amber-600/90">
+                  {event.debug}
+                </code>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -1165,6 +1172,8 @@ function ChatPanel() {
           if (event.type.startsWith('agent.') || event.type.startsWith('tool.')) {
             // 执行轨迹来自服务端公开事件，排队展示以保留调用与结果的视觉顺序。
             enqueueActivityEvent(localAssistantUuid, event)
+            // 如果个人资料检索已结束，无论命中、空结果还是失败，都立即收起临时检索提示。
+            if (event.tool === 'search_personal_knowledge') setSearchingQuery(null)
           } else if (event.type === 'text') {
             // 逐 token 追加内容；首个文本到达时清除检索提示（兜底：
             // 当 RAG 无命中结果时 sources 事件不发送，searchingQuery 可能残留）

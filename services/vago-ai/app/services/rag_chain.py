@@ -105,6 +105,7 @@ def _sync_stub(query: str) -> str:
 def _make_search_tool(
     user_uuid: str,
     results_store: list[SourceCitation],
+    retrieval_events: list[dict[str, str]],
 ) -> StructuredTool:
     """
     创建 search_personal_knowledge 工具实例。
@@ -123,6 +124,8 @@ def _make_search_tool(
         LangChain StructuredTool，可直接传入 create_tool_calling_agent。
     """
 
+    retrieval_unavailable = False
+
     async def _search(query: str) -> str:
         """
         异步执行向量检索，返回格式化后的个人资料文本供 LLM 参考。
@@ -133,7 +136,14 @@ def _make_search_tool(
         返回:
             格式化的攻略文本片段，或「暂无相关内容」提示字符串。
         """
+        nonlocal retrieval_unavailable
         logger.info("[rag_chain] Tool 调用 user=%s query='%s'", user_uuid, query[:60])
+
+        # 如果本轮已确认检索依赖不可用，直接降级，避免 LLM 重复调用同一条必然失败的外部链路。
+        if retrieval_unavailable:
+            fallback = "个人资料检索本轮不可用，请勿再次调用此工具，直接基于通用旅行知识回答。"
+            retrieval_events.append(_retrieval_event("tool.completed", "个人资料检索本轮已降级为通用知识回答"))
+            return fallback
 
         try:
             query_embedding = await embed_query(query)
@@ -144,10 +154,20 @@ def _make_search_tool(
                 score_threshold=settings.rag_score_threshold,
             )
         except Exception as exc:
+            retrieval_unavailable = True
             logger.error("[rag_chain] 检索失败 error=%s", exc, exc_info=True)
-            return "个人资料检索暂时不可用，请基于通用旅行知识回答。"
+            retrieval_events.append(_retrieval_event(
+                "tool.failed",
+                "个人资料检索暂时不可用，已降级为通用知识回答",
+                debug=_safe_retrieval_debug(exc),
+            ))
+            return "个人资料检索暂时不可用，请勿再次调用此工具，直接基于通用旅行知识回答。"
 
+        # 如果向量检索未命中相关资料，将空结果作为正常 Observation 返回给 LLM。
         if not results:
+            retrieval_events.append(_retrieval_event(
+                "tool.completed", "个人资料中未找到相关内容，已转用通用旅行知识"
+            ))
             return "个人资料中暂无与此问题相关的内容，请基于通用旅行知识回答。"
 
         # 将结果写入 store，供 router 层提取为结构化引用
@@ -161,6 +181,7 @@ def _make_search_tool(
             )
             for r in results
         ])
+        retrieval_events.append(_retrieval_event("tool.completed", "已读取相关个人资料"))
 
         # 格式化后返回给 LLM
         parts = [
@@ -180,6 +201,20 @@ def _make_search_tool(
         ),
         args_schema=_SearchInput,
     )
+
+
+def _retrieval_event(event_type: str, label: str, debug: str | None = None) -> dict[str, str]:
+    """构造可回放的 RAG 观察事件，不包含个人资料原文。"""
+    event = {"type": event_type, "tool": "search_personal_knowledge", "label": label}
+    # 如果检索服务出现异常，才透出受限长度的诊断信息供客户端调试面板使用。
+    if debug:
+        event["debug"] = debug
+    return event
+
+
+def _safe_retrieval_debug(exc: Exception) -> str:
+    """返回供开发环境观察的异常摘要，完整堆栈仅保留在服务端日志。"""
+    return f"{type(exc).__name__}: {str(exc)}"[:300]
 
 
 # ─── Agent 构建 ────────────────────────────────────────────────────────────────
@@ -215,6 +250,7 @@ def _build_prompt() -> ChatPromptTemplate:
 def _build_executor(
     user_uuid: str,
     results_store: list[SourceCitation],
+    retrieval_events: list[dict[str, str]],
     use_rag: bool,
 ) -> AgentExecutor:
     """
@@ -231,8 +267,8 @@ def _build_executor(
         已配置的 AgentExecutor，支持 ainvoke 和 astream_events。
     """
     llm = get_chat_llm(streaming=True)  # streaming=True 以支持 astream_events token 级输出
-    # 分支条件：用户关闭个人资料检索或部署关闭 RAG 时，不向 Agent 注册检索工具。
-    tools = [_make_search_tool(user_uuid, results_store)] if use_rag and settings.rag_enabled else []
+    # 如果用户关闭个人资料检索或部署关闭 RAG，不向 Agent 注册检索工具。
+    tools = [_make_search_tool(user_uuid, results_store, retrieval_events)] if use_rag and settings.rag_enabled else []
     prompt = _build_prompt()
     agent = create_tool_calling_agent(llm, tools, prompt)
 
@@ -297,7 +333,8 @@ async def run_agent_chat(
           - model (str): 实际使用的模型名称。
     """
     results_store: list[SourceCitation] = []
-    executor = _build_executor(user_uuid, results_store, use_rag)
+    retrieval_events: list[dict[str, str]] = []
+    executor = _build_executor(user_uuid, results_store, retrieval_events, use_rag)
 
     # 剥离最后一条用户消息作为当前输入，其余作为历史
     history = _to_lc_history(messages[:-1])
@@ -325,6 +362,7 @@ async def run_agent_chat(
         "model": settings.llm_model,
         "structured_plan": structured_plan.model_dump() if structured_plan else None,
         "context_labels": context_labels or [],
+        "tool_observations": retrieval_events,
     }
 
 
@@ -358,7 +396,8 @@ async def stream_agent_chat(
         SSE 格式字符串，由 FastAPI StreamingResponse 直接推送。
     """
     results_store: list[SourceCitation] = []
-    executor = _build_executor(user_uuid, results_store, use_rag)
+    retrieval_events: list[dict[str, str]] = []
+    executor = _build_executor(user_uuid, results_store, retrieval_events, use_rag)
 
     history = _to_lc_history(messages[:-1])
     current_input = messages[-1].content
@@ -403,6 +442,11 @@ async def stream_agent_chat(
                     else str(tool_input)
                 )
                 yield _sse({"type": "searching", "query": query})
+
+            # RAG 工具本身已把命中、空结果或失败转换为公开 Observation，在工具结束时立即推送。
+            elif event_type == "on_tool_end":
+                while retrieval_events:
+                    yield _sse(retrieval_events.pop(0))
 
             # ── Agent 整体执行完毕（此时 results_store 已填充完毕）
             elif event_type == "on_chain_end" and not sources_sent:

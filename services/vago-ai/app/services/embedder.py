@@ -71,8 +71,8 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
             model=settings.embedding_model,
             input=batch,
         )
-        # response.data 按输入顺序返回，直接 extend
-        batch_embeddings = [item.embedding for item in response.data]
+        # response.data 按输入顺序返回，先校验 Provider 实际维度再写入向量库。
+        batch_embeddings = [_validate_embedding_dimension(item.embedding) for item in response.data]
         all_embeddings.extend(batch_embeddings)
 
     return all_embeddings
@@ -99,4 +99,17 @@ async def embed_query(query: str) -> list[float]:
         model=settings.embedding_model,
         input=[query],
     )
-    return response.data[0].embedding
+    return _validate_embedding_dimension(response.data[0].embedding)
+
+
+def _validate_embedding_dimension(embedding: list[float]) -> list[float]:
+    """校验 Provider 输出与当前 Qdrant collection 配置的向量维度一致。"""
+    # 如果 Provider 实际返回维度与 Qdrant collection 配置不同，提前失败而不是发送必然 400 的读写请求。
+    if len(embedding) != settings.embedding_dim:
+        raise ValueError(
+            "Embedding 维度不匹配："
+            f"模型 {settings.embedding_model} 返回 {len(embedding)} 维，"
+            f"当前 EMBEDDING_DIM 配置为 {settings.embedding_dim}。"
+            "请统一模型与向量库维度后重新索引个人资料。"
+        )
+    return embedding
