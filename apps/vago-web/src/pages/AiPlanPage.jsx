@@ -970,6 +970,7 @@ function ChatPanel() {
       return copy
     })
     // 即使领域读取很快，也保留短间隔，让调用与结果的顺序对用户可感知。
+    // 加了约 180ms 的展示队列。即使数据库查询快到几毫秒内完成，用户也能看见“开始读取 → 读取完成 → 下一步”的顺序，而不是一帧内刷完
     activityTimerRef.current = window.setTimeout(flushActivityQueue, 180)
   }, [])
 

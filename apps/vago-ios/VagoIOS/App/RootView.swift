@@ -37,6 +37,7 @@ private struct MainTabView: View {
     private enum Tab: Hashable {
         case trip
         case footprint
+        case agent
         case profile
     }
 
@@ -53,6 +54,9 @@ private struct MainTabView: View {
             TrackingView()
                 .tabItem { Label("记录", systemImage: "location") }
                 .tag(Tab.footprint)
+            AgentChatView()
+                .tabItem { Label("Agent", systemImage: "robot") }
+                .tag(Tab.agent)
             ProfileView()
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }
                 .tag(Tab.profile)

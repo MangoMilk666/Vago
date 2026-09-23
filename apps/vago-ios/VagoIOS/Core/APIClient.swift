@@ -265,6 +265,40 @@ final class APIClient {
         let _: EmptyResponse = try await perform(path: path, method: method, body: try encode(body), accessToken: accessToken, tokenProvider: nil)
     }
 
+    /// 需要登录、但服务端 data 为 null 的写入接口，例如删除 Agent 会话。
+    func requestWithoutResponse<Body: Encodable>(
+        path: String,
+        method: String,
+        body: Body,
+        tokenProvider: SessionStore
+    ) async throws {
+        let token = try await tokenProvider.validAccessToken()
+        try await performWithoutResponse(
+            path: path,
+            method: method,
+            body: try encode(body),
+            accessToken: token,
+            tokenProvider: tokenProvider
+        )
+    }
+
+    /// 打开 Agent SSE 文本流；会话与聊天页面可复用既有 JWT 刷新逻辑，而不各自拼装请求头。
+    func openEventStream<Body: Encodable>(
+        path: String,
+        method: String = "POST",
+        body: Body,
+        tokenProvider: SessionStore
+    ) async throws -> URLSession.AsyncBytes {
+        let token = try await tokenProvider.validAccessToken()
+        return try await performEventStream(
+            path: path,
+            method: method,
+            body: try encode(body),
+            accessToken: token,
+            tokenProvider: tokenProvider
+        )
+    }
+
     private func encode<Body: Encodable>(_ body: Body) throws -> Data {
         let encoder = JSONEncoder()
         // FastAPI 的 datetime 字段采用 ISO 8601；避免 JSONEncoder 默认把 Date 编成 Unix 秒数。
@@ -312,6 +346,86 @@ final class APIClient {
             throw APIError.server(message: envelope.message, statusCode: httpResponse.statusCode)
         }
         return value
+    }
+
+    /// 与泛型读取不同，这里只校验统一 envelope 成功码，不要求服务端额外构造空 data 对象。
+    private func performWithoutResponse(
+        path: String,
+        method: String,
+        body: Data,
+        accessToken: String,
+        tokenProvider: SessionStore,
+        retried: Bool = false
+    ) async throws {
+        var request = URLRequest(url: APIConfiguration.baseURL.appending(path: path))
+        request.httpMethod = method
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        // 分支条件：首次 401 仍按统一会话策略刷新一次，避免某个删除接口意外导致用户退出。
+        if httpResponse.statusCode == 401, !retried {
+            let refreshedToken = try await tokenProvider.refreshAccessToken()
+            return try await performWithoutResponse(
+                path: path,
+                method: method,
+                body: body,
+                accessToken: refreshedToken,
+                tokenProvider: tokenProvider,
+                retried: true
+            )
+        }
+        guard 200..<300 ~= httpResponse.statusCode else {
+            throw APIError.server(message: decodeMessage(from: data), statusCode: httpResponse.statusCode)
+        }
+        let envelope = try decoder.decode(APIEnvelope<EmptyResponse>.self, from: data)
+        guard envelope.code == 200 else {
+            throw APIError.server(message: envelope.message, statusCode: httpResponse.statusCode)
+        }
+    }
+
+    /// SSE 连接建立后会持续返回字节，不能复用一次性读取 Data 的 perform 方法。
+    private func performEventStream(
+        path: String,
+        method: String,
+        body: Data,
+        accessToken: String,
+        tokenProvider: SessionStore,
+        retried: Bool = false
+    ) async throws -> URLSession.AsyncBytes {
+        var request = URLRequest(url: APIConfiguration.baseURL.appending(path: path))
+        request.httpMethod = method
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+
+        // 分支条件：流尚未开始前发现 access token 过期时，刷新一次后重新建立 SSE 连接。
+        if httpResponse.statusCode == 401, !retried {
+            let refreshedToken = try await tokenProvider.refreshAccessToken()
+            return try await performEventStream(
+                path: path,
+                method: method,
+                body: body,
+                accessToken: refreshedToken,
+                tokenProvider: tokenProvider,
+                retried: true
+            )
+        }
+
+        guard 200..<300 ~= httpResponse.statusCode else {
+            var errorData = Data()
+            for try await byte in bytes {
+                errorData.append(byte)
+            }
+            throw APIError.server(message: decodeMessage(from: errorData), statusCode: httpResponse.statusCode)
+        }
+        return bytes
     }
 
     private func decodeMessage(from data: Data) -> String {

@@ -11,6 +11,115 @@ struct APIEnvelope<Value: Decodable>: Decodable {
     let data: Value?
 }
 
+/// Agent 会话摘要；对应 FastAPI `/agent/conversations`，用于 iOS 的会话切换列表。
+struct AgentConversation: Codable, Identifiable {
+    let uuid: String
+    let title: String
+    let useRag: Bool
+    let usePersonalContext: Bool
+    let createdAt: Date
+    let updatedAt: Date
+
+    var id: String { uuid }
+}
+
+/// 已持久化的 Agent 消息。服务端保存的执行事件可在重新进入会话时回放。
+struct AgentConversationMessage: Codable, Identifiable {
+    let uuid: String
+    let role: String
+    let content: String
+    let sources: [AgentSource]
+    let contextLabels: [String]
+    let agentEvents: [AgentEvent]
+    let createdAt: Date
+
+    var id: String { uuid }
+}
+
+/// 服务端以倒序查询、正序返回的一页聊天记录；游标不为空时可继续读取更早消息。
+struct AgentConversationMessagePage: Decodable {
+    let messages: [AgentConversationMessage]
+    let nextBeforeUuid: String?
+}
+
+/// RAG 命中的个人资料摘要；iOS 当前只显示标题与相关文本，不把原始资料全文带入页面。
+struct AgentSource: Codable, Identifiable {
+    let sourceUuid: String
+    let title: String
+    let chunkText: String
+    let score: Double
+
+    var id: String { sourceUuid }
+}
+
+/// Agent Runtime 对用户公开的执行状态，不包含模型内部思考或原始 GPS 经纬度。
+struct AgentEvent: Codable, Identifiable {
+    let type: String
+    let label: String?
+    let content: String?
+    let message: String?
+    let labels: [String]?
+    let sources: [AgentSource]?
+
+    // 同一类型在一轮中可能出现多次，组合展示文本与 UUID 以提供 SwiftUI 稳定标识。
+    var id: String { "\(type)-\(label ?? content ?? message ?? UUID().uuidString)" }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, label, content, message, labels, sources
+    }
+
+    init(type: String, label: String? = nil, content: String? = nil, message: String? = nil, labels: [String]? = nil, sources: [AgentSource]? = nil) {
+        self.type = type
+        self.label = label
+        self.content = content
+        self.message = message
+        self.labels = labels
+        self.sources = sources
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(String.self, forKey: .type)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        labels = try container.decodeIfPresent([String].self, forKey: .labels)
+        sources = try container.decodeIfPresent([AgentSource].self, forKey: .sources)
+        // 分支条件：模型供应商偶尔会把 token 编成数组；拼接后仍能维持流式回答可读。
+        if let text = try? container.decode(String.self, forKey: .content) {
+            content = text
+        } else if let chunks = try? container.decode([String].self, forKey: .content) {
+            content = chunks.joined()
+        } else {
+            content = nil
+        }
+    }
+}
+
+/// 与 ChatRequest 的 messages 元素对齐；iOS 只传必要的 role 与 content。
+struct AgentChatMessage: Encodable {
+    let role: String
+    let content: String
+}
+
+/// 创建空白会话的最小请求；第一条用户消息会由服务端自动生成初始标题。
+struct AgentConversationCreateRequest: Encodable {
+    let useRag: Bool
+    let usePersonalContext: Bool
+}
+
+/// 用户显式修改 Agent 会话标题的请求体。
+struct AgentConversationUpdateRequest: Encodable {
+    let title: String
+}
+
+/// 复用 Web 与 FastAPI 的聊天合同，确保两端访问的是同一段持久化会话。
+struct AgentChatStreamRequest: Encodable {
+    let messages: [AgentChatMessage]
+    let useRag: Bool
+    let usePersonalContext: Bool
+    let conversationUuid: String
+}
+
 /// Codable 同时包含 Encodable / Decodable，可在 JSON 与 Keychain 二进制数据之间转换。
 struct TokenPair: Codable {
     // 短期访问令牌，用于携带在 Authorization 请求头中。
