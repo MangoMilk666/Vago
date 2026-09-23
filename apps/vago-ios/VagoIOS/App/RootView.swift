@@ -55,7 +55,8 @@ private struct MainTabView: View {
                 .tabItem { Label("记录", systemImage: "location") }
                 .tag(Tab.footprint)
             AgentChatView()
-                .tabItem { Label("Agent", systemImage: "robot") }
+                // robot 在部分 iOS 系统版本没有对应 glyph；使用稳定存在的 Agent / 智能助理图标避免 Tab 留白。
+                .tabItem { Label("Agent", systemImage: "brain.head.profile") }
                 .tag(Tab.agent)
             ProfileView()
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }

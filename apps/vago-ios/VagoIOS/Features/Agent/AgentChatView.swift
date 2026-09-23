@@ -10,55 +10,70 @@ struct AgentChatView: View {
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                conversationHeader
-                Divider()
-                messageList
-            }
-            .navigationTitle("Vago Agent")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { isConversationListPresented = true } label: {
-                        Image(systemName: "text.justify")
-                    }
-                    .accessibilityLabel("切换对话")
+        ZStack(alignment: .leading) {
+            NavigationStack {
+                VStack(spacing: 0) {
+                    conversationHeader
+                    Divider()
+                    messageList
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { viewModel.startNewConversation() } label: {
-                        Image(systemName: "square.and.pencil")
+                .navigationTitle("Vago Agent")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { withAnimation { isConversationListPresented = true } } label: {
+                            Image(systemName: "sidebar.left")
+                        }
+                        .accessibilityLabel("打开对话侧栏")
                     }
-                    .disabled(viewModel.isStreaming)
-                    .accessibilityLabel("新对话")
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { viewModel.startNewConversation() } label: {
+                            Image(systemName: "square.and.pencil")
+                        }
+                        .disabled(viewModel.isStreaming)
+                        .accessibilityLabel("新对话")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Toggle("使用旅行上下文", isOn: $viewModel.usePersonalContext)
+                            Toggle("使用个人资料", isOn: $viewModel.useRag)
+                        } label: {
+                            Image(systemName: "slider.horizontal.3")
+                        }
+                        .accessibilityLabel("Agent 上下文设置")
+                    }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Toggle("使用旅行上下文", isOn: $viewModel.usePersonalContext)
-                        Toggle("使用个人资料", isOn: $viewModel.useRag)
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                    }
-                    .accessibilityLabel("Agent 上下文设置")
+                .safeAreaInset(edge: .bottom) { composer }
+                .task(id: session.profile?.uuid) {
+                    await viewModel.loadConversations(session: session)
+                }
+                .alert("Agent 对话提示", isPresented: Binding(
+                    get: { !viewModel.errorMessage.isEmpty },
+                    set: { if !$0 { viewModel.errorMessage = "" } }
+                )) {
+                    Button("好的", role: .cancel) {}
+                } message: {
+                    Text(viewModel.errorMessage)
                 }
             }
-            .safeAreaInset(edge: .bottom) { composer }
-            .task(id: session.profile?.uuid) {
-                await viewModel.loadConversations(session: session)
-            }
-            .sheet(isPresented: $isConversationListPresented) {
-                ConversationListSheet(
+
+            if isConversationListPresented {
+                Color.black.opacity(0.24)
+                    .ignoresSafeArea()
+                    .onTapGesture { withAnimation { isConversationListPresented = false } }
+                ConversationSidebar(
                     conversations: viewModel.conversations,
                     activeConversationUuid: viewModel.activeConversation?.uuid,
                     isStreaming: viewModel.isStreaming,
+                    onClose: { withAnimation { isConversationListPresented = false } },
                     onNewConversation: {
                         viewModel.startNewConversation()
-                        isConversationListPresented = false
+                        withAnimation { isConversationListPresented = false }
                     },
                     onSelect: { conversation in
                         Task {
                             await viewModel.selectConversation(conversation, session: session)
-                            isConversationListPresented = false
+                            withAnimation { isConversationListPresented = false }
                         }
                     },
                     onRename: { conversation, title in
@@ -68,17 +83,12 @@ struct AgentChatView: View {
                         Task { await viewModel.deleteConversation(conversation, session: session) }
                     }
                 )
-                .presentationDetents([.medium, .large])
-            }
-            .alert("Agent 对话提示", isPresented: Binding(
-                get: { !viewModel.errorMessage.isEmpty },
-                set: { if !$0 { viewModel.errorMessage = "" } }
-            )) {
-                Button("好的", role: .cancel) {}
-            } message: {
-                Text(viewModel.errorMessage)
+                .frame(width: min(UIScreen.main.bounds.width * 0.84, 340))
+                .frame(maxHeight: .infinity, alignment: .leading)
+                .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: isConversationListPresented)
     }
 
     private var conversationHeader: some View {
@@ -129,6 +139,8 @@ struct AgentChatView: View {
                 }
                 .padding()
             }
+            // 用户向下拖动消息区域时按原生交互渐进收起键盘，地图/聊天等长页面都可复用这项行为。
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: viewModel.messages.count) { _, _ in
                 withAnimation { proxy.scrollTo("agent-bottom", anchor: .bottom) }
             }
@@ -168,9 +180,10 @@ struct AgentChatView: View {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         input = ""
+        // 发送后立即让输入框失焦，避免用户在等待长回答时仍被键盘遮挡内容。
+        isInputFocused = false
         Task {
             await viewModel.send(message: text, session: session)
-            isInputFocused = true
         }
     }
 }
@@ -305,6 +318,10 @@ private final class AgentChatViewModel: ObservableObject {
                 guard let data = rawEvent.data(using: .utf8), let event = try? JSONDecoder().decode(AgentEvent.self, from: data) else { continue }
                 if event.type == "error" { streamContainsError = true }
                 consume(event, for: localAssistantId)
+                // 分支条件：Runtime 读取非常快时，iOS 仍以短间隔播放公开事件，避免 UI 一次性刷出完整轨迹。
+                if event.type.hasPrefix("agent.") || event.type.hasPrefix("tool.") {
+                    try? await Task.sleep(for: .milliseconds(180))
+                }
             }
             // SSE 完成时服务端已写入历史；重新读取可得到真实 UUID、自动标题与事件回放数据。
             // 分支条件：服务端已明确发送生成错误时不刷新覆盖本地提示；成功流才以持久化历史为准。
@@ -554,10 +571,21 @@ private struct AgentActivityTrace: View {
                     HStack(alignment: .top, spacing: 7) {
                         Image(systemName: event.type.hasSuffix("failed") ? "exclamationmark.circle" : event.type.hasSuffix("completed") ? "checkmark.circle.fill" : "circle.dotted")
                             .foregroundStyle(event.type.hasSuffix("failed") ? .orange : .indigo)
-                        Text(event.label ?? "正在处理旅行上下文")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(event.label ?? "正在处理旅行上下文")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                            // 分支条件：服务端事件属于领域工具调用时显示稳定工具名，方便联调核对真实调用边界。
+                            if let tool = event.tool {
+                                Text(tool)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        Spacer(minLength: 0)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding(.top, 6)
@@ -573,6 +601,7 @@ private struct AgentActivityTrace: View {
         }
         .padding(10)
         .background(.indigo.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: isRunning) { _, running in
             // 分支条件：生成中自动展开便于观察；完成后默认收起，用户仍可自行展开回看。
             if running { isExpanded = true } else { isExpanded = false }
@@ -609,10 +638,12 @@ private struct AgentEmptyState: View {
     }
 }
 
-private struct ConversationListSheet: View {
+/// iPhone 上模仿 ChatGPT 的左侧会话抽屉；它覆盖主页面但不取代 iPad 的系统 sidebar 架构。
+private struct ConversationSidebar: View {
     let conversations: [AgentConversation]
     let activeConversationUuid: String?
     let isStreaming: Bool
+    let onClose: () -> Void
     let onNewConversation: () -> Void
     let onSelect: (AgentConversation) -> Void
     let onRename: (AgentConversation, String) -> Void
@@ -622,62 +653,77 @@ private struct ConversationListSheet: View {
     @State private var deletingConversation: AgentConversation?
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Button(action: onNewConversation) {
-                        Label("新对话", systemImage: "square.and.pencil")
-                    }
-                    .disabled(isStreaming)
-                }
-                Section("近期对话") {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Agent 对话", systemImage: "brain.head.profile")
+                    .font(.headline)
+                Spacer()
+                Button(action: onClose) { Image(systemName: "xmark") }
+                    .accessibilityLabel("关闭对话侧栏")
+            }
+            Button(action: onNewConversation) {
+                Label("新对话", systemImage: "square.and.pencil")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isStreaming)
+
+            Text("近期对话")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(spacing: 4) {
                     ForEach(conversations) { conversation in
-                        Button {
-                            onSelect(conversation)
-                        } label: {
-                            HStack {
+                        HStack(spacing: 8) {
+                            Button { onSelect(conversation) } label: {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(conversation.title).lineLimit(1)
                                     Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
-                                Spacer()
-                                if conversation.uuid == activeConversationUuid {
-                                    Image(systemName: "checkmark").foregroundStyle(.indigo)
-                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                            if conversation.uuid == activeConversationUuid {
+                                Image(systemName: "checkmark").foregroundStyle(.indigo)
+                            }
+                            Menu {
+                                Button { beginRename(conversation) } label: { Label("重命名", systemImage: "pencil") }
+                                Button(role: .destructive) { deletingConversation = conversation } label: { Label("删除", systemImage: "trash") }
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .frame(width: 28, height: 28)
+                            }
+                            .accessibilityLabel("管理对话")
                         }
-                        .contextMenu {
-                            Button { beginRename(conversation) } label: { Label("重命名", systemImage: "pencil") }
-                            Button(role: .destructive) { deletingConversation = conversation } label: { Label("删除", systemImage: "trash") }
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) { deletingConversation = conversation } label: { Label("删除", systemImage: "trash") }
-                            Button { beginRename(conversation) } label: { Label("重命名", systemImage: "pencil") }
-                            .tint(.indigo)
-                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(conversation.uuid == activeConversationUuid ? Color.indigo.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                     }
                 }
             }
-            .navigationTitle("Agent 对话")
-            .alert("重命名对话", isPresented: Binding(get: { editingConversation != nil }, set: { if !$0 { editingConversation = nil } })) {
-                TextField("对话标题", text: $titleDraft)
-                Button("保存") {
-                    if let editingConversation { onRename(editingConversation, titleDraft) }
-                    editingConversation = nil
-                }
-                Button("取消", role: .cancel) { editingConversation = nil }
+        }
+        .padding(.top, 18)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .background(.regularMaterial)
+        .ignoresSafeArea(edges: .vertical)
+        .alert("重命名对话", isPresented: Binding(get: { editingConversation != nil }, set: { if !$0 { editingConversation = nil } })) {
+            TextField("对话标题", text: $titleDraft)
+            Button("保存") {
+                if let editingConversation { onRename(editingConversation, titleDraft) }
+                editingConversation = nil
             }
-            .confirmationDialog("删除这段对话？", isPresented: Binding(get: { deletingConversation != nil }, set: { if !$0 { deletingConversation = nil } })) {
-                Button("删除", role: .destructive) {
-                    if let deletingConversation { onDelete(deletingConversation) }
-                    deletingConversation = nil
-                }
-                Button("取消", role: .cancel) { deletingConversation = nil }
-            } message: {
-                Text("删除后无法恢复这段对话及其消息记录。")
+            Button("取消", role: .cancel) { editingConversation = nil }
+        }
+        .confirmationDialog("删除这段对话？", isPresented: Binding(get: { deletingConversation != nil }, set: { if !$0 { deletingConversation = nil } })) {
+            Button("删除", role: .destructive) {
+                if let deletingConversation { onDelete(deletingConversation) }
+                deletingConversation = nil
             }
+            Button("取消", role: .cancel) { deletingConversation = nil }
+        } message: {
+            Text("删除后无法恢复这段对话及其消息记录。")
         }
     }
 

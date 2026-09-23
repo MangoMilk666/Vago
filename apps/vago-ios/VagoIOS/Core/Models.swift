@@ -56,6 +56,8 @@ struct AgentSource: Codable, Identifiable {
 struct AgentEvent: Codable, Identifiable {
     let type: String
     let label: String?
+    // Runtime 只对 tool.started / tool.completed / tool.failed 发送此字段，用于向用户说明实际调用边界。
+    let tool: String?
     let content: String?
     let message: String?
     let labels: [String]?
@@ -65,12 +67,13 @@ struct AgentEvent: Codable, Identifiable {
     var id: String { "\(type)-\(label ?? content ?? message ?? UUID().uuidString)" }
 
     private enum CodingKeys: String, CodingKey {
-        case type, label, content, message, labels, sources
+        case type, label, tool, content, message, labels, sources
     }
 
-    init(type: String, label: String? = nil, content: String? = nil, message: String? = nil, labels: [String]? = nil, sources: [AgentSource]? = nil) {
+    init(type: String, label: String? = nil, tool: String? = nil, content: String? = nil, message: String? = nil, labels: [String]? = nil, sources: [AgentSource]? = nil) {
         self.type = type
         self.label = label
+        self.tool = tool
         self.content = content
         self.message = message
         self.labels = labels
@@ -81,6 +84,7 @@ struct AgentEvent: Codable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         type = try container.decode(String.self, forKey: .type)
         label = try container.decodeIfPresent(String.self, forKey: .label)
+        tool = try container.decodeIfPresent(String.self, forKey: .tool)
         message = try container.decodeIfPresent(String.self, forKey: .message)
         labels = try container.decodeIfPresent([String].self, forKey: .labels)
         sources = try container.decodeIfPresent([AgentSource].self, forKey: .sources)
