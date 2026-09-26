@@ -9,6 +9,7 @@ import ItineraryPage  from './pages/ItineraryPage'
 import AiPlanPage     from './pages/AiPlanPage'
 import ProfilePage    from './pages/ProfilePage'
 import FuturePage     from './pages/FuturePage'
+import FootprintPage  from './pages/FootprintPage'
 import { isLoggedIn } from './stores/auth'
 
 // 受保护路由：未登录跳转到 /login
@@ -40,7 +41,7 @@ export default function App() {
         <ProtectedRoute><ProfilePage /></ProtectedRoute>
       } />
       <Route path="/footprints" element={
-        <ProtectedRoute><FuturePage type="footprints" /></ProtectedRoute>
+        <ProtectedRoute><FootprintPage /></ProtectedRoute>
       } />
       <Route path="/memories" element={
         <ProtectedRoute><FuturePage type="memories" /></ProtectedRoute>
