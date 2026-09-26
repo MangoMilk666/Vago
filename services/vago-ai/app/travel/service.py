@@ -192,7 +192,10 @@ def get_agent_travel_context(db: Session, user_uuid: str) -> dict:
     }
 
 
-def get_agent_current_trip(db: Session, user_uuid: str) -> dict | None:
+AGENT_MAX_RECENT_TRIPS = 5
+
+
+def get_agent_current_active_trip(db: Session, user_uuid: str) -> dict | None:
     """读取进行中 Trip 的基础事实，不顺带注入日程或历史。"""
     trip = db.scalar(
         select(Trip).where(
@@ -204,24 +207,28 @@ def get_agent_current_trip(db: Session, user_uuid: str) -> dict | None:
     return _to_agent_trip_brief(trip) if trip else None
 
 
-def get_agent_today_itinerary(db: Session, user_uuid: str, trip_uuid: str) -> dict | None:
-    """读取当前进行中 Trip 的今日日程，不读取其他日期或其他行程。"""
+def get_agent_trip_itinerary_by_date(
+    db: Session,
+    user_uuid: str,
+    trip_uuid: str,
+    day_date: date,
+) -> dict | None:
+    """读取指定进行中 Trip 的指定日期日程，不扩大为完整 itinerary。"""
     trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
     # 如果 Trip 已不再进行中，拒绝把历史或未开始行程伪装成实时日程。
     if trip.status != TRIP_STATUS_IN_PROGRESS:
         return None
 
-    today = date.today()
     day = db.scalar(
         select(ItineraryDay).where(
             ItineraryDay.ref_uuid == trip.uuid,
             ItineraryDay.ref_type == ItineraryDay.REF_TYPE_TRIP,
-            ItineraryDay.day_date == today,
+            ItineraryDay.day_date == day_date,
         )
     )
-    # 如果当前日期不在行程范围内或该天没有日程，返回最小空结果而不是扩大到完整 itinerary。
+    # 如果指定日期不在行程范围内或该天没有日程，返回最小空结果而不是扩大到完整 itinerary。
     if day is None:
-        return {"tripUuid": trip.uuid, "dayDate": today.isoformat(), "dayIndex": None, "spots": []}
+        return {"tripUuid": trip.uuid, "dayDate": day_date.isoformat(), "dayIndex": None, "spots": []}
 
     spots = db.scalars(
         select(ItinerarySpot)
@@ -239,19 +246,25 @@ def get_agent_today_itinerary(db: Session, user_uuid: str, trip_uuid: str) -> di
     }
 
 
-def get_agent_recent_travel_history(db: Session, user_uuid: str, limit: int = 3) -> list[dict]:
-    """读取有限的已结束 Trip 摘要，不把历史完整日程带入 Prompt。"""
+def get_agent_recent_trips(db: Session, user_uuid: str, limit: int = 3) -> list[dict]:
+    """按创建时间倒序读取最近 Trip 摘要，limit 始终受服务端边界保护。"""
+    safe_limit = _agent_recent_limit(limit, AGENT_MAX_RECENT_TRIPS)
     trips = db.scalars(
         select(Trip)
         .where(
             Trip.user_uuid == user_uuid,
-            Trip.status == TRIP_STATUS_ENDED,
             Trip.deleted_at.is_(None),
         )
-        .order_by(Trip.end_date.desc(), Trip.updated_at.desc())
-        .limit(limit)
+        .order_by(Trip.created_at.desc(), Trip.uuid.desc())
+        .limit(safe_limit)
     ).all()
     return [_to_agent_trip_brief(trip) for trip in trips]
+
+
+def _agent_recent_limit(value: int, maximum: int) -> int:
+    """将 Agent 的 recent limit 收敛到可预测的小范围，避免读取无界历史。"""
+    # 如果调用方传入过小或过大的 limit，仍返回安全的最小或最大范围。
+    return max(1, min(value, maximum))
 
 
 def _to_agent_trip_brief(trip: Trip) -> dict:

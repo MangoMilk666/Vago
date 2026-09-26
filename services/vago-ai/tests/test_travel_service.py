@@ -100,10 +100,12 @@ def test_agent_travel_reads_keep_current_and_history_boundaries(db_session: Sess
     current_trip = Trip(
         uuid="current-trip", user_uuid="user-a", title="当前新加坡行", destination="Singapore",
         start_date=date.today(), end_date=date.today(), status=service.TRIP_STATUS_IN_PROGRESS,
+        created_at=datetime(2026, 9, 27, 9, 0, 0), updated_at=datetime(2026, 9, 27, 9, 0, 0),
     )
     history_trip = Trip(
         uuid="history-trip", user_uuid="user-a", title="东京旧行", destination="Tokyo",
         start_date=date(2026, 4, 1), end_date=date(2026, 4, 3), status=service.TRIP_STATUS_ENDED,
+        created_at=datetime(2026, 4, 1, 9, 0, 0), updated_at=datetime(2026, 4, 3, 9, 0, 0),
     )
     db_session.add_all([current_trip, history_trip])
     db_session.add(ItineraryDay(
@@ -113,9 +115,9 @@ def test_agent_travel_reads_keep_current_and_history_boundaries(db_session: Sess
     db_session.add(ItinerarySpot(uuid="today-spot", day_uuid="today-day", name="滨海湾花园", sort_order=0))
     db_session.commit()
 
-    current = service.get_agent_current_trip(db_session, "user-a")
-    today = service.get_agent_today_itinerary(db_session, "user-a", current_trip.uuid)
-    history = service.get_agent_recent_travel_history(db_session, "user-a")
+    current = service.get_agent_current_active_trip(db_session, "user-a")
+    today = service.get_agent_trip_itinerary_by_date(db_session, "user-a", current_trip.uuid, date.today())
+    history = service.get_agent_recent_trips(db_session, "user-a")
 
     assert current == {
         "uuid": "current-trip", "title": "当前新加坡行", "destination": "Singapore",
@@ -124,6 +126,10 @@ def test_agent_travel_reads_keep_current_and_history_boundaries(db_session: Sess
     }
     assert today["spots"] == ["滨海湾花园"]
     assert history == [{
+        "uuid": "current-trip", "title": "当前新加坡行", "destination": "Singapore",
+        "startDate": date.today().isoformat(), "endDate": date.today().isoformat(),
+        "status": service.TRIP_STATUS_IN_PROGRESS,
+    }, {
         "uuid": "history-trip", "title": "东京旧行", "destination": "Tokyo",
         "startDate": "2026-04-01", "endDate": "2026-04-03", "status": service.TRIP_STATUS_ENDED,
     }]

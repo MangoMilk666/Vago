@@ -29,6 +29,7 @@ MANUAL_CHECKIN = "MANUAL_CHECKIN"
 MINIMUM_AUTOMATIC_SAMPLE_DISTANCE_TO_CHECKIN_METERS = 15.0
 # 两次用户主动打卡的阈值更大，减少 GPS 漂移造成的重复地点记录。
 MINIMUM_CHECKIN_DISTANCE_METERS = 30.0
+AGENT_MAX_RECENT_OBSERVATIONS = 5
 
 
 def _new_uuid() -> str:
@@ -206,7 +207,7 @@ def list_trip_observations(db: Session, user_uuid: str, trip_uuid: str) -> list[
     return [_to_observation_response(observation) for observation in observations]
 
 
-def get_agent_footprint_context(db: Session, user_uuid: str, trip_uuid: str) -> dict:
+def get_agent_footprint_summary_by_trip(db: Session, user_uuid: str, trip_uuid: str) -> dict:
     """读取当前行程的自动 GPS 摘要，不向 Agent 暴露原始坐标或打卡文本。"""
     _get_owned_trip(db, user_uuid, trip_uuid)
     automatic_sample_count = db.scalar(
@@ -221,9 +222,10 @@ def get_agent_footprint_context(db: Session, user_uuid: str, trip_uuid: str) -> 
     return {"automaticSampleCount": automatic_sample_count}
 
 
-def get_agent_checkin_context(db: Session, user_uuid: str, trip_uuid: str) -> dict:
+def get_agent_checkins_by_trip(db: Session, user_uuid: str, trip_uuid: str, limit: int = 5) -> dict:
     """读取当前行程的有限手动打卡摘要，不查询自动 GPS 采样点。"""
     _get_owned_trip(db, user_uuid, trip_uuid)
+    safe_limit = _agent_recent_limit(limit)
     checkins = db.scalars(
         select(TravelObservation)
         .where(
@@ -232,7 +234,7 @@ def get_agent_checkin_context(db: Session, user_uuid: str, trip_uuid: str) -> di
             TravelObservation.observation_type == MANUAL_CHECKIN,
         )
         .order_by(TravelObservation.occurred_at.desc())
-        .limit(5)
+        .limit(safe_limit)
     ).all()
     return {
         "recentCheckins": [
@@ -246,12 +248,79 @@ def get_agent_checkin_context(db: Session, user_uuid: str, trip_uuid: str) -> di
     }
 
 
+def get_agent_recent_footprint_summaries(db: Session, user_uuid: str, limit: int = 3) -> list[dict]:
+    """按 Observation 发生时间倒序读取最近有足迹的有限 Trip 摘要。"""
+    safe_limit = _agent_recent_limit(limit)
+    latest_observation_by_trip = (
+        select(
+            TravelObservation.trip_uuid.label("trip_uuid"),
+            func.max(TravelObservation.occurred_at).label("latest_observed_at"),
+        )
+        .where(TravelObservation.user_uuid == user_uuid)
+        .group_by(TravelObservation.trip_uuid)
+        .subquery()
+    )
+    rows = db.execute(
+        select(Trip, latest_observation_by_trip.c.latest_observed_at)
+        .join(latest_observation_by_trip, latest_observation_by_trip.c.trip_uuid == Trip.uuid)
+        .where(
+            Trip.user_uuid == user_uuid,
+            Trip.deleted_at.is_(None),
+        )
+        .order_by(latest_observation_by_trip.c.latest_observed_at.desc(), Trip.uuid.desc())
+        .limit(safe_limit)
+    ).all()
+    summaries: list[dict] = []
+    for trip, latest_observed_at in rows:
+        summaries.append({
+            "tripUuid": trip.uuid,
+            "tripTitle": trip.title,
+            "destination": trip.destination,
+            "latestObservedAt": latest_observed_at.isoformat(),
+            **get_agent_footprint_summary_by_trip(db, user_uuid, trip.uuid),
+        })
+    return summaries
+
+
+def get_agent_recent_checkins(db: Session, user_uuid: str, limit: int = 3) -> list[dict]:
+    """按发生时间倒序读取最近手动打卡，limit 不依赖当前进行中 Trip。"""
+    safe_limit = _agent_recent_limit(limit)
+    rows = db.execute(
+        select(TravelObservation, Trip)
+        .join(Trip, Trip.uuid == TravelObservation.trip_uuid)
+        .where(
+            TravelObservation.user_uuid == user_uuid,
+            TravelObservation.observation_type == MANUAL_CHECKIN,
+            Trip.user_uuid == user_uuid,
+            Trip.deleted_at.is_(None),
+        )
+        .order_by(TravelObservation.occurred_at.desc(), TravelObservation.uuid.desc())
+        .limit(safe_limit)
+    ).all()
+    return [
+        {
+            "tripUuid": trip.uuid,
+            "tripTitle": trip.title,
+            "locationName": observation.location_name or "未命名地点",
+            "occurredAt": observation.occurred_at.isoformat(),
+            "note": (observation.note or "")[:300] or None,
+        }
+        for observation, trip in rows
+    ]
+
+
 def get_agent_observation_context(db: Session, user_uuid: str, trip_uuid: str) -> dict:
     """兼容既有 Personal Context 预览，合并两个已拆分的 Live Context 摘要。"""
     return {
-        **get_agent_footprint_context(db, user_uuid, trip_uuid),
-        **get_agent_checkin_context(db, user_uuid, trip_uuid),
+        **get_agent_footprint_summary_by_trip(db, user_uuid, trip_uuid),
+        **get_agent_checkins_by_trip(db, user_uuid, trip_uuid),
     }
+
+
+def _agent_recent_limit(value: int) -> int:
+    """将 recent 查询的 limit 限制在 1 至配置上限，防止 Agent 无界读取事实。"""
+    # 如果调用方传入非正数或过大值，统一收敛到允许的安全范围。
+    return max(1, min(value, AGENT_MAX_RECENT_OBSERVATIONS))
 
 
 def list_trip_locations(db: Session, user_uuid: str, trip_uuid: str) -> list[LocationSampleResponse]:

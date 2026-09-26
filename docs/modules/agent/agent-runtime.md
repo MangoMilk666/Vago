@@ -320,7 +320,7 @@ DONE
 | Phase 10（基线，已实现） | 最小只读 Think-Execute-Observe Runtime、Tool Registry、内部 Domain Tools、SSE Agent Event、错误降级与步数上限 | 不直连数据库，不引入 Multi-Agent / Graph Runtime；该阶段固定预取仍是过渡实现 |
 | Phase 10.1 | **Prompt-aware deterministic selection**：以当前 prompt、少量会话上下文和授权范围输出 0..N 个初始工具；把授权从执行指令改为权限上限 | 不增加一次 LLM 调用作为默认选择器；不读取未被本轮计划选中的领域数据 |
 | Phase 10.2（已完成） | **工具粒度与受控 Observation 链**：已完成当前行程、今日日程、近期历史、GPS 足迹摘要与打卡摘要的初步拆分；后续工具可依赖前序当前 Trip Observation | 初版三次硬上限与 `recent` 命名语义留待 10.2.1 校正 |
-| Phase 10.2.1 | **查询语义与续读预算校正**：统一 `current` / `recent` / `by_trip` 工具命名；将三次读取由硬上限调整为初始预算，并支持有界续读 | 不扩大为任意 SQL 查询；不允许无上限循环或绕过 user / Trip 归属校验 |
+| Phase 10.2.1（已完成） | **查询语义与续读预算校正**：已统一 `current` / `recent` / `by_trip` 工具命名；三次读取现为初始预算，并支持最多六次的有界续读 | 不扩大为任意 SQL 查询；不允许无上限循环或绕过 user / Trip 归属校验 |
 | Phase 10.3 | **模糊请求的受限 selector 与可评估性**：仅对规则无法覆盖的复杂问题使用结构化 selector；补充 Trace、token / latency / tool-count 指标与 prompt-to-tools 回归集 | selector 不接触个人事实、不输出 chain-of-thought、不拥有写权限 |
 | Phase 11 | **Adaptive Day Planner**：真实旅行 Context、确定性 Constraint Check、Replanning、Approval、Write Action 与 Verification | 不未经确认修改重要旅行状态；不以模型判断代替确定性领域约束 |
 | Phase 12 | 为已验证 workflow 接入 POI、路线、天气、Calendar、Flights 等 External Tools / MCP | 不为展示 MCP 创造工作流 |
@@ -351,14 +351,14 @@ DONE
 
 ### Phase 10.2.1 — 查询语义与受控续读预算
 
-**实施状态：未开始。**
+**实施状态：已完成。**
 
 **目标：** 修正初版工具命名与三次硬上限，使 Agent 能在明确、可审计的范围内继续读取必要事实，而不是因工具名含混或固定截断丢失上下文。
 
 #### 查询语义
 
 - `current` 只表示当前唯一的进行中 Trip，例如 `get_current_active_trip`；没有进行中 Trip 时返回空 Observation。
-- `recent` 表示按工具定义的稳定排序取最近 `limit` 条，`limit` 是显式、受服务端上限保护的参数；它不能隐含“进行中 Trip”。例如 `get_recent_trips(limit)` 按 Trip 的既定排序读取，`get_recent_footprint_summaries(limit)` 应按 Observation 发生时间倒序定位最近有观察的 Trip。
+- `recent` 表示按工具定义的稳定排序取最近 `limit` 条，`limit` 是显式、受服务端上限保护的参数；它不能隐含“进行中 Trip”。`get_recent_trips(limit)` 按 `created_at DESC, uuid DESC` 读取，`get_recent_footprint_summaries(limit)` 与 `get_recent_checkins(limit)` 按 Observation 的 `occurred_at DESC, uuid DESC` 读取。
 - `by_trip` 表示调用方显式提供 `tripUuid`，例如 `get_footprint_summary_by_trip(tripUuid)`、`get_checkins_by_trip(tripUuid, limit)`；Domain Service 必须执行 user ownership 校验。
 - `get_current_trip_footprint_summary` 只能作为组合工具：先解析 `get_current_active_trip`，再调用 `get_footprint_summary_by_trip`，不再被错误命名为 `recent`。
 - 日程工具采用 `get_trip_itinerary_by_date(tripUuid, date)` 等输入明确的名称；“今天”只是 Runtime 根据当前日期构造的参数，不是隐藏查询范围。

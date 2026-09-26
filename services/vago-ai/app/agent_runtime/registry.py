@@ -15,7 +15,8 @@ class AgentTool:
 
     name: str
     label: str
-    handler: Callable[[Session, str, dict[str, Any]], Any]
+    # 参数由 ToolSelectionPlan 明确提供，避免 handler 依赖隐藏的查询范围或默认全量读取。
+    handler: Callable[[Session, str, dict[str, Any], dict[str, Any]], Any]
 
 
 class ToolRegistry:

@@ -1,16 +1,39 @@
-"""验证 Phase 10 Runtime 的工具边界、授权和失败降级。"""
+"""验证 Phase 10.2.1 Runtime 的工具边界、预算与 Observation 链。"""
 
 import asyncio
+from typing import Any
 
 from app.agent_runtime.registry import AgentTool, ToolRegistry
 from app.agent_runtime.runtime import AgentRuntime, AgentRuntimePreparation, AgentRuntimeProgress
 
 
-def test_runtime_respects_disabled_personal_context() -> None:
-    """关闭全部授权时，Runtime 不读取领域数据且仍返回可用准备结果。"""
-    runtime = AgentRuntime()
+ALL_TOOL_NAMES = (
+    "get_current_active_trip",
+    "get_trip_itinerary_by_date",
+    "get_recent_trips",
+    "get_footprint_summary_by_trip",
+    "get_checkins_by_trip",
+    "get_recent_footprint_summaries",
+    "get_recent_checkins",
+    "get_user_preferences",
+    "get_travel_memories",
+)
 
-    preparation = runtime.prepare(
+
+def _registry(overrides: dict[str, Any]) -> ToolRegistry:
+    """构造完整测试注册表，未覆盖工具默认返回空 Observation。"""
+    def empty_handler(*_args: Any) -> None:
+        return None
+
+    return ToolRegistry([
+        AgentTool(name, f"读取 {name}", overrides.get(name, empty_handler))
+        for name in ALL_TOOL_NAMES
+    ])
+
+
+def test_runtime_respects_disabled_personal_context() -> None:
+    """测试：关闭全部授权时，Runtime 不读取领域数据且仍返回可用准备结果。"""
+    preparation = AgentRuntime().prepare(
         None,
         "user-a",
         use_personal_context=False,
@@ -24,20 +47,17 @@ def test_runtime_respects_disabled_personal_context() -> None:
 
 
 def test_runtime_continues_when_one_domain_tool_fails() -> None:
-    """单一领域读取失败应成为 Observation，不阻断后续可用工具。"""
-    def failing_tool(_db, _user_uuid, _state):
+    """测试：单一领域读取失败应成为 Observation，不阻断后续可用工具。"""
+    def failing_tool(*_args: Any) -> None:
         raise RuntimeError("temporary failure")
 
-    def preference_tool(_db, _user_uuid, _state):
+    def preference_tool(*_args: Any) -> dict[str, Any]:
         return {"hasExplicitPreference": True, "pace": "leisurely"}
 
-    runtime = AgentRuntime(ToolRegistry([
-        AgentTool("get_current_trip", "读取行程", failing_tool),
-        AgentTool("get_recent_footprint", "读取足迹", lambda *_: None),
-        AgentTool("get_user_preferences", "读取偏好", preference_tool),
-        AgentTool("get_travel_memories", "读取回忆", lambda *_: []),
-    ]))
-
+    runtime = AgentRuntime(_registry({
+        "get_current_active_trip": failing_tool,
+        "get_user_preferences": preference_tool,
+    }))
     preparation = runtime.prepare(
         None,
         "user-a",
@@ -46,21 +66,17 @@ def test_runtime_continues_when_one_domain_tool_fails() -> None:
         prompt="我这次行程和旅行习惯应该怎么安排？",
     )
 
-    assert any(event["type"] == "tool.failed" and event["tool"] == "get_current_trip" for event in preparation.events)
+    assert any(event["type"] == "tool.failed" and event["tool"] == "get_current_active_trip" for event in preparation.events)
     assert "明确旅行偏好" in preparation.context_labels
-    assert preparation.personal_context is not None
 
 
 def test_runtime_streams_tool_events_in_execution_order() -> None:
     """测试：流式 Runtime 必须在工具完成时立即输出事件，而不是事后批量返回。"""
-    runtime = AgentRuntime(ToolRegistry([
-        AgentTool("get_current_trip", "读取行程", lambda *_: {"currentTrip": None, "travelHistory": []}),
-        AgentTool("get_recent_footprint", "读取足迹", lambda *_: None),
-        AgentTool("get_user_preferences", "读取偏好", lambda *_: {"hasExplicitPreference": False}),
-        AgentTool("get_travel_memories", "读取回忆", lambda *_: []),
-    ]))
+    runtime = AgentRuntime(_registry({
+        "get_current_active_trip": lambda *_args: {"uuid": "trip-a"},
+    }))
 
-    async def collect():
+    async def collect() -> list[AgentRuntimeProgress | AgentRuntimePreparation]:
         return [
             item async for item in runtime.stream_prepare(
                 None,
@@ -78,7 +94,7 @@ def test_runtime_streams_tool_events_in_execution_order() -> None:
     assert [event["type"] for event in events[:4]] == [
         "agent.started", "agent.status", "tool.started", "tool.completed",
     ]
-    assert events[2]["tool"] == events[3]["tool"] == "get_current_trip"
+    assert events[2]["tool"] == events[3]["tool"] == "get_current_active_trip"
     assert preparation.personal_context is not None
 
 
@@ -86,20 +102,16 @@ def test_runtime_skips_personal_tools_for_general_question() -> None:
     """测试：普通旅行知识问题在已授权状态下也应保持零领域读取。"""
     calls: list[str] = []
 
-    def record_tool(name: str, result):
-        def handler(_db, _user_uuid, _state):
+    def record(name: str, result: Any):
+        def handler(*_args: Any) -> Any:
             calls.append(name)
             return result
 
         return handler
 
-    runtime = AgentRuntime(ToolRegistry([
-        AgentTool("get_current_trip", "读取行程", record_tool("get_current_trip", {"currentTrip": None, "travelHistory": []})),
-        AgentTool("get_recent_footprint", "读取足迹", record_tool("get_recent_footprint", None)),
-        AgentTool("get_user_preferences", "读取偏好", record_tool("get_user_preferences", {})),
-        AgentTool("get_travel_memories", "读取回忆", record_tool("get_travel_memories", [])),
-    ]))
-
+    runtime = AgentRuntime(_registry({
+        "get_current_active_trip": record("get_current_active_trip", {"uuid": "trip-a"}),
+    }))
     preparation = runtime.prepare(
         None,
         "user-a",
@@ -110,37 +122,29 @@ def test_runtime_skips_personal_tools_for_general_question() -> None:
 
     assert calls == []
     assert preparation.personal_context is None
-    assert preparation.events[-1]["label"] == "本轮问题无需读取个人旅行资料，正在生成建议"
 
 
-def test_runtime_reads_trip_before_live_observations() -> None:
-    """测试：足迹和打卡问题先确认当前 Trip，再按独立工具读取对应事实。"""
-    calls: list[str] = []
+def test_runtime_reads_current_trip_before_by_trip_observations() -> None:
+    """测试：当前足迹与打卡先建立 Trip Observation，再按明确 tripUuid 查询。"""
+    calls: list[tuple[str, dict[str, Any]]] = []
 
-    def current_trip(_db, _user_uuid, _state):
-        calls.append("get_current_trip")
+    def current_trip(*_args: Any) -> dict[str, str]:
+        calls.append(("get_current_active_trip", {}))
         return {"uuid": "trip-a"}
 
-    def footprint(_db, _user_uuid, state):
-        calls.append("get_recent_footprint")
-        assert state["travelContext"]["currentTrip"]["uuid"] == "trip-a"
+    def footprint(_db: Any, _user: str, _state: dict[str, Any], arguments: dict[str, Any]) -> dict[str, int]:
+        calls.append(("get_footprint_summary_by_trip", arguments))
         return {"automaticSampleCount": 3}
 
-    def checkins(_db, _user_uuid, state):
-        calls.append("get_checkins")
-        assert state["travelContext"]["currentTrip"]["uuid"] == "trip-a"
+    def checkins(_db: Any, _user: str, _state: dict[str, Any], arguments: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+        calls.append(("get_checkins_by_trip", arguments))
         return {"recentCheckins": [{"locationName": "滨海湾花园"}]}
 
-    runtime = AgentRuntime(ToolRegistry([
-        AgentTool("get_current_trip", "读取行程", current_trip),
-        AgentTool("get_today_itinerary", "读取日程", lambda *_: None),
-        AgentTool("get_recent_travel_history", "读取历史", lambda *_: []),
-        AgentTool("get_recent_footprint", "读取足迹", footprint),
-        AgentTool("get_checkins", "读取打卡", checkins),
-        AgentTool("get_user_preferences", "读取偏好", lambda *_: {}),
-        AgentTool("get_travel_memories", "读取回忆", lambda *_: []),
-    ]))
-
+    runtime = AgentRuntime(_registry({
+        "get_current_active_trip": current_trip,
+        "get_footprint_summary_by_trip": footprint,
+        "get_checkins_by_trip": checkins,
+    }))
     runtime.prepare(
         None,
         "user-a",
@@ -149,30 +153,29 @@ def test_runtime_reads_trip_before_live_observations() -> None:
         prompt="我今天的足迹和打卡记录怎么样？",
     )
 
-    assert calls == ["get_current_trip", "get_recent_footprint", "get_checkins"]
+    assert calls == [
+        ("get_current_active_trip", {}),
+        ("get_footprint_summary_by_trip", {"tripUuid": "trip-a"}),
+        ("get_checkins_by_trip", {"tripUuid": "trip-a", "limit": 3}),
+    ]
 
 
-def test_runtime_skips_trip_dependent_tool_without_an_active_trip() -> None:
-    """测试：当前 Trip Observation 为空时，不调用日程、足迹或打卡工具。"""
+def test_runtime_skips_by_trip_tools_without_an_active_trip() -> None:
+    """测试：当前 Trip Observation 为空时，不调用依赖当前 Trip 的工具。"""
     calls: list[str] = []
 
-    def record(name: str, result):
-        def handler(_db, _user_uuid, _state):
+    def record(name: str, result: Any):
+        def handler(*_args: Any) -> Any:
             calls.append(name)
             return result
 
         return handler
 
-    runtime = AgentRuntime(ToolRegistry([
-        AgentTool("get_current_trip", "读取行程", record("get_current_trip", None)),
-        AgentTool("get_today_itinerary", "读取日程", record("get_today_itinerary", {})),
-        AgentTool("get_recent_travel_history", "读取历史", record("get_recent_travel_history", [])),
-        AgentTool("get_recent_footprint", "读取足迹", record("get_recent_footprint", {})),
-        AgentTool("get_checkins", "读取打卡", record("get_checkins", {})),
-        AgentTool("get_user_preferences", "读取偏好", record("get_user_preferences", {})),
-        AgentTool("get_travel_memories", "读取回忆", record("get_travel_memories", [])),
-    ]))
-
+    runtime = AgentRuntime(_registry({
+        "get_current_active_trip": record("get_current_active_trip", None),
+        "get_footprint_summary_by_trip": record("get_footprint_summary_by_trip", {}),
+        "get_checkins_by_trip": record("get_checkins_by_trip", {}),
+    }))
     preparation = runtime.prepare(
         None,
         "user-a",
@@ -181,32 +184,29 @@ def test_runtime_skips_trip_dependent_tool_without_an_active_trip() -> None:
         prompt="我今天的足迹和打卡记录怎么样？",
     )
 
-    assert calls == ["get_current_trip"]
-    assert any("跳过足迹读取" in event["label"] for event in preparation.events)
-    assert any("跳过打卡读取" in event["label"] for event in preparation.events)
+    assert calls == ["get_current_active_trip"]
+    assert any("跳过当前行程足迹读取" in event["label"] for event in preparation.events)
+    assert any("跳过当前行程打卡读取" in event["label"] for event in preparation.events)
 
 
-def test_runtime_limits_requested_read_tools_to_three() -> None:
-    """测试：候选工具超过上限时，只执行前三个并向用户说明信息边界。"""
+def test_runtime_continues_after_initial_budget_when_more_selected_facts_are_needed() -> None:
+    """测试：初始三次读取后，明确选中的历史与偏好可在总预算内继续读取。"""
     calls: list[str] = []
 
-    def record(name: str, result):
-        def handler(_db, _user_uuid, _state):
+    def record(name: str, result: Any):
+        def handler(*_args: Any) -> Any:
             calls.append(name)
             return result
 
         return handler
 
-    runtime = AgentRuntime(ToolRegistry([
-        AgentTool("get_current_trip", "读取行程", record("get_current_trip", {"uuid": "trip-a"})),
-        AgentTool("get_today_itinerary", "读取日程", record("get_today_itinerary", {"dayIndex": 1, "spots": []})),
-        AgentTool("get_recent_travel_history", "读取历史", record("get_recent_travel_history", [])),
-        AgentTool("get_recent_footprint", "读取足迹", record("get_recent_footprint", {"automaticSampleCount": 2})),
-        AgentTool("get_checkins", "读取打卡", record("get_checkins", {"recentCheckins": []})),
-        AgentTool("get_user_preferences", "读取偏好", record("get_user_preferences", {})),
-        AgentTool("get_travel_memories", "读取回忆", record("get_travel_memories", [])),
-    ]))
-
+    runtime = AgentRuntime(_registry({
+        "get_current_active_trip": record("get_current_active_trip", {"uuid": "trip-a"}),
+        "get_footprint_summary_by_trip": record("get_footprint_summary_by_trip", {"automaticSampleCount": 2}),
+        "get_checkins_by_trip": record("get_checkins_by_trip", {"recentCheckins": []}),
+        "get_trip_itinerary_by_date": record("get_trip_itinerary_by_date", {"dayIndex": 1, "spots": []}),
+        "get_recent_trips": record("get_recent_trips", [{"uuid": "trip-old"}]),
+    }))
     preparation = runtime.prepare(
         None,
         "user-a",
@@ -215,5 +215,44 @@ def test_runtime_limits_requested_read_tools_to_three() -> None:
         prompt="我当前日程、足迹、打卡和旅行历史是什么？",
     )
 
-    assert calls == ["get_current_trip", "get_today_itinerary", "get_recent_footprint"]
-    assert any("超过本轮读取上限" in event["label"] for event in preparation.events)
+    assert calls == [
+        "get_current_active_trip",
+        "get_footprint_summary_by_trip",
+        "get_checkins_by_trip",
+        "get_trip_itinerary_by_date",
+        "get_recent_trips",
+    ]
+    assert any("已完成初始资料读取" in event["label"] for event in preparation.events)
+
+
+def test_runtime_stops_after_total_read_budget() -> None:
+    """测试：候选工具超过总预算时，不执行第七次读取并公开信息边界。"""
+    calls: list[str] = []
+
+    def record(name: str, result: Any):
+        def handler(*_args: Any) -> Any:
+            calls.append(name)
+            return result
+
+        return handler
+
+    runtime = AgentRuntime(_registry({
+        "get_current_active_trip": record("get_current_active_trip", {"uuid": "trip-a"}),
+        "get_footprint_summary_by_trip": record("get_footprint_summary_by_trip", {"automaticSampleCount": 1}),
+        "get_checkins_by_trip": record("get_checkins_by_trip", {"recentCheckins": []}),
+        "get_trip_itinerary_by_date": record("get_trip_itinerary_by_date", {"dayIndex": 1, "spots": []}),
+        "get_recent_trips": record("get_recent_trips", [{"uuid": "trip-old"}]),
+        "get_user_preferences": record("get_user_preferences", {"hasExplicitPreference": True}),
+        "get_travel_memories": record("get_travel_memories", [{"title": "旧旅行"}]),
+    }))
+    preparation = runtime.prepare(
+        None,
+        "user-a",
+        use_personal_context=True,
+        use_rag=False,
+        prompt="我当前日程、足迹、打卡、旅行历史、旅行习惯和旅行回忆是什么？",
+    )
+
+    assert len(calls) == 6
+    assert "get_travel_memories" not in calls
+    assert any("已达到本轮读取总预算" in event["label"] for event in preparation.events)

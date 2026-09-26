@@ -99,13 +99,47 @@ def test_agent_footprint_and_checkin_contexts_are_separated(db_session: Session)
     ])
     db_session.commit()
 
-    footprint = service.get_agent_footprint_context(db_session, "user-a", "trip-agent-context")
-    checkins = service.get_agent_checkin_context(db_session, "user-a", "trip-agent-context")
+    footprint = service.get_agent_footprint_summary_by_trip(db_session, "user-a", "trip-agent-context")
+    checkins = service.get_agent_checkins_by_trip(db_session, "user-a", "trip-agent-context")
 
     assert footprint == {"automaticSampleCount": 1}
     assert checkins["recentCheckins"][0]["locationName"] == "滨海湾花园"
     assert "recentCheckins" not in footprint
     assert "automaticSampleCount" not in checkins
+
+
+def test_agent_recent_observations_are_ordered_by_occurrence_and_limited(db_session: Session):
+    """测试：recent 足迹和打卡按 Observation 时间倒序读取，不依赖进行中 Trip。"""
+    _add_trip(db_session, uuid="trip-older", user_uuid="user-a", status=3)
+    _add_trip(db_session, uuid="trip-newer", user_uuid="user-a", status=1)
+    db_session.add_all([
+        TravelObservation(
+            uuid="older-auto", client_event_uuid="older-auto-event", user_uuid="user-a",
+            trip_uuid="trip-older", observation_type=service.AUTO_GPS,
+            latitude=1.2800, longitude=103.8500, occurred_at=datetime(2026, 9, 20, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="newer-auto", client_event_uuid="newer-auto-event", user_uuid="user-a",
+            trip_uuid="trip-newer", observation_type=service.AUTO_GPS,
+            latitude=1.2900, longitude=103.8600, occurred_at=datetime(2026, 9, 25, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="newer-checkin", client_event_uuid="newer-checkin-event", user_uuid="user-a",
+            trip_uuid="trip-newer", observation_type=service.MANUAL_CHECKIN,
+            latitude=1.2910, longitude=103.8610, location_name="最近打卡", occurred_at=datetime(2026, 9, 26, tzinfo=UTC),
+        ),
+    ])
+    db_session.commit()
+
+    recent_footprints = service.get_agent_recent_footprint_summaries(db_session, "user-a", limit=1)
+    recent_checkins = service.get_agent_recent_checkins(db_session, "user-a", limit=1)
+
+    assert [item["tripUuid"] for item in recent_footprints] == ["trip-newer"]
+    assert recent_footprints[0]["automaticSampleCount"] == 1
+    assert recent_checkins == [{
+        "tripUuid": "trip-newer", "tripTitle": "测试行程", "locationName": "最近打卡",
+        "occurredAt": "2026-09-26T00:00:00", "note": None,
+    }]
 
 
 def test_checkin_requires_an_in_progress_trip(db_session: Session):
