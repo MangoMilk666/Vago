@@ -192,6 +192,80 @@ def get_agent_travel_context(db: Session, user_uuid: str) -> dict:
     }
 
 
+def get_agent_current_trip(db: Session, user_uuid: str) -> dict | None:
+    """读取进行中 Trip 的基础事实，不顺带注入日程或历史。"""
+    trip = db.scalar(
+        select(Trip).where(
+            Trip.user_uuid == user_uuid,
+            Trip.status == TRIP_STATUS_IN_PROGRESS,
+            Trip.deleted_at.is_(None),
+        )
+    )
+    return _to_agent_trip_brief(trip) if trip else None
+
+
+def get_agent_today_itinerary(db: Session, user_uuid: str, trip_uuid: str) -> dict | None:
+    """读取当前进行中 Trip 的今日日程，不读取其他日期或其他行程。"""
+    trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
+    # 如果 Trip 已不再进行中，拒绝把历史或未开始行程伪装成实时日程。
+    if trip.status != TRIP_STATUS_IN_PROGRESS:
+        return None
+
+    today = date.today()
+    day = db.scalar(
+        select(ItineraryDay).where(
+            ItineraryDay.ref_uuid == trip.uuid,
+            ItineraryDay.ref_type == ItineraryDay.REF_TYPE_TRIP,
+            ItineraryDay.day_date == today,
+        )
+    )
+    # 如果当前日期不在行程范围内或该天没有日程，返回最小空结果而不是扩大到完整 itinerary。
+    if day is None:
+        return {"tripUuid": trip.uuid, "dayDate": today.isoformat(), "dayIndex": None, "spots": []}
+
+    spots = db.scalars(
+        select(ItinerarySpot)
+        .where(ItinerarySpot.day_uuid == day.uuid)
+        .order_by(ItinerarySpot.sort_order.asc(), ItinerarySpot.id.asc())
+        .limit(12)
+    ).all()
+    return {
+        "tripUuid": trip.uuid,
+        "dayDate": day.day_date.isoformat(),
+        "dayIndex": day.day_index,
+        "transportation": day.transportation,
+        "accommodation": day.accommodation,
+        "spots": [spot.name for spot in spots],
+    }
+
+
+def get_agent_recent_travel_history(db: Session, user_uuid: str, limit: int = 3) -> list[dict]:
+    """读取有限的已结束 Trip 摘要，不把历史完整日程带入 Prompt。"""
+    trips = db.scalars(
+        select(Trip)
+        .where(
+            Trip.user_uuid == user_uuid,
+            Trip.status == TRIP_STATUS_ENDED,
+            Trip.deleted_at.is_(None),
+        )
+        .order_by(Trip.end_date.desc(), Trip.updated_at.desc())
+        .limit(limit)
+    ).all()
+    return [_to_agent_trip_brief(trip) for trip in trips]
+
+
+def _to_agent_trip_brief(trip: Trip) -> dict:
+    """构造 Agent 的行程最小摘要，避免普通读取隐式查询全量日程。"""
+    return {
+        "uuid": trip.uuid,
+        "title": trip.title,
+        "destination": trip.destination,
+        "startDate": trip.start_date.isoformat(),
+        "endDate": trip.end_date.isoformat(),
+        "status": trip.status,
+    }
+
+
 def _to_agent_trip_summary(db: Session, trip: Trip) -> dict:
     """以已保存的日程组装行程摘要，读路径不会创建空 itinerary_days。"""
     days = db.scalars(

@@ -15,7 +15,7 @@ class AgentTool:
 
     name: str
     label: str
-    handler: Callable[[Session, str, dict[str, Any]], dict[str, Any] | None]
+    handler: Callable[[Session, str, dict[str, Any]], Any]
 
 
 class ToolRegistry:

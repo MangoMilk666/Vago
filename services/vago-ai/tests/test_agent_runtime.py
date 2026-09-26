@@ -114,21 +114,29 @@ def test_runtime_skips_personal_tools_for_general_question() -> None:
 
 
 def test_runtime_reads_trip_before_live_observations() -> None:
-    """测试：足迹问题先确认当前 Trip，再读取该 Trip 的观察，不能盲查所有行程。"""
+    """测试：足迹和打卡问题先确认当前 Trip，再按独立工具读取对应事实。"""
     calls: list[str] = []
 
     def current_trip(_db, _user_uuid, _state):
         calls.append("get_current_trip")
-        return {"currentTrip": {"uuid": "trip-a"}, "travelHistory": []}
+        return {"uuid": "trip-a"}
 
     def footprint(_db, _user_uuid, state):
         calls.append("get_recent_footprint")
         assert state["travelContext"]["currentTrip"]["uuid"] == "trip-a"
-        return {"sampleCount": 3}
+        return {"automaticSampleCount": 3}
+
+    def checkins(_db, _user_uuid, state):
+        calls.append("get_checkins")
+        assert state["travelContext"]["currentTrip"]["uuid"] == "trip-a"
+        return {"recentCheckins": [{"locationName": "滨海湾花园"}]}
 
     runtime = AgentRuntime(ToolRegistry([
         AgentTool("get_current_trip", "读取行程", current_trip),
+        AgentTool("get_today_itinerary", "读取日程", lambda *_: None),
+        AgentTool("get_recent_travel_history", "读取历史", lambda *_: []),
         AgentTool("get_recent_footprint", "读取足迹", footprint),
+        AgentTool("get_checkins", "读取打卡", checkins),
         AgentTool("get_user_preferences", "读取偏好", lambda *_: {}),
         AgentTool("get_travel_memories", "读取回忆", lambda *_: []),
     ]))
@@ -141,4 +149,71 @@ def test_runtime_reads_trip_before_live_observations() -> None:
         prompt="我今天的足迹和打卡记录怎么样？",
     )
 
-    assert calls == ["get_current_trip", "get_recent_footprint"]
+    assert calls == ["get_current_trip", "get_recent_footprint", "get_checkins"]
+
+
+def test_runtime_skips_trip_dependent_tool_without_an_active_trip() -> None:
+    """测试：当前 Trip Observation 为空时，不调用日程、足迹或打卡工具。"""
+    calls: list[str] = []
+
+    def record(name: str, result):
+        def handler(_db, _user_uuid, _state):
+            calls.append(name)
+            return result
+
+        return handler
+
+    runtime = AgentRuntime(ToolRegistry([
+        AgentTool("get_current_trip", "读取行程", record("get_current_trip", None)),
+        AgentTool("get_today_itinerary", "读取日程", record("get_today_itinerary", {})),
+        AgentTool("get_recent_travel_history", "读取历史", record("get_recent_travel_history", [])),
+        AgentTool("get_recent_footprint", "读取足迹", record("get_recent_footprint", {})),
+        AgentTool("get_checkins", "读取打卡", record("get_checkins", {})),
+        AgentTool("get_user_preferences", "读取偏好", record("get_user_preferences", {})),
+        AgentTool("get_travel_memories", "读取回忆", record("get_travel_memories", [])),
+    ]))
+
+    preparation = runtime.prepare(
+        None,
+        "user-a",
+        use_personal_context=True,
+        use_rag=False,
+        prompt="我今天的足迹和打卡记录怎么样？",
+    )
+
+    assert calls == ["get_current_trip"]
+    assert any("跳过足迹读取" in event["label"] for event in preparation.events)
+    assert any("跳过打卡读取" in event["label"] for event in preparation.events)
+
+
+def test_runtime_limits_requested_read_tools_to_three() -> None:
+    """测试：候选工具超过上限时，只执行前三个并向用户说明信息边界。"""
+    calls: list[str] = []
+
+    def record(name: str, result):
+        def handler(_db, _user_uuid, _state):
+            calls.append(name)
+            return result
+
+        return handler
+
+    runtime = AgentRuntime(ToolRegistry([
+        AgentTool("get_current_trip", "读取行程", record("get_current_trip", {"uuid": "trip-a"})),
+        AgentTool("get_today_itinerary", "读取日程", record("get_today_itinerary", {"dayIndex": 1, "spots": []})),
+        AgentTool("get_recent_travel_history", "读取历史", record("get_recent_travel_history", [])),
+        AgentTool("get_recent_footprint", "读取足迹", record("get_recent_footprint", {"automaticSampleCount": 2})),
+        AgentTool("get_checkins", "读取打卡", record("get_checkins", {"recentCheckins": []})),
+        AgentTool("get_user_preferences", "读取偏好", record("get_user_preferences", {})),
+        AgentTool("get_travel_memories", "读取回忆", record("get_travel_memories", [])),
+    ]))
+
+    preparation = runtime.prepare(
+        None,
+        "user-a",
+        use_personal_context=True,
+        use_rag=False,
+        prompt="我当前日程、足迹、打卡和旅行历史是什么？",
+    )
+
+    assert calls == ["get_current_trip", "get_today_itinerary", "get_recent_footprint"]
+    assert any("超过本轮读取上限" in event["label"] for event in preparation.events)

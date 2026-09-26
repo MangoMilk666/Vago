@@ -206,8 +206,8 @@ def list_trip_observations(db: Session, user_uuid: str, trip_uuid: str) -> list[
     return [_to_observation_response(observation) for observation in observations]
 
 
-def get_agent_observation_context(db: Session, user_uuid: str, trip_uuid: str) -> dict:
-    """读取当前行程的 Live Context 摘要，不向 Agent 暴露原始坐标。"""
+def get_agent_footprint_context(db: Session, user_uuid: str, trip_uuid: str) -> dict:
+    """读取当前行程的自动 GPS 摘要，不向 Agent 暴露原始坐标或打卡文本。"""
     _get_owned_trip(db, user_uuid, trip_uuid)
     automatic_sample_count = db.scalar(
         select(func.count())
@@ -218,7 +218,12 @@ def get_agent_observation_context(db: Session, user_uuid: str, trip_uuid: str) -
             TravelObservation.observation_type == AUTO_GPS,
         )
     ) or 0
-    # 手动打卡点取最近新增的5个
+    return {"automaticSampleCount": automatic_sample_count}
+
+
+def get_agent_checkin_context(db: Session, user_uuid: str, trip_uuid: str) -> dict:
+    """读取当前行程的有限手动打卡摘要，不查询自动 GPS 采样点。"""
+    _get_owned_trip(db, user_uuid, trip_uuid)
     checkins = db.scalars(
         select(TravelObservation)
         .where(
@@ -230,7 +235,6 @@ def get_agent_observation_context(db: Session, user_uuid: str, trip_uuid: str) -
         .limit(5)
     ).all()
     return {
-        "automaticSampleCount": automatic_sample_count,
         "recentCheckins": [
             {
                 "locationName": item.location_name or "未命名地点",
@@ -239,6 +243,14 @@ def get_agent_observation_context(db: Session, user_uuid: str, trip_uuid: str) -
             }
             for item in checkins
         ],
+    }
+
+
+def get_agent_observation_context(db: Session, user_uuid: str, trip_uuid: str) -> dict:
+    """兼容既有 Personal Context 预览，合并两个已拆分的 Live Context 摘要。"""
+    return {
+        **get_agent_footprint_context(db, user_uuid, trip_uuid),
+        **get_agent_checkin_context(db, user_uuid, trip_uuid),
     }
 
 

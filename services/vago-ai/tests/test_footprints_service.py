@@ -81,6 +81,33 @@ def test_location_sync_is_user_scoped_and_idempotent(db_session: Session):
     assert exc_info.value.code == "TRIP_NOT_FOUND"
 
 
+def test_agent_footprint_and_checkin_contexts_are_separated(db_session: Session):
+    """测试：Agent 的 GPS 摘要与打卡摘要分开读取，避免无关事实一并注入。"""
+    _add_trip(db_session, uuid="trip-agent-context", user_uuid="user-a", status=2)
+    db_session.add_all([
+        TravelObservation(
+            uuid="agent-auto", client_event_uuid="agent-auto-event", user_uuid="user-a",
+            trip_uuid="trip-agent-context", observation_type=service.AUTO_GPS,
+            latitude=1.2800, longitude=103.8500, occurred_at=datetime(2026, 9, 27, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="agent-checkin", client_event_uuid="agent-checkin-event", user_uuid="user-a",
+            trip_uuid="trip-agent-context", observation_type=service.MANUAL_CHECKIN,
+            latitude=1.2816, longitude=103.8636, location_name="滨海湾花园", note="傍晚散步",
+            occurred_at=datetime(2026, 9, 27, 1, tzinfo=UTC),
+        ),
+    ])
+    db_session.commit()
+
+    footprint = service.get_agent_footprint_context(db_session, "user-a", "trip-agent-context")
+    checkins = service.get_agent_checkin_context(db_session, "user-a", "trip-agent-context")
+
+    assert footprint == {"automaticSampleCount": 1}
+    assert checkins["recentCheckins"][0]["locationName"] == "滨海湾花园"
+    assert "recentCheckins" not in footprint
+    assert "automaticSampleCount" not in checkins
+
+
 def test_checkin_requires_an_in_progress_trip(db_session: Session):
     """测试：打卡只能写入进行中行程，避免修改已结束旅行的事实记录。"""
     _add_trip(db_session, uuid="trip-not-started", user_uuid="user-a", status=1)

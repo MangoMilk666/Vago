@@ -7,9 +7,6 @@ from dataclasses import dataclass
 from typing import Sequence
 
 
-MAX_INITIAL_READ_TOOLS = 3
-
-
 @dataclass(frozen=True)
 class ToolSelectionPlan:
     """本轮允许实际执行的只读领域工具计划；空工具列表是正常结果。"""
@@ -25,14 +22,15 @@ class ToolSelectionPolicy:
 
     _CURRENT_TRIP_TERMS = (
         "当前行程", "我的行程", "本次行程", "这次行程", "今天的行程", "今天行程",
-        "当前日程", "当前的日程",
-        "我的日程", "今日日程", "今天安排", "今天有什么安排", "接下来", "还剩",
-        "剩余", "行程里", "日程里",
     )
-    _LIVE_TRAVEL_TERMS = (
-        "足迹", "打卡", "我在哪", "当前位置", "现在在哪", "轨迹", "记录点",
-        "走过", "去了哪里",
+    _ITINERARY_TERMS = (
+        "当前日程", "当前的日程", "我的日程", "今日日程", "今天安排", "今天有什么安排",
+        "接下来", "还剩", "剩余", "行程里", "日程里", "安排",
     )
+    _FOOTPRINT_TERMS = (
+        "足迹", "我在哪", "当前位置", "现在在哪", "轨迹", "记录点", "走过", "去了哪里",
+    )
+    _CHECKIN_TERMS = ("打卡", "签到")
     _PREFERENCE_TERMS = (
         "旅行偏好", "我的偏好", "旅行习惯", "我的习惯", "旅行风格", "我的风格",
         "我的节奏", "根据我的", "适合我",
@@ -70,26 +68,44 @@ class ToolSelectionPolicy:
             routed_text = f"{recent_context} {normalized_prompt}".strip()
 
         # 根据路由文本判断是否命中对应话题。
-        is_live_travel = _contains_any(routed_text, self._LIVE_TRAVEL_TERMS)
+        is_footprint = _contains_any(routed_text, self._FOOTPRINT_TERMS)
+        is_checkins = _contains_any(routed_text, self._CHECKIN_TERMS)
         is_current_trip = _contains_any(routed_text, self._CURRENT_TRIP_TERMS)
+        is_itinerary = _contains_any(routed_text, self._ITINERARY_TERMS)
         is_preferences = _contains_any(routed_text, self._PREFERENCE_TERMS)
         is_history = _contains_any(routed_text, self._HISTORY_TERMS)
         is_memory = _contains_any(routed_text, self._MEMORY_TERMS)
 
         selected: list[str] = []
-        # 如果问题涉及足迹，足迹必须绑定具体 Trip，先读取当前行程只是满足工具依赖。
-        if is_live_travel:
-            selected.extend(("get_current_trip", "get_recent_footprint"))
-        elif is_current_trip or is_history:
+        # 如果问题涉及当前日程、足迹或打卡，先读取当前行程以建立后续工具的 Trip 归属。
+        if is_itinerary or is_footprint or is_checkins:
+            selected.append("get_current_trip")
+        # 如果问题要求查看日程，只读取当前日期对应的安排。
+        if is_itinerary:
+            selected.append("get_today_itinerary")
+        # 如果问题提到轨迹或当前位置，只读取自动 GPS 的聚合摘要。
+        if is_footprint:
+            selected.append("get_recent_footprint")
+        # 如果问题明确提到打卡，只读取有限的用户主动确认地点。
+        if is_checkins:
+            selected.append("get_checkins")
+        # 如果问题仅询问当前行程基础事实，避免重复加入已经作为依赖读取的当前 Trip 工具。
+        if is_current_trip and "get_current_trip" not in selected:
             selected.append("get_current_trip")
 
+        # 如果问题涉及历史旅行，只读取有限的已结束 Trip 摘要。
+        if is_history:
+            selected.append("get_recent_travel_history")
+
+        # 如果问题需要个性化建议，才读取用户明确确认的偏好。
         if is_preferences:
             selected.append("get_user_preferences")
+        # 如果问题明确询问回忆，才读取 grounded Memory 摘要。
         if is_memory:
             selected.append("get_travel_memories")
 
         # 保持固定、可测试的执行顺序，重复命中多个意图时不重复调用同一工具。
-        tool_names = tuple(dict.fromkeys(selected))[:MAX_INITIAL_READ_TOOLS]
+        tool_names = tuple(dict.fromkeys(selected))
         return ToolSelectionPlan(
             intent=_intent_name(tool_names),
             tool_names=tool_names,
@@ -113,8 +129,12 @@ def _intent_name(tool_names: tuple[str, ...]) -> str:
     """为日志与未来评估提供稳定意图名，不向客户端暴露模型推理。"""
     if not tool_names:
         return "general"
-    if "get_recent_footprint" in tool_names:
+    if "get_recent_footprint" in tool_names or "get_checkins" in tool_names:
         return "live_travel"
+    if "get_today_itinerary" in tool_names:
+        return "current_itinerary"
+    if "get_recent_travel_history" in tool_names:
+        return "travel_history"
     if "get_user_preferences" in tool_names:
         return "personal_preferences"
     if "get_travel_memories" in tool_names:

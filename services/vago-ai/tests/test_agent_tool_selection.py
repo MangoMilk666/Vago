@@ -16,15 +16,15 @@ def test_general_question_selects_no_personal_tool() -> None:
     assert plan.allow_rag_search is True
 
 
-def test_current_trip_question_selects_only_trip_context() -> None:
-    """测试：当前行程问题不应顺带读取足迹、偏好或回忆。"""
+def test_current_itinerary_question_selects_trip_then_today_itinerary() -> None:
+    """测试：当前日程先确认当前 Trip，再读取当天安排，不顺带读取足迹或历史。"""
     plan = ToolSelectionPolicy().select(
         "我当前行程还剩什么安排？",
         use_personal_context=True,
         use_rag=True,
     )
 
-    assert plan.tool_names == ("get_current_trip",)
+    assert plan.tool_names == ("get_current_trip", "get_today_itinerary")
     assert plan.allow_rag_search is True
 
 
@@ -47,7 +47,7 @@ def test_personal_history_and_preference_selects_related_tools() -> None:
         use_rag=True,
     )
 
-    assert plan.tool_names == ("get_current_trip", "get_user_preferences")
+    assert plan.tool_names == ("get_recent_travel_history", "get_user_preferences")
 
 
 def test_follow_up_uses_recent_user_context_only_when_needed() -> None:
@@ -67,7 +67,7 @@ def test_follow_up_uses_recent_user_context_only_when_needed() -> None:
         use_rag=True,
     )
 
-    assert follow_up_plan.tool_names == ("get_current_trip",)
+    assert follow_up_plan.tool_names == ("get_current_trip", "get_today_itinerary")
     assert standalone_plan.tool_names == ()
 
 
@@ -90,7 +90,7 @@ def test_current_itinerary_keeps_rag_available_for_agent_choice() -> None:
         use_rag=True,
     )
 
-    assert plan.tool_names == ("get_current_trip",)
+    assert plan.tool_names == ("get_current_trip", "get_today_itinerary")
     assert plan.allow_rag_search is True
 
 

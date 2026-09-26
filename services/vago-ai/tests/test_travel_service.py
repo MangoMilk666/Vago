@@ -95,6 +95,40 @@ def test_create_trip_initializes_empty_itinerary_days(db_session: Session):
     ]
 
 
+def test_agent_travel_reads_keep_current_and_history_boundaries(db_session: Session):
+    """测试：Agent 当前行程与历史读取只返回各自最小摘要，不隐式加载日程。"""
+    current_trip = Trip(
+        uuid="current-trip", user_uuid="user-a", title="当前新加坡行", destination="Singapore",
+        start_date=date.today(), end_date=date.today(), status=service.TRIP_STATUS_IN_PROGRESS,
+    )
+    history_trip = Trip(
+        uuid="history-trip", user_uuid="user-a", title="东京旧行", destination="Tokyo",
+        start_date=date(2026, 4, 1), end_date=date(2026, 4, 3), status=service.TRIP_STATUS_ENDED,
+    )
+    db_session.add_all([current_trip, history_trip])
+    db_session.add(ItineraryDay(
+        uuid="today-day", ref_uuid=current_trip.uuid, ref_type=ItineraryDay.REF_TYPE_TRIP,
+        day_date=date.today(), day_index=1,
+    ))
+    db_session.add(ItinerarySpot(uuid="today-spot", day_uuid="today-day", name="滨海湾花园", sort_order=0))
+    db_session.commit()
+
+    current = service.get_agent_current_trip(db_session, "user-a")
+    today = service.get_agent_today_itinerary(db_session, "user-a", current_trip.uuid)
+    history = service.get_agent_recent_travel_history(db_session, "user-a")
+
+    assert current == {
+        "uuid": "current-trip", "title": "当前新加坡行", "destination": "Singapore",
+        "startDate": date.today().isoformat(), "endDate": date.today().isoformat(),
+        "status": service.TRIP_STATUS_IN_PROGRESS,
+    }
+    assert today["spots"] == ["滨海湾花园"]
+    assert history == [{
+        "uuid": "history-trip", "title": "东京旧行", "destination": "Tokyo",
+        "startDate": "2026-04-01", "endDate": "2026-04-03", "status": service.TRIP_STATUS_ENDED,
+    }]
+
+
 def test_trip_lifecycle_allows_one_active_trip_and_locks_history(db_session: Session):
     """测试：正式行程只能依次未开始、进行中、已结束，历史行程不可编辑。"""
     first_trip = service.create_trip(

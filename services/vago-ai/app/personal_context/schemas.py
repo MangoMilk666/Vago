@@ -10,6 +10,7 @@ class PersonalContextPreview(BaseModel):
 
     labels: list[str] = Field(default_factory=list)
     current_trip: dict[str, Any] | None = Field(default=None, alias="currentTrip")
+    today_itinerary: dict[str, Any] | None = Field(default=None, alias="todayItinerary")
     travel_history: list[dict[str, Any]] = Field(default_factory=list, alias="travelHistory")
     live_observations: dict[str, Any] | None = Field(default=None, alias="liveObservations")
     preferences: dict[str, Any] = Field(default_factory=dict)

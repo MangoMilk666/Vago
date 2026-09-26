@@ -316,7 +316,7 @@ DONE
 | Phase 9 | 进行中：Grounded Travel Memory、历史上下文、明确偏好与 Web Context 注入；signals 待真实数据验证 | 不把模型推断写成确认事实，不做复杂记忆系统 |
 | Phase 10（基线，已实现） | 最小只读 Think-Execute-Observe Runtime、Tool Registry、内部 Domain Tools、SSE Agent Event、错误降级与步数上限 | 不直连数据库，不引入 Multi-Agent / Graph Runtime；该阶段固定预取仍是过渡实现 |
 | Phase 10.1 | **Prompt-aware deterministic selection**：以当前 prompt、少量会话上下文和授权范围输出 0..N 个初始工具；把授权从执行指令改为权限上限 | 不增加一次 LLM 调用作为默认选择器；不读取未被本轮计划选中的领域数据 |
-| Phase 10.2 | **工具粒度与受控 Observation 链**：拆分当前行程、日程、历史、足迹、打卡等读取边界；工具结果不足时再选择下一步，默认每轮最多 3 次只读调用 | 不把整份 Trip / 全量轨迹 / 全部历史拼入 Prompt；不把知识摘要当作固定步骤 |
+| Phase 10.2（已完成） | **工具粒度与受控 Observation 链**：已拆分当前行程、今日日程、近期历史、GPS 足迹摘要与打卡摘要；后续工具仅在当前 Trip Observation 成立时执行，每轮最多 3 次只读调用 | 不把整份 Trip / 全量轨迹 / 全部历史拼入 Prompt；不把知识摘要当作固定步骤 |
 | Phase 10.3 | **模糊请求的受限 selector 与可评估性**：仅对规则无法覆盖的复杂问题使用结构化 selector；补充 Trace、token / latency / tool-count 指标与 prompt-to-tools 回归集 | selector 不接触个人事实、不输出 chain-of-thought、不拥有写权限 |
 | Phase 11 | **Adaptive Day Planner**：真实旅行 Context、确定性 Constraint Check、Replanning、Approval、Write Action 与 Verification | 不未经确认修改重要旅行状态；不以模型判断代替确定性领域约束 |
 | Phase 12 | 为已验证 workflow 接入 POI、路线、天气、Calendar、Flights 等 External Tools / MCP | 不为展示 MCP 创造工作流 |
@@ -334,6 +334,8 @@ DONE
 - 单元测试以“prompt → expected tools / no tool”为主，并覆盖关闭授权、跨账号与多轮指代。
 
 ### Phase 10.2 — 工具粒度与受控 Observation 链
+
+**实施状态：已完成。**
 
 **目标：** 避免一个粗粒度工具带入无关事实，同时允许后续读取建立在前一条真实 Observation 上。
 
