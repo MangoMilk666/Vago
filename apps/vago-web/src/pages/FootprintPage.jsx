@@ -127,7 +127,8 @@ function FootprintMap({ observations, showGpsPoints }) {
         <CircleMarker
           key={point.uuid}
           center={[point.latitude, point.longitude]}
-          radius={10}
+          // 打卡点保留与自动采样点的层级差异，但避免在 Web 地图上过度抢占视觉焦点。
+          radius={7.5}
           pathOptions={{ color: '#ffffff', fillColor: '#e75b7b', fillOpacity: 1, weight: 3 }}
         >
           <Popup><ObservationPopup point={point} /></Popup>
