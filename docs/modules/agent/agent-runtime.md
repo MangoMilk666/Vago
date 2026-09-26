@@ -108,14 +108,15 @@ Runtime 必须具有明确终止条件：Goal 完成、等待 Approval、不可�
 
 Runtime 不应通过大量 `if tool_name == ...` 管理工具。工具统一注册到 Tool Registry，并至少描述：Tool name、description、input/output schema、read/write 属性、approval requirement 与 execution handler。
 
-示例：
+Phase 10.2.1 的目标命名示例：
 
 ```text
 Tool Registry
-├── get_current_trip
-├── get_today_itinerary
-├── get_recent_footprint
-├── get_checkins
+├── get_current_active_trip
+├── get_trip_itinerary_by_date
+├── get_recent_trips
+├── get_footprint_summary_by_trip
+├── get_checkins_by_trip
 ├── get_user_preferences
 ├── search_personal_knowledge
 ├── check_itinerary_constraints
@@ -125,14 +126,16 @@ Tool Registry
 
 | Context 类型       | 首选来源                     | 示例工具                                                     |
 | ------------------ | ---------------------------- | ------------------------------------------------------------ |
-| Long-term          | SQL / future Memory          | `get_travel_history`、`get_user_preferences`                 |
-| Current trip       | Travel domain                | `get_current_trip`、`get_today_itinerary`                    |
-| Live travel        | Footprint domain             | `get_recent_footprint`、`get_checkins`                       |
+| Long-term          | SQL / future Memory          | `get_recent_trips(limit)`、`get_user_preferences`            |
+| Current trip       | Travel domain                | `get_current_active_trip`、`get_trip_itinerary_by_date`      |
+| Live travel        | Footprint domain             | `get_footprint_summary_by_trip`、`get_checkins_by_trip`      |
 | Personal knowledge | Direct Context / 按需 Qdrant | `search_personal_knowledge`                                  |
 | Constraint         | Deterministic service        | `check_itinerary_constraints`                                |
 | Write action       | Travel domain                | `propose_itinerary_update`、`apply_approved_itinerary_update` |
 
 Tool 使用结构化输入输出，内部完成 user ownership 校验并隐藏 SQL。不要向 Agent 暴露 `execute_sql`、`update_any_table` 等基础设施级工具。
+
+当前已运行的初版工具名会在 Phase 10.2.1 中迁移到上述命名；迁移前的 SSE 历史事件保留原始工具名以维持对话记录可读性。
 
 Qdrant 只用于非结构化个人资料语义检索；结构化旅行事实通过 Domain Service / MySQL 获取。
 
@@ -316,7 +319,8 @@ DONE
 | Phase 9 | 进行中：Grounded Travel Memory、历史上下文、明确偏好与 Web Context 注入；signals 待真实数据验证 | 不把模型推断写成确认事实，不做复杂记忆系统 |
 | Phase 10（基线，已实现） | 最小只读 Think-Execute-Observe Runtime、Tool Registry、内部 Domain Tools、SSE Agent Event、错误降级与步数上限 | 不直连数据库，不引入 Multi-Agent / Graph Runtime；该阶段固定预取仍是过渡实现 |
 | Phase 10.1 | **Prompt-aware deterministic selection**：以当前 prompt、少量会话上下文和授权范围输出 0..N 个初始工具；把授权从执行指令改为权限上限 | 不增加一次 LLM 调用作为默认选择器；不读取未被本轮计划选中的领域数据 |
-| Phase 10.2（已完成） | **工具粒度与受控 Observation 链**：已拆分当前行程、今日日程、近期历史、GPS 足迹摘要与打卡摘要；后续工具仅在当前 Trip Observation 成立时执行，每轮最多 3 次只读调用 | 不把整份 Trip / 全量轨迹 / 全部历史拼入 Prompt；不把知识摘要当作固定步骤 |
+| Phase 10.2（已完成） | **工具粒度与受控 Observation 链**：已完成当前行程、今日日程、近期历史、GPS 足迹摘要与打卡摘要的初步拆分；后续工具可依赖前序当前 Trip Observation | 初版三次硬上限与 `recent` 命名语义留待 10.2.1 校正 |
+| Phase 10.2.1 | **查询语义与续读预算校正**：统一 `current` / `recent` / `by_trip` 工具命名；将三次读取由硬上限调整为初始预算，并支持有界续读 | 不扩大为任意 SQL 查询；不允许无上限循环或绕过 user / Trip 归属校验 |
 | Phase 10.3 | **模糊请求的受限 selector 与可评估性**：仅对规则无法覆盖的复杂问题使用结构化 selector；补充 Trace、token / latency / tool-count 指标与 prompt-to-tools 回归集 | selector 不接触个人事实、不输出 chain-of-thought、不拥有写权限 |
 | Phase 11 | **Adaptive Day Planner**：真实旅行 Context、确定性 Constraint Check、Replanning、Approval、Write Action 与 Verification | 不未经确认修改重要旅行状态；不以模型判断代替确定性领域约束 |
 | Phase 12 | 为已验证 workflow 接入 POI、路线、天气、Calendar、Flights 等 External Tools / MCP | 不为展示 MCP 创造工作流 |
@@ -344,6 +348,33 @@ DONE
 - 将个人知识改为真正按需的 `search_personal_knowledge`；`useRag` 只注册能力，不能固定读取 metadata 或强制向量检索。
 - Runtime 将前一工具输出保存为 Observation；只有结果表明信息不足、存在进行中 Trip 或任务依赖成立时，才选择下一工具。
 - 保持 Domain Service 的授权、隐私过滤与查询上限；初始默认上限为每轮 3 次只读工具调用，超限必须说明信息边界或请求澄清。
+
+### Phase 10.2.1 — 查询语义与受控续读预算
+
+**实施状态：未开始。**
+
+**目标：** 修正初版工具命名与三次硬上限，使 Agent 能在明确、可审计的范围内继续读取必要事实，而不是因工具名含混或固定截断丢失上下文。
+
+#### 查询语义
+
+- `current` 只表示当前唯一的进行中 Trip，例如 `get_current_active_trip`；没有进行中 Trip 时返回空 Observation。
+- `recent` 表示按工具定义的稳定排序取最近 `limit` 条，`limit` 是显式、受服务端上限保护的参数；它不能隐含“进行中 Trip”。例如 `get_recent_trips(limit)` 按 Trip 的既定排序读取，`get_recent_footprint_summaries(limit)` 应按 Observation 发生时间倒序定位最近有观察的 Trip。
+- `by_trip` 表示调用方显式提供 `tripUuid`，例如 `get_footprint_summary_by_trip(tripUuid)`、`get_checkins_by_trip(tripUuid, limit)`；Domain Service 必须执行 user ownership 校验。
+- `get_current_trip_footprint_summary` 只能作为组合工具：先解析 `get_current_active_trip`，再调用 `get_footprint_summary_by_trip`，不再被错误命名为 `recent`。
+- 日程工具采用 `get_trip_itinerary_by_date(tripUuid, date)` 等输入明确的名称；“今天”只是 Runtime 根据当前日期构造的参数，不是隐藏查询范围。
+
+#### 预算与 Observation 链
+
+- `3` 改为**初始读取预算**，用于普通问题的首次事实获取，不再是每轮成功只读调用的绝对上限。
+- 只有前序 Observation 建立明确依赖、指出信息不足，或确定性约束检查需要额外事实时，Runtime 才可追加读取。
+- 初始建议总只读预算为 `6` 次；最终值应配置化，并同时受 token、延迟、单工具 `limit` 与用户取消约束。
+- 达到总预算前仍无法完成任务时，Agent 必须说明已知事实边界并请求澄清或给出保守建议；禁止静默扩大读取范围或无限重试。
+
+#### 实施边界与验收
+
+- 先重命名 Tool Registry、handler、SSE `tool` 字段与选择策略测试；不改数据库表、公开业务 API 或 Domain Service 的隐私边界。
+- 保留 `recent` 的实际排序规则与 `limit` 参数在工具 schema、日志和测试中可见，避免同名工具在不同调用中产生不同含义。
+- 增加 `prompt → initial tools → Observation → continuation tools` 回归集，覆盖无进行中 Trip、最近已结束 Trip、最近有足迹 Trip、达到初始预算后合法续读、达到总预算后澄清五类路径。
 
 ### Phase 10.3 — 模糊请求的受限 selector 与评估
 
