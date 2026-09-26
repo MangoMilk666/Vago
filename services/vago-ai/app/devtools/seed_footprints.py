@@ -77,8 +77,8 @@ def _waypoints(*coordinates: tuple[float, float]) -> tuple[Waypoint, ...]:
 
 
 SCENARIOS: dict[str, FootprintScenario] = {
-    "MARINA_SANDS_BAY_01": FootprintScenario(
-        code="MARINA_SANDS_BAY_01",
+    "MARINA_SANDS_BAY": FootprintScenario(
+        code="MARINA_SANDS_BAY",
         title="新加坡滨海湾步行",
         segments=(
             _waypoints((1.2838, 103.8600), (1.2845, 103.8616), (1.2854, 103.8635)),
@@ -103,8 +103,21 @@ SCENARIOS: dict[str, FootprintScenario] = {
         ),
         start_at=datetime(2026, 8, 12, 15, 0, tzinfo=UTC),
     ),
-    "TOKYO_SHIBUYA_01": FootprintScenario(
-        code="TOKYO_SHIBUYA_01",
+    "LONDON": FootprintScenario(
+        code="LONDON",
+        title="伦敦泰晤士河步行",
+        segments=(
+            _waypoints((51.5007, -0.1246), (51.5011, -0.1218), (51.5015, -0.1188)),
+            _waypoints((51.5021, -0.1145), (51.5030, -0.1105), (51.5040, -0.1067)),
+        ),
+        checkins=(
+            CheckinTemplate("大本钟", "从威斯敏斯特桥开始沿河步行。", 51.5007, -0.1246, 0, 3),
+            CheckinTemplate("泰特现代美术馆", "傍晚抵达河对岸的展馆。", 51.5076, -0.0994, 1, 38),
+        ),
+        start_at=datetime(2026, 4, 18, 10, 0, tzinfo=UTC),
+    ),
+    "TOKYO_SHIBUYA": FootprintScenario(
+        code="TOKYO_SHIBUYA",
         title="东京涩谷步行",
         segments=(
             _waypoints((35.6595, 139.7005), (35.6608, 139.7019), (35.6620, 139.7036)),
@@ -116,8 +129,8 @@ SCENARIOS: dict[str, FootprintScenario] = {
         ),
         start_at=datetime(2026, 7, 16, 10, 0, tzinfo=UTC),
     ),
-    "PARIS_SEINE_01": FootprintScenario(
-        code="PARIS_SEINE_01",
+    "PARIS_SEINE": FootprintScenario(
+        code="PARIS_SEINE",
         title="巴黎塞纳河步行",
         segments=(
             _waypoints((48.8585, 2.2946), (48.8588, 2.3002), (48.8594, 2.3055)),
@@ -129,8 +142,8 @@ SCENARIOS: dict[str, FootprintScenario] = {
         ),
         start_at=datetime(2026, 6, 4, 8, 30, tzinfo=UTC),
     ),
-    "ICELAND_REYKJAVIK_01": FootprintScenario(
-        code="ICELAND_REYKJAVIK_01",
+    "ICELAND_REYKJAVIK": FootprintScenario(
+        code="ICELAND_REYKJAVIK",
         title="雷克雅未克城市漫步",
         segments=(
             _waypoints((64.1466, -21.9426), (64.1476, -21.9393), (64.1486, -21.9358)),
@@ -142,8 +155,8 @@ SCENARIOS: dict[str, FootprintScenario] = {
         ),
         start_at=datetime(2026, 5, 22, 17, 0, tzinfo=UTC),
     ),
-    "CHECKIN_PROXIMITY_01": FootprintScenario(
-        code="CHECKIN_PROXIMITY_01",
+    "CHECKIN_PROXIMITY": FootprintScenario(
+        code="CHECKIN_PROXIMITY",
         title="临近打卡采样验证",
         segments=(
             _waypoints((1.2901, 103.8510), (1.2903, 103.8512), (1.2906, 103.8515)),
@@ -157,7 +170,7 @@ SCENARIOS: dict[str, FootprintScenario] = {
 }
 
 # 保留首版讨论中出现的单数 Sand 写法，CLI 内部仍统一使用规范场景 code。
-LOCATION_ALIASES = {"MARINA_SAND_BAY_01": "MARINA_SANDS_BAY_01"}
+LOCATION_ALIASES = {"MARINA_SAND_BAY": "MARINA_SANDS_BAY"}
 
 
 def available_locations() -> tuple[str, ...]:

@@ -37,22 +37,23 @@ def db_session() -> Session:
 
 def test_scenario_generation_is_deterministic_and_segmented() -> None:
     """测试：相同场景和随机种子生成相同坐标、时间和分段，而非单一直线。"""
-    first = build_scenario_observations("MARINA_SANDS_BAY_01", 42)
-    second = build_scenario_observations("MARINA_SANDS_BAY_01", 42)
+    first = build_scenario_observations("MARINA_SANDS_BAY", 42)
+    second = build_scenario_observations("MARINA_SANDS_BAY", 42)
 
     assert first == second
     assert {item.observation_type for item in first} == {AUTO_GPS, MANUAL_CHECKIN}
     assert len({item.tracking_segment_uuid for item in first if item.observation_type == AUTO_GPS}) == 2
-    assert "TOKYO_SHIBUYA_01" in available_locations()
-    assert "PARIS_SEINE_01" in available_locations()
-    assert "ICELAND_REYKJAVIK_01" in available_locations()
+    assert "LONDON" in available_locations()
+    assert "TOKYO_SHIBUYA" in available_locations()
+    assert "PARIS_SEINE" in available_locations()
+    assert "ICELAND_REYKJAVIK" in available_locations()
 
 
 def test_marina_sand_alias_resolves_to_canonical_scenario() -> None:
     """测试：首版 CLI 示例中的 Marina_Sand 别名应兼容为规范滨海湾场景。"""
-    observations = build_scenario_observations("Marina_Sand_BAY_01", 42)
+    observations = build_scenario_observations("Marina_Sand_BAY", 42)
 
-    assert observations == build_scenario_observations("MARINA_SANDS_BAY_01", 42)
+    assert observations == build_scenario_observations("MARINA_SANDS_BAY", 42)
 
 
 def test_seed_and_clear_only_touch_matching_run(db_session: Session) -> None:
@@ -64,7 +65,7 @@ def test_seed_and_clear_only_touch_matching_run(db_session: Session) -> None:
     db_session.commit()
 
     summary = seed_footprints(
-        db_session, user_uuid="user-a", trip_uuid="trip-a", location="TOKYO_SHIBUYA_01",
+        db_session, user_uuid="user-a", trip_uuid="trip-a", location="TOKYO_SHIBUYA",
         seed=42, run_id="tokyo-42",
     )
     created = db_session.scalars(select(TravelObservation).where(

@@ -32,14 +32,14 @@ python -m app.devtools.seed_footprints \
 | `--location` | 数据内容 | 主要验证点 |
 | --- | --- | --- |
 | `MARINA_SANDS_BAY` | 滨海湾连续步行轨迹、两段 tracking segment、多个打卡 | polyline、分段、打卡详情、地图缩放 |
-| `LONDON` | 模拟在England London的游客区域较长距离的移动、停留点和跨时段打卡 | 时间排序、路线断点、历史 Trip 浏览 |
-| `TAHOE` | 模拟在California Lake Tahoe区域较长距离的移动、停留点和跨时段打卡 | 时间排序、路线断点、历史 Trip 浏览 |
-| `TOKYO_SHIBUYA_01` | 东京涩谷步行轨迹与公园打卡 | 城市步行、地图视角与打卡详情 |
-| `PARIS_SEINE_01` | 巴黎塞纳河两段步行与地标打卡 | 欧洲城市路线与历史行程浏览 |
-| `ICELAND_REYKJAVIK_01` | 雷克雅未克城市漫步 | 高纬度坐标与不同地图区域渲染 |
-| `CHECKIN_PROXIMITY_01` | 临近 GPS 与手动打卡 | 自动采样避让手动打卡、打卡始终可记录 |
+| `LONDON` | 伦敦泰晤士河两段步行与地标打卡 | 时间排序、路线断点、历史 Trip 浏览 |
+| `CA_TAHOE` | 加州太浩湖环湖自驾与湖岸打卡 | 长距离移动、地图缩放与历史 Trip 浏览 |
+| `TOKYO_SHIBUYA` | 东京涩谷步行轨迹与公园打卡 | 城市步行、地图视角与打卡详情 |
+| `PARIS_SEINE` | 巴黎塞纳河两段步行与地标打卡 | 欧洲城市路线与历史行程浏览 |
+| `ICELAND_REYKJAVIK` | 雷克雅未克城市漫步 | 高纬度坐标与不同地图区域渲染 |
+| `CHECKIN_PROXIMITY` | 临近 GPS 与手动打卡 | 自动采样避让手动打卡、打卡始终可记录 |
 
-场景 code 不区分大小写；`Marina_Sand_BAY_01` 也兼容为 `MARINA_SANDS_BAY_01`。
+场景 code 不区分大小写；`Marina_Sand_BAY` 也兼容为 `MARINA_SANDS_BAY`。
 
 每次生成使用固定随机种子与明确时间序列。所有 `client_event_uuid` 使用 `devseed:<run-id>:` 前缀；清理命令只能删除同一 `run-id` 的记录，禁止全表删除：
 
@@ -47,11 +47,11 @@ python -m app.devtools.seed_footprints \
 cd services/vago-ai
 python -m app.devtools.seed_footprints \
   --user-uuid <user_uuid> --trip-uuid <trip_uuid> \
-  --location MARINA_SANDS_BAY_01 --seed 20260924 --replace
+  --location MARINA_SANDS_BAY --seed 20260924 --replace
 
 python -m app.devtools.seed_footprints \
   --user-uuid <user_uuid> --trip-uuid <trip_uuid> \
-  --run-id marina-sands-bay-01-20260924 --clear-run
+  --run-id marina-sands-bay-20260924 --clear-run
 ```
 
 种子数据直接覆盖地图、上下文和 Agent 的读取验证；iOS 离线队列与批量同步仍应由独立集成测试覆盖。
