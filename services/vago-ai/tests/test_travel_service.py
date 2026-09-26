@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -65,6 +65,34 @@ def test_trip_crud_is_scoped_by_current_user(db_session: Session):
         service.get_trip_detail(db_session, "user-b", trip.uuid)
 
     assert exc_info.value.code == "FORBIDDEN"
+
+
+def test_create_trip_initializes_empty_itinerary_days(db_session: Session):
+    """测试：新建正式行程时会在同一事务预创建全部空日程。"""
+    trip = service.create_trip(
+        db_session,
+        "user-a",
+        TripCreateRequest(
+            title="预初始化日程",
+            startDate=date(2026, 9, 26),
+            endDate=date(2026, 9, 28),
+        ),
+    )
+
+    days = db_session.scalars(
+        select(ItineraryDay)
+        .where(
+            ItineraryDay.ref_uuid == trip.uuid,
+            ItineraryDay.ref_type == ItineraryDay.REF_TYPE_TRIP,
+        )
+        .order_by(ItineraryDay.day_index.asc())
+    ).all()
+
+    assert [(day.day_date, day.day_index) for day in days] == [
+        (date(2026, 9, 26), 1),
+        (date(2026, 9, 27), 2),
+        (date(2026, 9, 28), 3),
+    ]
 
 
 def test_trip_lifecycle_allows_one_active_trip_and_locks_history(db_session: Session):

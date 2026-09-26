@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from uuid import uuid4
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppException
@@ -127,6 +128,14 @@ def create_trip(db: Session, user_uuid: str, payload: TripCreateRequest) -> Trip
         status=TRIP_STATUS_NOT_STARTED,
     )
     db.add(trip)
+    db.flush()
+    # 新行程与空日程在同一事务中创建，避免编辑页的并发读取重复触发懒初始化。
+    _initialize_empty_days(
+        db,
+        trip.uuid,
+        ItineraryDay.REF_TYPE_TRIP,
+        _date_range(trip.start_date, trip.end_date),
+    )
     db.commit()
     db.refresh(trip)
     return _trip_to_response(trip)
@@ -336,6 +345,15 @@ def create_plan(db: Session, user_uuid: str, payload: PlanCreateRequest) -> Plan
         status=PLAN_STATUS_DRAFT,
     )
     db.add(plan)
+    db.flush()
+    # 如果计划已经填写完整日期，也提前创建空日程，使计划和正式行程具有一致的编辑行为。
+    if plan.start_date is not None and plan.end_date is not None:
+        _initialize_empty_days(
+            db,
+            plan.uuid,
+            ItineraryDay.REF_TYPE_PLAN,
+            _date_range(plan.start_date, plan.end_date),
+        )
     db.commit()
     db.refresh(plan)
     return _plan_to_response(plan)
@@ -529,18 +547,59 @@ def _resolve_date_range(db: Session, ref_uuid: str, ref_type: int, user_uuid: st
     return _date_range(plan.start_date, plan.end_date)
 
 
-def _create_empty_day(db: Session, ref_uuid: str, ref_type: int, day_date: date, day_index: int) -> ItineraryDay:
-    """创建空的每日行程记录。"""
-    day = ItineraryDay(
-        uuid=_new_uuid(),
-        ref_uuid=ref_uuid,
-        ref_type=ref_type,
-        day_date=day_date,
-        day_index=day_index,
+def _initialize_empty_days(db: Session, ref_uuid: str, ref_type: int, dates: list[date]) -> None:
+    """为新建且已知日期范围的 Trip 或 Plan 预创建空日程。"""
+    db.add_all(
+        [
+            ItineraryDay(
+                uuid=_new_uuid(),
+                ref_uuid=ref_uuid,
+                ref_type=ref_type,
+                day_date=day_date,
+                day_index=index,
+            )
+            for index, day_date in enumerate(dates, start=1)
+        ]
     )
-    db.add(day)
-    db.flush()
-    return day
+
+
+def _create_empty_day_safely(
+    db: Session,
+    ref_uuid: str,
+    ref_type: int,
+    day_date: date,
+    day_index: int,
+) -> ItineraryDay:
+    """为历史缺失日程执行可并发重试的懒初始化。"""
+    try:
+        # savepoint 只回滚本次插入；同一请求已经读取或修正的其他日程仍可正常提交。
+        with db.begin_nested():
+            day = ItineraryDay(
+                uuid=_new_uuid(),
+                ref_uuid=ref_uuid,
+                ref_type=ref_type,
+                day_date=day_date,
+                day_index=day_index,
+            )
+            db.add(day)
+            db.flush()
+            return day
+    except IntegrityError:
+        # 如果另一并发请求已经补齐同一天，唯一约束会拒绝本次插入；改为读取已存在记录。
+        day = db.scalar(
+            select(ItineraryDay)
+            .where(
+                ItineraryDay.ref_uuid == ref_uuid,
+                ItineraryDay.ref_type == ref_type,
+                ItineraryDay.day_date == day_date,
+            )
+            .order_by(ItineraryDay.id.asc())
+            .with_for_update()
+        )
+        # 如果冲突后仍查不到记录，说明不是预期的同日并发写入，需要继续抛出原始异常。
+        if day is None:
+            raise
+        return day
 
 
 def _spot_to_response(spot: ItinerarySpot) -> ItinerarySpotResponse:
@@ -591,7 +650,7 @@ def get_itinerary_days(
         days_for_date = days_by_date.get(day_date, [])
         # 分支条件：某日期没有 day 记录时，懒初始化一条空 day。
         if not days_for_date:
-            all_days.append(_create_empty_day(db, ref_uuid, ref_type, day_date, index))
+            all_days.append(_create_empty_day_safely(db, ref_uuid, ref_type, day_date, index))
         else:
             # 分支条件：历史数据存在同日重复记录时，只使用最早创建的一条，避免前端重复展示。
             day = days_for_date[0]
