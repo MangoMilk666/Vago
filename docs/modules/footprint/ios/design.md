@@ -489,16 +489,16 @@ stationary
 
 ### 8.1 Rendering Goal
 
-地图最终不应该直接显示大量 GPS 离散点：
+地图不应只显示大量彼此孤立的 GPS 点：
 
 ```text
 • • • • • • • •
 ```
 
-而应该将这些位置转换为连续轨迹：
+应在可信的连续段内同时呈现轨迹线与适量的真实足迹点：
 
 ```text
-───────────────
+•───•────•───•
 ```
 
 足迹的视觉重点应该是：
@@ -508,17 +508,17 @@ stationary
 基础处理过程：
 
 ```text
-Raw GPS Points
+TravelObservation（AUTO_GPS / MANUAL_CHECKIN）
       ↓
-Invalid Point Filtering
+无效坐标与定位质量过滤
       ↓
-Chronological Ordering
+同一 Trip 内按时间排序、识别连续段
       ↓
-Optional Simplification
+保留打卡顶点，按缩放级别选择显示点与线的细节
       ↓
-Polyline / Path
+可控的显示层平滑与双层 Polyline
       ↓
-Map Rendering
+轨迹点、打卡标记与当前位置分层绘制
 ```
 
 ---
@@ -569,7 +569,7 @@ Inner stronger stroke
 
 ### 8.3 Segment Boundaries
 
-并非所有时间连续的 GPS 点都应该自动连接。
+并非所有时间相邻的观察点都应该自动连接。`AUTO_GPS` 与 `MANUAL_CHECKIN` 都属于 `TravelObservation`；同一可信连续段内，手动打卡可以成为轨迹顶点，同时继续以独立标记展示。打卡不能跨越已判定的段边界，凭空连接不连续的旅行片段。
 
 例如：
 
@@ -625,13 +625,13 @@ Footprint
     └── p5
 ```
 
-第一阶段可以优先按照 tracking session 或明显时间间隔切分。
+已实现的 iOS 路线构建优先使用 `trackingSegmentUuid`，同时检查时间、距离与可疑速度；旧数据没有段标识时使用保守的推断规则。Web 后续需对齐这些连接判断，不能只按段 ID 分组后无条件连线，也不能让旧数据的每个无段 ID 点都孤立。
 
 ---
 
 ### 8.4 Zoom-aware Rendering
 
-随着历史数据增长，不应在世界级缩放时仍然绘制几十万条原始 GPS 点。
+随着历史数据增长，不应在世界级缩放时仍然绘制全部采样标记。轨迹线与可见点应分别控制密度：街道级保留足以追踪行进方向的点，缩远后按屏幕间距减少点；优先保留连续段首尾、明显转折和手动打卡。隐藏标记不删除原始事实，也不改变可信连接边界。
 
 未来应按地图 zoom level 使用不同精度的数据。
 
@@ -661,7 +661,15 @@ Street View
 
 - tile / grid based retrieval。
 
-MVP 暂时可以加载当前 Trip 或有限历史范围的数据。
+当前仍可先加载当前 Trip 或有限历史范围的数据。先测真实数据量下的首屏耗时、缩放帧率和内存，再决定是否引入范围查询、服务端聚合或瓦片；不为当前视觉目标预设新的 GIS 基础设施。
+
+### 8.5 iOS / Web 一致的渲染目标
+
+- **已实现：** iOS 使用 MapKit，已有本地/远端合并、显式与推断分段、显示层 Catmull–Rom 插值和双层描边；Web 使用 Leaflet，已有按 `trackingSegmentUuid` 分组的折线与 GPS / 打卡标记。两端无需为此更换地图 SDK。
+- **待改进：** Web 对齐 iOS 的点质量和连接边界规则，包括旧数据无段 ID、同段内长时间或远距离跳跃；两端统一打卡在可信段内可作为轨迹顶点的语义，并分别绘制可识别、可点击的打卡标记。
+- **待改进：** 两端依据地图缩放与屏幕间距选择可见足迹点，统一主线、柔和底线、点、打卡和当前位置的视觉层级。深色底图可作为用户的主题选择，不是轨迹正确性的前提。
+- **待验证：** 仅在密集且可靠的局部路径上使用视觉平滑，限制曲线偏离真实观察点的程度；转角、回头、小环路与稀疏长边允许退回圆角折线。Web 的 Leaflet `smoothFactor` 用于折线简化，不能代替曲线插值。
+- **后续优化：** iOS 新采样已能经本地队列立即显示。先缓存已完成段、只更新活动段并测量大行程性能；线段逐步生长动画与 Web 实时刷新按独立体验需求评估，不作为第一轮视觉验收前提。
 
 ---
 
@@ -671,19 +679,7 @@ MVP 暂时可以加载当前 Trip 或有限历史范围的数据。
 
 Check-in 是用户主动创建的 Personal Travel Annotation。
 
-它不是 GPS sample。
-
-因此：
-
-```text
-FootprintPoint
-≠
-Checkin
-```
-
-FootprintPoint 表示：
-
-> 系统记录用户经过这里。
+截至 2026-10-05，代码使用统一的 `TravelObservation` 实体，通过 `observation_type` 区分自动 GPS 点（`AUTO_GPS`）与手动打卡点（`MANUAL_CHECKIN`）。两者都是旅行观察事实，拥有不同的采集方式与业务约束；在同一可信连续段内，手动打卡点可以参与轨迹连线。
 
 Checkin 表示：
 
@@ -746,7 +742,7 @@ current location
 
 ### 9.4 Check-in Rendering
 
-Check-in 应使用独立于足迹轨迹的 Annotation。
+Check-in 即使作为轨迹顶点，仍应使用独立于普通 GPS 采样点的 Annotation 展示其主动记录语义。
 
 例如：
 
@@ -1262,7 +1258,7 @@ LocationService 不应该每获得一个 location 就直接调用 API。
 
 - API interaction。
 
-Check-in 和 Footprint 应继续保持两个独立 domain concept。
+自动 GPS 采样与手动 Check-in 保留各自的写入规则和视觉语义，通过统一的 `TravelObservation` 读模型进入地图；不拆分成互不相关的足迹事实。
 
 ---
 
@@ -1730,5 +1726,3 @@ simple explored-world visualization
 ```
 
 在这些体验稳定后，再逐步增加后台定位、复杂 Fog、照片和 Travel Memory。
-
-
