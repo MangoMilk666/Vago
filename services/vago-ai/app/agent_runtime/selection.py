@@ -59,7 +59,10 @@ class ToolSelectionPolicy:
     )
     _HISTORY_TERMS = (
         "旅行历史", "历史行程", "上次旅行", "之前旅行", "过去旅行", "以前旅行",
-        "去过的", "我曾去过", "已结束的",
+        "去过的", "我曾去过",
+    )
+    _ENDED_TRIP_TERMS = (
+        "已结束的", "已经结束的", "已结束行程", "结束的行程", "已完成的", "完成的旅行",
     )
     _MEMORY_TERMS = ("旅行回忆", "旅行记忆", "回忆", "纪念")
     _FOLLOW_UP_TERMS = ("那明天", "那今天", "还有呢", "然后呢", "继续", "刚才", "这个", "那个")
@@ -91,6 +94,7 @@ class ToolSelectionPolicy:
         is_itinerary = _contains_any(routed_text, self._ITINERARY_TERMS)
         is_preferences = _contains_any(routed_text, self._PREFERENCE_TERMS)
         is_history = _contains_any(routed_text, self._HISTORY_TERMS)
+        is_ended_trip = _contains_any(routed_text, self._ENDED_TRIP_TERMS)
         is_memory = _contains_any(routed_text, self._MEMORY_TERMS)
 
         selected: list[ToolCall] = []
@@ -119,8 +123,11 @@ class ToolSelectionPolicy:
         elif is_current_trip:
             selected.append(_current_active_trip_call())
 
-        # 如果问题涉及历史旅行，按 Trip 创建时间倒序读取有限摘要。
-        if is_history:
+        # 如果问题明确限定已结束行程，只读取历史事实，避免把未开始或进行中的 Trip 混入回答依据。
+        if is_ended_trip:
+            selected.append(_tool_call("get_recent_ended_trips", limit=DEFAULT_RECENT_LIMIT))
+        # 如果问题涉及一般历史旅行，按 Trip 创建时间倒序读取有限摘要。
+        elif is_history:
             selected.append(_tool_call("get_recent_trips", limit=DEFAULT_RECENT_LIMIT))
         # 如果问题需要个性化建议，才读取用户明确确认的偏好。
         if is_preferences:
@@ -200,7 +207,7 @@ def _intent_name(tool_names: tuple[str, ...]) -> str:
     if "get_trip_itinerary_by_date" in tool_names:
         return "current_itinerary"
     # 如果包含最近 Trip 工具，归类为旅行历史问题。
-    if "get_recent_trips" in tool_names:
+    if any(name in tool_names for name in {"get_recent_trips", "get_recent_ended_trips"}):
         return "travel_history"
     if "get_user_preferences" in tool_names:
         return "personal_preferences"

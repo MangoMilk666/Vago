@@ -261,6 +261,22 @@ def get_agent_recent_trips(db: Session, user_uuid: str, limit: int = 3) -> list[
     return [_to_agent_trip_brief(trip) for trip in trips]
 
 
+def get_agent_recent_ended_trips(db: Session, user_uuid: str, limit: int = 3) -> list[dict]:
+    """按结束日期倒序读取有限历史 Trip，不混入未开始或进行中行程。"""
+    safe_limit = _agent_recent_limit(limit, AGENT_MAX_RECENT_TRIPS)
+    trips = db.scalars(
+        select(Trip)
+        .where(
+            Trip.user_uuid == user_uuid,
+            Trip.status == TRIP_STATUS_ENDED,
+            Trip.deleted_at.is_(None),
+        )
+        .order_by(Trip.end_date.desc(), Trip.uuid.desc())
+        .limit(safe_limit)
+    ).all()
+    return [_to_agent_trip_brief(trip) for trip in trips]
+
+
 def _agent_recent_limit(value: int, maximum: int) -> int:
     """将 Agent 的 recent limit 收敛到可预测的小范围，避免读取无界历史。"""
     # 如果调用方传入过小或过大的 limit，仍返回安全的最小或最大范围。

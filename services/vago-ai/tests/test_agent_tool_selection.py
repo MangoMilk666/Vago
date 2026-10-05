@@ -71,6 +71,19 @@ def test_personal_history_and_preference_selects_limited_recent_trips() -> None:
     assert plan.tool_calls[0].arguments == {"limit": 3}
 
 
+def test_ended_trip_question_selects_only_ended_trip_history() -> None:
+    """测试：用户询问已经结束的行程时，只读取状态为已结束的有限 Trip。"""
+    plan = ToolSelectionPolicy().select(
+        "我已经结束的行程，去了哪些地方？",
+        use_personal_context=True,
+        use_rag=True,
+    )
+
+    assert plan.intent == "travel_history"
+    assert plan.tool_names == ("get_recent_ended_trips",)
+    assert plan.tool_calls[0].arguments == {"limit": 3}
+
+
 def test_follow_up_uses_recent_user_context_only_when_needed() -> None:
     """测试：短追问可继承最近用户问题的指代，普通新问题不会扩大读取范围。"""
     policy = ToolSelectionPolicy()

@@ -115,6 +115,7 @@ Tool Registry
 ├── get_current_active_trip
 ├── get_trip_itinerary_by_date
 ├── get_recent_trips
+├── get_recent_ended_trips
 ├── get_footprint_summary_by_trip
 ├── get_checkins_by_trip
 ├── get_user_preferences
@@ -126,7 +127,7 @@ Tool Registry
 
 | Context 类型       | 首选来源                     | 示例工具                                                     |
 | ------------------ | ---------------------------- | ------------------------------------------------------------ |
-| Long-term          | SQL / future Memory          | `get_recent_trips(limit)`、`get_user_preferences`            |
+| Long-term          | SQL / future Memory          | `get_recent_trips(limit)`、`get_recent_ended_trips(limit)`、`get_user_preferences` |
 | Current trip       | Travel domain                | `get_current_active_trip`、`get_trip_itinerary_by_date`      |
 | Live travel        | Footprint domain             | `get_footprint_summary_by_trip`、`get_checkins_by_trip`      |
 | Personal knowledge | Direct Context / 按需 Qdrant | `search_personal_knowledge`                                  |
@@ -358,7 +359,7 @@ DONE
 #### 查询语义
 
 - `current` 只表示当前唯一的进行中 Trip，例如 `get_current_active_trip`；没有进行中 Trip 时返回空 Observation。
-- `recent` 表示按工具定义的稳定排序取最近 `limit` 条，`limit` 是显式、受服务端上限保护的参数；它不能隐含“进行中 Trip”。`get_recent_trips(limit)` 按 `created_at DESC, uuid DESC` 读取，`get_recent_footprint_summaries(limit)` 与 `get_recent_checkins(limit)` 按 Observation 的 `occurred_at DESC, uuid DESC` 读取。
+- `recent` 表示按工具定义的稳定排序取最近 `limit` 条，`limit` 是显式、受服务端上限保护的参数；它不能隐含“进行中 Trip”。`get_recent_trips(limit)` 按 `created_at DESC, uuid DESC` 读取；明确询问历史已结束行程时使用 `get_recent_ended_trips(limit)`，按 `end_date DESC, uuid DESC` 且仅限已结束状态读取；`get_recent_footprint_summaries(limit)` 与 `get_recent_checkins(limit)` 按 Observation 的 `occurred_at DESC, uuid DESC` 读取。
 - `by_trip` 表示调用方显式提供 `tripUuid`，例如 `get_footprint_summary_by_trip(tripUuid)`、`get_checkins_by_trip(tripUuid, limit)`；Domain Service 必须执行 user ownership 校验。
 - `get_current_trip_footprint_summary` 只能作为组合工具：先解析 `get_current_active_trip`，再调用 `get_footprint_summary_by_trip`，不再被错误命名为 `recent`。
 - 日程工具采用 `get_trip_itinerary_by_date(tripUuid, date)` 等输入明确的名称；“今天”只是 Runtime 根据当前日期构造的参数，不是隐藏查询范围。

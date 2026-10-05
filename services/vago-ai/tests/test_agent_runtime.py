@@ -11,6 +11,7 @@ ALL_TOOL_NAMES = (
     "get_current_active_trip",
     "get_trip_itinerary_by_date",
     "get_recent_trips",
+    "get_recent_ended_trips",
     "get_footprint_summary_by_trip",
     "get_checkins_by_trip",
     "get_recent_footprint_summaries",

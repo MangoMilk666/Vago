@@ -65,6 +65,7 @@ class AgentRuntime:
             AgentTool("get_current_active_trip", "正在读取当前进行中的行程", _get_current_active_trip),
             AgentTool("get_trip_itinerary_by_date", "正在读取指定日期日程", _get_trip_itinerary_by_date),
             AgentTool("get_recent_trips", "正在读取最近行程", _get_recent_trips),
+            AgentTool("get_recent_ended_trips", "正在读取最近已结束行程", _get_recent_ended_trips),
             AgentTool("get_footprint_summary_by_trip", "正在读取指定行程足迹", _get_footprint_summary_by_trip),
             AgentTool("get_checkins_by_trip", "正在读取指定行程打卡", _get_checkins_by_trip),
             AgentTool("get_recent_footprint_summaries", "正在读取最近足迹行程", _get_recent_footprint_summaries),
@@ -302,6 +303,16 @@ def _get_recent_trips(db: Session, user_uuid: str, _: dict[str, Any], arguments:
     return travel_service.get_agent_recent_trips(db, user_uuid, _read_limit(arguments))
 
 
+def _get_recent_ended_trips(
+    db: Session,
+    user_uuid: str,
+    _: dict[str, Any],
+    arguments: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """按结束时间倒序读取有限历史 Trip，供明确的已结束行程问题使用。"""
+    return travel_service.get_agent_recent_ended_trips(db, user_uuid, _read_limit(arguments))
+
+
 def _get_footprint_summary_by_trip(
     db: Session,
     user_uuid: str,
@@ -382,7 +393,7 @@ def _store_tool_output(state: dict[str, Any], tool_name: str, output: Any) -> No
     if tool_name == "get_current_active_trip":
         state["travelContext"]["currentTrip"] = output
     # 如果读取最近 Trip，只更新最近 Trip Observation，不污染当前行程事实。
-    elif tool_name == "get_recent_trips":
+    elif tool_name in {"get_recent_trips", "get_recent_ended_trips"}:
         state["travelContext"]["travelHistory"] = output or []
     # 如果读取指定日期日程，将它独立保存，避免把日程伪装为 Trip 静态字段。
     elif tool_name == "get_trip_itinerary_by_date":
@@ -510,6 +521,9 @@ def _summary_for_tool(tool_name: str, output: Any) -> str:
     # 如果读取的是最近 Trip，根据结果列表说明是否存在旅行记录。
     if tool_name == "get_recent_trips":
         return "已读取最近旅行记录" if output else "暂无旅行记录"
+    # 如果读取的是已结束 Trip，只用历史行程事实说明结果，避免与进行中行程混淆。
+    if tool_name == "get_recent_ended_trips":
+        return "已读取最近已结束行程" if output else "暂无已结束行程"
     # 如果读取的是指定 Trip 的足迹，根据自动采样数量说明是否存在 GPS 事实。
     if tool_name == "get_footprint_summary_by_trip":
         return "已读取指定行程足迹摘要" if output and output.get("automaticSampleCount") else "指定行程暂无 GPS 足迹"

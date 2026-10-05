@@ -118,6 +118,7 @@ def test_agent_travel_reads_keep_current_and_history_boundaries(db_session: Sess
     current = service.get_agent_current_active_trip(db_session, "user-a")
     today = service.get_agent_trip_itinerary_by_date(db_session, "user-a", current_trip.uuid, date.today())
     history = service.get_agent_recent_trips(db_session, "user-a")
+    ended_history = service.get_agent_recent_ended_trips(db_session, "user-a")
 
     assert current == {
         "uuid": "current-trip", "title": "当前新加坡行", "destination": "Singapore",
@@ -130,6 +131,10 @@ def test_agent_travel_reads_keep_current_and_history_boundaries(db_session: Sess
         "startDate": date.today().isoformat(), "endDate": date.today().isoformat(),
         "status": service.TRIP_STATUS_IN_PROGRESS,
     }, {
+        "uuid": "history-trip", "title": "东京旧行", "destination": "Tokyo",
+        "startDate": "2026-04-01", "endDate": "2026-04-03", "status": service.TRIP_STATUS_ENDED,
+    }]
+    assert ended_history == [{
         "uuid": "history-trip", "title": "东京旧行", "destination": "Tokyo",
         "startDate": "2026-04-01", "endDate": "2026-04-03", "status": service.TRIP_STATUS_ENDED,
     }]
