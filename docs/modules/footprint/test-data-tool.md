@@ -24,8 +24,13 @@ python -m app.devtools.seed_footprints \
   --user-uuid <user_uuid> \
   --trip-uuid <trip_uuid> \
   --location MARINA_SANDS_BAY \
-  --seed 20260924
+  --seed 20260924 \
+  --gps-spacing-meters 25 \
+  --checkin-count 6 \
+  --day-hours 8
 ```
+
+普通场景默认按约 25 米目标间距生成连续 GPS 点，默认补足至 6 个手动打卡；轨迹点分布在默认 8 小时的日间窗口内，各采样段之间保留 45 分钟停留间隔。`--day-hours` 可设为 6–12 小时。`--gps-spacing-meters` 可设为 20–100 米，生成点仍遵守至少 15 米自动样本间距；`--checkin-count` 可设为 1–12 个，打卡之间遵守至少 30 米间距。自动点与打卡保护范围重叠时会过滤自动点。`CHECKIN_PROXIMITY` 保留为单个近距边界样例，不补充沿途打卡，也不使用全天时间分布。
 
 首批固定场景：
 
@@ -47,7 +52,8 @@ python -m app.devtools.seed_footprints \
 cd services/vago-ai
 python -m app.devtools.seed_footprints \
   --user-uuid <user_uuid> --trip-uuid <trip_uuid> \
-  --location MARINA_SANDS_BAY --seed 20260924 --replace
+  --location MARINA_SANDS_BAY --seed 20260924 \
+  --gps-spacing-meters 25 --checkin-count 6 --day-hours 8 --replace
 
 python -m app.devtools.seed_footprints \
   --user-uuid <user_uuid> --trip-uuid <trip_uuid> \

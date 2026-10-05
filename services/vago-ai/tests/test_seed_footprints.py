@@ -11,6 +11,8 @@ from app.devtools.seed_footprints import (
     AUTO_GPS,
     DEV_SEED_PREFIX,
     MANUAL_CHECKIN,
+    SCENARIOS,
+    _distance_meters,
     available_locations,
     build_scenario_observations,
     clear_seed_run,
@@ -54,6 +56,58 @@ def test_marina_sand_alias_resolves_to_canonical_scenario() -> None:
     observations = build_scenario_observations("Marina_Sand_BAY", 42)
 
     assert observations == build_scenario_observations("MARINA_SANDS_BAY", 42)
+
+
+def test_haversine_distance_matches_known_coordinate_distance() -> None:
+    """测试：Haversine 距离包含平方根并正确返回约一度经度的地表距离。"""
+    assert _distance_meters(0.0, 0.0, 0.0, 1.0) == pytest.approx(111_195, abs=100)
+
+
+@pytest.mark.parametrize("location", [code for code in SCENARIOS if code != "CHECKIN_PROXIMITY"])
+def test_regular_scenarios_generate_dense_full_day_footprints(location: str) -> None:
+    """测试：普通场景默认生成足够密集、覆盖整日且符合距离限制的点位。"""
+    observations = build_scenario_observations(location, 42)
+    gps_points = [item for item in observations if item.observation_type == AUTO_GPS]
+    checkins = [item for item in observations if item.observation_type == MANUAL_CHECKIN]
+
+    assert len(gps_points) > 30
+    assert len(checkins) == 6
+    assert (gps_points[-1].occurred_at - gps_points[0].occurred_at).total_seconds() >= 7 * 60 * 60
+    assert (observations[-1].occurred_at - observations[0].occurred_at).total_seconds() <= 8 * 60 * 60
+
+    grouped_gps: dict[str, list] = {}
+    for point in gps_points:
+        grouped_gps.setdefault(point.tracking_segment_uuid, []).append(point)
+    for segment_points in grouped_gps.values():
+        for previous, current in zip(segment_points, segment_points[1:]):
+            assert _distance_meters(
+                previous.latitude,
+                previous.longitude,
+                current.latitude,
+                current.longitude,
+            ) >= 15
+
+    for checkin in checkins:
+        assert all(
+            _distance_meters(point.latitude, point.longitude, checkin.latitude, checkin.longitude) >= 15
+            for point in gps_points
+        )
+    for index, checkin in enumerate(checkins):
+        assert all(
+            _distance_meters(checkin.latitude, checkin.longitude, other.latitude, other.longitude) >= 30
+            for other in checkins[index + 1:]
+        )
+
+
+def test_day_hours_can_be_configured_within_valid_range() -> None:
+    """测试：普通场景支持调整日内跨度，越界跨度会被拒绝。"""
+    observations = build_scenario_observations("LONDON", 42, day_hours=6)
+    gps_points = [item for item in observations if item.observation_type == AUTO_GPS]
+    assert (gps_points[-1].occurred_at - gps_points[0].occurred_at).total_seconds() >= 5 * 60 * 60
+    assert (observations[-1].occurred_at - observations[0].occurred_at).total_seconds() <= 6 * 60 * 60
+
+    with pytest.raises(ValueError, match="--day-hours"):
+        build_scenario_observations("LONDON", 42, day_hours=13)
 
 
 def test_seed_and_clear_only_touch_matching_run(db_session: Session) -> None:
