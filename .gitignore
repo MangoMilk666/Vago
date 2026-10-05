@@ -114,6 +114,7 @@ docs/assets/
 **/test.txt
 bug-records.md
 local-prompts/
+.agents/reviews/
 
 # 启动fastAPI项目的命令脚本
 services/vago-ai/launch.sh
