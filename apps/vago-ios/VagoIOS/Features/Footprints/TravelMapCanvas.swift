@@ -17,6 +17,7 @@ struct TravelMapCanvas: View {
     @State private var cameraMode: CameraMode = .automatic
     @State private var hasInitializedCamera = false
     @State private var routeSegments: [FootprintSegment] = []
+    @State private var visibleSampleKeys = Set<String>()
     // 20pt 是原生地图地点 glyph 的常用视觉尺寸；足迹点取其 90%，并保持固定屏幕大小。
     private let footprintPointDiameter: CGFloat = 11
 
@@ -27,92 +28,96 @@ struct TravelMapCanvas: View {
     }
 
     var body: some View {
-        // Map 的闭包是 MapContentBuilder，内部声明的 Marker、Annotation、Polyline 会成为地图叠加物。
-        Map(position: $cameraPosition) {
-            // 每段都由时间顺序的有效 GPS 样本构成，断段后不会再用直线穿越未经过区域。
-            ForEach(routeSegments) { segment in
-                if segment.locations.count > 1 {
-                    MapPolyline(coordinates: segment.smoothedCoordinates)
-                        // 双层圆角描边让路线更接近旅行足迹，而不是一组生硬的 sample 连线。
-                        .stroke(.indigo.opacity(0.22), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
-                    MapPolyline(coordinates: segment.smoothedCoordinates)
-                        .stroke(.indigo, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
-                }
-                // 分支条件：用户开启采样点显示时才绘制圆点；路线与打卡保持独立渲染。
-                if areFootprintSamplesVisible {
-                    // 每个渲染点是固定屏幕尺寸的实心圆，缩放地图不会改变它的视觉大小。
-                    ForEach(segment.locations.filter { $0.kind == .automaticGPS }) { location in
-                        Annotation("轨迹", coordinate: coordinate(for: location)) {
-                            Circle()
-                                .fill(.indigo)
-                                .frame(width: footprintPointDiameter, height: footprintPointDiameter)
-                                .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1))
+        MapReader { proxy in
+            // Map 的闭包是 MapContentBuilder，内部声明的 Marker、Annotation、Polyline 会成为地图叠加物。
+            Map(position: $cameraPosition) {
+                // 路线使用完整可信观察段；自动点的显示筛选绝不改变线几何或段边界。
+                ForEach(routeSegments) { segment in
+                    if segment.locations.count > 1 {
+                        MapPolyline(coordinates: segment.smoothedCoordinates)
+                            .stroke(.indigo.opacity(0.22), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+                        MapPolyline(coordinates: segment.smoothedCoordinates)
+                            .stroke(.indigo, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                    }
+                    if areFootprintSamplesVisible {
+                        // MapProxy 投影后的屏幕坐标用于稀疏圆点；线路与用户手动打卡图标保持独立。
+                        ForEach(segment.locations.filter { $0.kind == .automaticGPS && visibleSampleKeys.contains($0.stableKey) }) { location in
+                            Annotation("轨迹", coordinate: coordinate(for: location)) {
+                                Circle()
+                                    .fill(.indigo)
+                                    .frame(width: footprintPointDiameter, height: footprintPointDiameter)
+                                    .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1))
+                            }
                         }
                     }
                 }
-            }
-            // 手动打卡来自同一观察流，但始终使用独立 Annotation，不受自动采样点显示开关影响。
-            ForEach(locations.filter { $0.kind == .manualCheckin }) { checkin in
-                Annotation(checkin.locationName ?? "打卡", coordinate: coordinate(for: checkin)) {
-                    Button {
-                        onSelectCheckin(checkin)
-                    } label: {
-                        Image(systemName: "mappin.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(.orange)
-                            .shadow(radius: 2)
+                // 手动打卡来自同一观察流，但始终使用独立 Annotation，不受自动采样点显示开关影响。
+                ForEach(locations.filter { $0.kind == .manualCheckin }) { checkin in
+                    Annotation(checkin.locationName ?? "打卡", coordinate: coordinate(for: checkin)) {
+                        Button {
+                            onSelectCheckin(checkin)
+                        } label: {
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.title2)
+                                // 与 Web 地图统一使用玫瑰色强调主动打卡，自动采样仍使用 Indigo。
+                                .foregroundStyle(Color(red: 0.906, green: 0.357, blue: 0.482))
+                                .shadow(radius: 2)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("查看打卡：\(checkin.locationName ?? "未命名地点")")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("查看打卡：\(checkin.locationName ?? "未命名地点")")
+                }
+                if let currentLocation {
+                    Annotation("当前位置", coordinate: currentLocation.coordinate) {
+                        Image(systemName: "location.north.fill")
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundStyle(.blue)
+                            .rotationEffect(.degrees(currentLocation.headingDegrees ?? 0))
+                            .padding(5)
+                            .background(.white.opacity(0.92), in: Circle())
+                            .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+                    }
                 }
             }
-            // 分支条件：有有效定位时显示唯一当前位置标记，不再与旧采样 Marker 争夺语义。
-            if let currentLocation {
-                Annotation("当前位置", coordinate: currentLocation.coordinate) {
-                    Image(systemName: "location.north.fill")
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundStyle(.blue)
-                        // SwiftUI 0 度朝上与 Core Location 0 度朝北一致，直接旋转即可表示行进方向。
-                        .rotationEffect(.degrees(currentLocation.headingDegrees ?? 0))
-                        .padding(5)
-                        .background(.white.opacity(0.92), in: Circle())
-                        .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
-                }
+            .mapStyle(.standard(elevation: .realistic))
+            .mapControls {
+                MapCompass()
+                MapScaleView()
             }
-        }
-        .mapStyle(.standard(elevation: .realistic))
-        .mapControls {
-            MapCompass()
-            MapScaleView()
-        }
-        .onAppear {
-            rebuildRoutes()
-            // 页面初次进入已请求定位时，后续回调应直接带动镜头回到用户当前位置。
-            if locateRequestID > 0 {
+            // 镜头停稳后再按投影距离筛点，避免每帧地图手势都扫描大量历史点。
+            .onMapCameraChange(frequency: .onEnd) { _ in
+                refreshVisibleSampleKeys(using: proxy)
+            }
+            .onAppear {
+                rebuildRoutes()
+                refreshVisibleSampleKeys(using: proxy)
+                if locateRequestID > 0 {
+                    cameraMode = .following
+                    moveCameraToCurrentLocation()
+                }
+                initializeCameraIfNeeded()
+            }
+            .onChange(of: contentSignature) { _, _ in
+                rebuildRoutes()
+                refreshVisibleSampleKeys(using: proxy)
+                initializeCameraIfNeeded()
+            }
+            .onChange(of: areFootprintSamplesVisible) { _, _ in
+                refreshVisibleSampleKeys(using: proxy)
+            }
+            .onChange(of: locateRequestID) { _, _ in
                 cameraMode = .following
                 moveCameraToCurrentLocation()
             }
-            initializeCameraIfNeeded()
-        }
-        .onChange(of: contentSignature) { _, _ in
-            // 分支条件：首批远端数据到达时才自动适配范围；后续刷新不得抢走用户已拖动的镜头。
-            rebuildRoutes()
-            initializeCameraIfNeeded()
-        }
-        .onChange(of: locateRequestID) { _, _ in
-            cameraMode = .following
-            moveCameraToCurrentLocation()
-        }
-        .onChange(of: currentLocation?.recordedAt) { _, _ in
-            // 分支条件：只有跟随模式才随新的 GPS 回调移动，自由浏览时保留用户手势结果。
-            if cameraMode == .following {
-                moveCameraToCurrentLocation()
+            .onChange(of: currentLocation?.recordedAt) { _, _ in
+                if cameraMode == .following {
+                    moveCameraToCurrentLocation()
+                }
             }
-        }
-        .onChange(of: cameraPosition) { _, newPosition in
-            // positionedByUser 由 MapKit 标记真实手势移动；程序设置 camera 不会取消用户请求的跟随。
-            if newPosition.positionedByUser {
-                cameraMode = .freeBrowsing
+            .onChange(of: cameraPosition) { _, newPosition in
+                if newPosition.positionedByUser {
+                    cameraMode = .freeBrowsing
+                }
             }
         }
     }
@@ -132,10 +137,20 @@ struct TravelMapCanvas: View {
         routeSegments = FootprintRouteBuilder.segments(from: locations)
     }
 
+    private func refreshVisibleSampleKeys(using proxy: MapProxy) {
+        guard areFootprintSamplesVisible else {
+            visibleSampleKeys = []
+            return
+        }
+        visibleSampleKeys = FootprintPointSelector.visibleAutomaticKeys(in: routeSegments) { coordinate in
+            proxy.convert(coordinate, to: .local)
+        }
+    }
+
     private func initializeCameraIfNeeded() {
         guard !hasInitializedCamera else { return }
         // 分支条件：尚无任何远端资料时保持自动区域，待第一批数据回来再适配真实范围。
-        guard !locations.isEmpty || currentLocation != nil else { return }
+        guard !viewportLocations.isEmpty || currentLocation != nil else { return }
         hasInitializedCamera = true
         cameraPosition = .region(fittedRegion)
     }
@@ -148,7 +163,7 @@ struct TravelMapCanvas: View {
     }
 
     private var fittedRegion: MKCoordinateRegion {
-        var coordinates = locations.map(coordinate(for:))
+        var coordinates = viewportLocations.map(coordinate(for:))
         if let currentLocation { coordinates.append(currentLocation.coordinate) }
         guard let first = coordinates.first else {
             return MKCoordinateRegion(
@@ -168,6 +183,13 @@ struct TravelMapCanvas: View {
                 longitude: ((longitudes.max() ?? first.longitude) + (longitudes.min() ?? first.longitude)) / 2
             ),
             span: MKCoordinateSpan(latitudeDelta: latitudeDelta * 1.35, longitudeDelta: longitudeDelta * 1.35)
+        )
+    }
+
+    private var viewportLocations: [FootprintDisplayPoint] {
+        FootprintRouteBuilder.viewportLocations(
+            from: routeSegments,
+            manualCheckins: locations.filter { $0.kind == .manualCheckin }
         )
     }
 }

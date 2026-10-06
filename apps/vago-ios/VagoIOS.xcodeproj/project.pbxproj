@@ -8,12 +8,18 @@
 
 /* Begin PBXFileReference section */
 		A10000000000000000000001 /* VagoIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VagoIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000016 /* VagoIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VagoIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A10000000000000000000002 /* VagoIOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = VagoIOS;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000017 /* VagoIOSTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = VagoIOSTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -33,6 +39,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000002 /* VagoIOS */,
+				A10000000000000000000017 /* VagoIOSTests */,
 				A10000000000000000000005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +48,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000001 /* VagoIOS.app */,
+				A10000000000000000000016 /* VagoIOSTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -68,6 +76,27 @@
 			productReference = A10000000000000000000001 /* VagoIOS.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A10000000000000000000018 /* VagoIOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000023 /* Build configuration list for PBXNativeTarget "VagoIOSTests" */;
+			buildPhases = (
+				A10000000000000000000019 /* Sources */,
+				A1000000000000000000001A /* Frameworks */,
+				A1000000000000000000001B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000000022 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000017 /* VagoIOSTests */,
+			);
+			name = VagoIOSTests;
+			productName = VagoIOSTests;
+			productReference = A10000000000000000000016 /* VagoIOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -80,6 +109,10 @@
 				TargetAttributes = {
 					A10000000000000000000006 = {
 						CreatedOnToolsVersion = 26.0;
+					};
+					A10000000000000000000018 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = A10000000000000000000006;
 					};
 				};
 			};
@@ -98,6 +131,7 @@
 			projectRoot = "";
 			targets = (
 				A10000000000000000000006 /* VagoIOS */,
+				A10000000000000000000018 /* VagoIOSTests */,
 			);
 		};
 /* End PBXProject section */
@@ -112,6 +146,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+		A10000000000000000000019 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+		runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000001A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+		runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000001B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+		runOnlyForDeploymentPostprocessing = 0;
+		};
+
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000008 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -121,6 +177,19 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+		A10000000000000000000021 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000010 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000006;
+			remoteInfo = VagoIOS;
+		};
+		A10000000000000000000022 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000006 /* VagoIOS */;
+			targetProxy = A10000000000000000000021 /* PBXContainerItemProxy */;
+		};
 
 /* Begin XCBuildConfiguration section */
 		A10000000000000000000012 /* Debug */ = {
@@ -189,6 +258,38 @@
 			};
 			name = Release;
 		};
+		A10000000000000000000024 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vago.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VagoIOS.app/VagoIOS";
+			};
+			name = Debug;
+		};
+		A10000000000000000000025 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.vago.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VagoIOS.app/VagoIOS";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -206,6 +307,15 @@
 			buildConfigurations = (
 				A10000000000000000000012 /* Debug */,
 				A10000000000000000000013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000023 /* Build configuration list for PBXNativeTarget "VagoIOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000024 /* Debug */,
+				A10000000000000000000025 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

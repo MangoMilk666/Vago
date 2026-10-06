@@ -7,11 +7,13 @@ import {
   Popup,
   TileLayer,
   useMap,
+  useMapEvents,
 } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import Navbar from '../components/Navbar'
 import { footprintApi } from '../api/footprints'
 import { tripApi } from '../api/travel'
+import { buildFootprintSegments, isRenderableCoordinate, selectFootprintViewportPoints, selectVisibleAutomaticPoints } from '../utils/footprintGeometry'
 
 const STATUS = {
   1: { label: '未开始', className: 'bg-violet-100 text-violet-700' },
@@ -79,45 +81,54 @@ function TripList({ trips, selectedUuid, onSelect }) {
   )
 }
 
-function FootprintMap({ observations, showGpsPoints }) {
-  const autoGps = observations.filter((item) => item.observationType === 'AUTO_GPS')
-  const checkins = observations.filter((item) => item.observationType === 'MANUAL_CHECKIN')
-  const segments = useMemo(() => {
-    const grouped = new Map()
-    observations.forEach((item) => {
-      const key = item.trackingSegmentUuid || `standalone-${item.uuid}`
-      const items = grouped.get(key) || []
-      items.push(item)
-      grouped.set(key, items)
-    })
-    return [...grouped.values()]
-      .map((items) => items.sort((left, right) => new Date(left.occurredAt) - new Date(right.occurredAt)))
-      .filter((items) => items.length > 1)
-  }, [observations])
+function FootprintLayers({ segments, checkins, showGpsPoints }) {
+  const map = useMap()
+  const [viewportRevision, setViewportRevision] = useState(0)
+
+  useMapEvents({
+    zoomend: () => setViewportRevision((value) => value + 1),
+    moveend: () => setViewportRevision((value) => value + 1),
+    resize: () => setViewportRevision((value) => value + 1),
+  })
+
+  const visiblePointUuids = useMemo(() => {
+    if (!showGpsPoints) return new Set()
+    return selectVisibleAutomaticPoints(
+      segments,
+      (point) => {
+        const projected = map.latLngToLayerPoint([point.latitude, point.longitude])
+        return { x: projected.x, y: projected.y }
+      },
+    )
+  }, [map, segments, showGpsPoints, viewportRevision])
 
   return (
-    <MapContainer center={DEFAULT_CENTER} zoom={2} className="h-full w-full" zoomControl={false}>
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-      <MapViewport points={observations} />
+    <>
+      {segments.filter((segment) => segment.length > 1).map((segment, index) => {
+        const positions = segment.map((item) => [item.latitude, item.longitude])
+        const key = `${segment[0].trackingSegmentUuid || segment[0].uuid}-${index}`
+        return (
+          <React.Fragment key={key}>
+            <Polyline
+              positions={positions}
+              pathOptions={{ color: '#5856d6', weight: 9, opacity: 0.2, lineCap: 'round', lineJoin: 'round', interactive: false }}
+              smoothFactor={1}
+            />
+            <Polyline
+              positions={positions}
+              pathOptions={{ color: '#5856d6', weight: 4, opacity: 0.92, lineCap: 'round', lineJoin: 'round', interactive: false }}
+              smoothFactor={1}
+            />
+          </React.Fragment>
+        )
+      })}
 
-      {segments.map((segment, index) => (
-        <Polyline
-          key={`${segment[0].trackingSegmentUuid || segment[0].uuid}-${index}`}
-          positions={segment.map((item) => [item.latitude, item.longitude])}
-          pathOptions={{ color: '#6d5dfc', weight: 4, opacity: 0.88, lineCap: 'round', lineJoin: 'round' }}
-          smoothFactor={1.5}
-        />
-      ))}
-
-      {showGpsPoints && autoGps.map((point) => (
+      {showGpsPoints && segments.flat().filter((point) => visiblePointUuids.has(point.uuid)).map((point) => (
         <CircleMarker
           key={point.uuid}
           center={[point.latitude, point.longitude]}
-          radius={4}
-          pathOptions={{ color: '#ffffff', fillColor: '#6d5dfc', fillOpacity: 1, weight: 1.5 }}
+          radius={3.5}
+          pathOptions={{ color: '#ffffff', fillColor: '#5856d6', fillOpacity: 1, weight: 1.25 }}
         >
           <Popup><ObservationPopup point={point} /></Popup>
         </CircleMarker>
@@ -127,13 +138,33 @@ function FootprintMap({ observations, showGpsPoints }) {
         <CircleMarker
           key={point.uuid}
           center={[point.latitude, point.longitude]}
-          // 打卡点保留与自动采样点的层级差异，但避免在 Web 地图上过度抢占视觉焦点。
-          radius={7.5}
-          pathOptions={{ color: '#ffffff', fillColor: '#e75b7b', fillOpacity: 1, weight: 3 }}
+          radius={6.5}
+          pathOptions={{ color: '#ffffff', fillColor: '#e75b7b', fillOpacity: 1, weight: 2.5 }}
         >
           <Popup><ObservationPopup point={point} /></Popup>
         </CircleMarker>
       ))}
+    </>
+  )
+}
+
+function FootprintMap({ observations, showGpsPoints }) {
+  const checkins = useMemo(
+    () => observations.filter((item) => item.observationType === 'MANUAL_CHECKIN' && isRenderableCoordinate(item)),
+    [observations],
+  )
+  const segments = useMemo(() => buildFootprintSegments(observations), [observations])
+  const viewportPoints = useMemo(() => selectFootprintViewportPoints(segments, checkins), [segments, checkins])
+
+  return (
+    <MapContainer center={DEFAULT_CENTER} zoom={2} className="h-full w-full" zoomControl={false}>
+      <TileLayer
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
+      <MapViewport points={viewportPoints} />
+
+      <FootprintLayers segments={segments} checkins={checkins} showGpsPoints={showGpsPoints} />
     </MapContainer>
   )
 }
