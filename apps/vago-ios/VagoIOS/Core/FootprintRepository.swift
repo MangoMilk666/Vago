@@ -8,6 +8,7 @@ final class FootprintRepository: ObservableObject {
     private var userUuid: String?
     private var tripUuid: String?
     private var remoteFootprints: [TravelFootprint] = []
+    private var cachedFootprints: [LocalFootprintRecord] = []
     // pending 样本来自 UserDefaults；每次远端刷新仍必须参与合并，不能被 GET 快照覆盖。
     private var pendingSamples: [PendingLocationSample] = []
     // 已确认点只保留在本次运行内，直到 GET 返回相同 clientUuid 后由远端快照接管。
@@ -35,30 +36,43 @@ final class FootprintRepository: ObservableObject {
             self.userUuid = userUuid
             self.tripUuid = tripUuid
             remoteFootprints = []
+            cachedFootprints = []
             pendingSamples = []
             confirmedSamples = []
         }
+        cachedFootprints = LocalFootprintStore.shared.footprints(userUuid: userUuid, tripUuid: tripUuid)
         refreshLocalSamples(from: tracking)
+        rebuildDisplayPoints()
     }
 
     func replaceRemoteFootprints(_ footprints: [TravelFootprint]) {
         remoteFootprints = footprints
+        if let userUuid, let tripUuid {
+            LocalFootprintStore.shared.replaceSnapshot(footprints, userUuid: userUuid, tripUuid: tripUuid)
+            cachedFootprints = LocalFootprintStore.shared.footprints(userUuid: userUuid, tripUuid: tripUuid)
+        }
         // 远端已具备相同幂等键时，内存确认副本已完成交接，可安全释放。
         let remoteKeys = Set(footprints.map { FootprintMergeKey.normalize($0.clientEventUuid) })
         confirmedSamples.removeAll { remoteKeys.contains(FootprintMergeKey.normalize($0.id.uuidString)) }
         rebuildDisplayPoints()
     }
 
-    func upsertManualCheckin(_ footprint: TravelFootprint) {
+    func upsertManualCheckin(_ footprint: TravelFootprint, pending: Bool = false) {
         // POST/PATCH 成功后先替换内存远端快照，地图不必等待下一次完整 GET 才显示最新打卡文本。
         guard footprint.tripUuid == tripUuid, footprint.footprintType == .manualCheckin else { return }
-        remoteFootprints.removeAll { $0.clientEventUuid == footprint.clientEventUuid }
-        remoteFootprints.append(footprint)
+        if let userUuid {
+            LocalFootprintStore.shared.upsert(footprint, userUuid: userUuid, isPendingUpload: pending)
+            cachedFootprints = LocalFootprintStore.shared.footprints(userUuid: userUuid, tripUuid: footprint.tripUuid)
+        }
+        if !pending {
+            remoteFootprints.removeAll { $0.clientEventUuid == footprint.clientEventUuid }
+            remoteFootprints.append(footprint)
+        }
         rebuildDisplayPoints()
     }
 
     func manualCheckinCoordinates() -> [ManualCheckinCoordinate] {
-        remoteFootprints.compactMap { footprint in
+        (cachedFootprints.map(\.footprint) + remoteFootprints).compactMap { footprint in
             guard footprint.footprintType == .manualCheckin else { return nil }
             return ManualCheckinCoordinate(
                 tripUuid: footprint.tripUuid,
@@ -71,6 +85,9 @@ final class FootprintRepository: ObservableObject {
     func refreshLocalSamples(from tracking: LocationTrackingStore) {
         guard let tripUuid else { return }
         pendingSamples = tracking.pendingSamples(for: tripUuid)
+        if let userUuid {
+            cachedFootprints = LocalFootprintStore.shared.footprints(userUuid: userUuid, tripUuid: tripUuid)
+        }
         rebuildDisplayPoints()
     }
 
@@ -98,6 +115,10 @@ final class FootprintRepository: ObservableObject {
         }
         for sample in confirmedSamples where sample.tripUuid == tripUuid {
             let point = FootprintDisplayPoint.local(sample, source: .confirmed)
+            valuesByKey[point.stableKey] = point
+        }
+        for record in cachedFootprints where record.tripUuid == tripUuid {
+            let point = FootprintDisplayPoint.cached(record.footprint, pending: record.isPendingUpload)
             valuesByKey[point.stableKey] = point
         }
         for footprint in remoteFootprints where footprint.tripUuid == tripUuid {

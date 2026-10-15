@@ -79,6 +79,9 @@ struct CurrentTripView: View {
     private func load() async {
         isLoading = true
         defer { isLoading = false }
+        if let userUuid = session.profile?.uuid {
+            tripContext.restoreCachedTrips(for: userUuid)
+        }
         do {
             let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session)
             guard let userUuid = session.profile?.uuid else { return }

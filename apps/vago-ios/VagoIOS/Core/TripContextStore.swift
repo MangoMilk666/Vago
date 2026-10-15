@@ -10,6 +10,10 @@ final class TripContextStore: ObservableObject {
     private var selectedRecordingTripUuid: String?
     private var userUuid: String?
 
+    private static func tripsCacheKey(for userUuid: String) -> String {
+        "vago.trip.cached-list.\(userUuid)"
+    }
+
     private static func selectionKey(for userUuid: String) -> String {
         "vago.trip.recording-selection.\(userUuid)"
     }
@@ -18,6 +22,14 @@ final class TripContextStore: ObservableObject {
         // 分支条件：账号变化时先丢弃旧账号内存数据，防止 Tab 切换时短暂回显其他用户的行程。
         prepareAccount(userUuid)
         self.trips = trips
+        if let data = try? JSONEncoder().encode(trips) {
+            UserDefaults.standard.set(data, forKey: Self.tripsCacheKey(for: userUuid))
+        }
+        reconcileRecordingTrip()
+    }
+
+    func restoreCachedTrips(for userUuid: String) {
+        prepareAccount(userUuid)
         reconcileRecordingTrip()
     }
 
@@ -59,7 +71,12 @@ final class TripContextStore: ObservableObject {
     private func prepareAccount(_ userUuid: String) {
         guard self.userUuid != userUuid else { return }
         self.userUuid = userUuid
-        trips = []
+        if let data = UserDefaults.standard.data(forKey: Self.tripsCacheKey(for: userUuid)),
+           let cachedTrips = try? JSONDecoder().decode([Trip].self, from: data) {
+            trips = cachedTrips
+        } else {
+            trips = []
+        }
         recordingTrip = nil
         selectedRecordingTripUuid = UserDefaults.standard.string(forKey: Self.selectionKey(for: userUuid))
     }

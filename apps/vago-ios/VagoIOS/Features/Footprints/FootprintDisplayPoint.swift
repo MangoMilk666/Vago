@@ -51,6 +51,24 @@ struct FootprintDisplayPoint: Identifiable {
         )
     }
 
+    static func cached(_ footprint: TravelFootprint, pending: Bool) -> Self {
+        Self(
+            stableKey: FootprintMergeKey.normalize(footprint.clientEventUuid),
+            serverUuid: pending ? nil : footprint.uuid,
+            tripUuid: footprint.tripUuid,
+            latitude: footprint.latitude,
+            longitude: footprint.longitude,
+            accuracyM: footprint.accuracyM,
+            speedMps: footprint.speedMps,
+            trackingSegmentUuid: footprint.trackingSegmentUuid,
+            recordedAt: footprint.occurredAt,
+            source: pending ? .pending : .remote,
+            kind: footprint.footprintType == .manualCheckin ? .manualCheckin : .automaticGPS,
+            locationName: footprint.locationName,
+            note: footprint.note
+        )
+    }
+
     static func local(_ sample: PendingLocationSample, source: Source) -> Self {
         Self(
             stableKey: FootprintMergeKey.normalize(sample.id.uuidString),

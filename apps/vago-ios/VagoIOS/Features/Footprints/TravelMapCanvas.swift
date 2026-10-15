@@ -315,9 +315,12 @@ struct TrackingControlSheet: View {
                 Spacer()
                 Button("完成") { dismiss() }
             }
-            Text(tracking.isTracking ? "正在记录 \(trip.title) 的前台位置。" : permissionDescription)
+            Text(tracking.isTracking ? recordingDescription : permissionDescription)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+            Label(tracking.isNetworkAvailable ? "网络已连接" : "当前离线，数据会保存在本机", systemImage: tracking.isNetworkAvailable ? "wifi" : "wifi.slash")
+                .font(.footnote)
+                .foregroundStyle(tracking.isNetworkAvailable ? Color.secondary : Color.orange)
             Button(tracking.isTracking ? "停止记录" : "开始记录") {
                 // 分支条件：记录已开启时停止定位，否则为当前行程开始采样。
                 if tracking.isTracking {
@@ -345,7 +348,9 @@ struct TrackingControlSheet: View {
         // switch 穷举 Core Location 的授权枚举；@unknown default 让未来系统新增 case 时仍能安全降级。
         switch tracking.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
-            return "定位权限已开启。第一版仅在应用打开期间采样。"
+            return tracking.isBackgroundLocationAuthorized
+                ? "定位权限已开启，开始后可在后台继续记录。"
+                : "当前仅允许使用期间定位；要在后台持续记录，请允许“始终”访问位置。"
         case .denied, .restricted:
             return "请在系统设置中允许 Vago 使用定位，才能记录足迹。"
         case .notDetermined:
@@ -353,6 +358,12 @@ struct TrackingControlSheet: View {
         @unknown default:
             return "定位权限状态暂不可用。"
         }
+    }
+
+    private var recordingDescription: String {
+        tracking.isBackgroundLocationAuthorized
+            ? "正在记录 \(trip.title)。切换应用或锁屏后仍会继续记录。"
+            : "正在记录 \(trip.title)。目前只保证应用在前台时持续记录，请将定位权限改为“始终”。"
     }
 }
 

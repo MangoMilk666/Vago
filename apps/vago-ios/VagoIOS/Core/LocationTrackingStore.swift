@@ -1,8 +1,9 @@
 import CoreLocation
 import Foundation
+import Network
 import SwiftUI
 
-/// 管理定位权限、前台采样与离线队列；服务端仍是最终的足迹数据源。
+/// 管理定位权限、前后台采样、网络重试与离线队列；服务端仍是最终的足迹数据源。
 @MainActor
 final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManagerDelegate {
     // 继承 NSObject 是采用 Objective-C Core Location delegate 协议的系统要求。
@@ -21,16 +22,21 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     @Published private(set) var syncError: String?
     @Published private(set) var locationError: String?
     @Published private(set) var isRequestingCurrentLocation = false
+    @Published private(set) var isNetworkAvailable = false
+    @Published private(set) var isBackgroundLocationAuthorized = false
 
     // CLLocationManager 是系统定位服务入口；delegate 回调由它主动调用。
     private let manager = CLLocationManager()
     private let client = APIClient()
+    private let networkMonitor = NWPathMonitor()
+    private let networkMonitorQueue = DispatchQueue(label: "com.vago.ios.network-monitor")
     private var currentTripUuid: String?
     private var currentUserUuid: String?
     private var session: SessionStore?
     // 用户点过“开始记录”才为 true；页面切换、定位授权或一次 Locate 都不能隐式打开它。
     private var hasRecordingIntent = false
-    // 本项目只申请前台定位，进入后台时停止连续采样，回到前台再依据记录意图恢复。
+    private var restoredIntentUserUuid: String?
+    // 前后台状态仅用于界面与退避策略；后台定位本身由 Core Location 持续管理。
     private var isAppActive = true
     // Continuation 将 Core Location delegate 的回调桥接为 async/await，供“点击打卡后获取一次新位置”使用。
     private var locationRequestContinuation: CheckedContinuation<CurrentLocationFix, Error>?
@@ -58,11 +64,28 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         authorizationStatus = CLLocationManager().authorizationStatus
         super.init()
         manager.delegate = self
-        // 第一版仅在 App 前台以约 20 米间隔采样，先控制功耗和隐私边界。
+        // 用户明确开始后以约 20 米间隔采样；后台能力仍受系统权限和电量策略控制。
         manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         manager.distanceFilter = 20
+        manager.activityType = .fitness
+        manager.pausesLocationUpdatesAutomatically = false
         // 约 5 度才回调一次，避免用户轻微晃动手机时地图上的方向箭头持续抖动。
         manager.headingFilter = 5
+        manager.allowsBackgroundLocationUpdates = true
+        manager.showsBackgroundLocationIndicator = true
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            let isAvailable = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                self?.handleNetworkAvailability(isAvailable)
+            }
+        }
+        networkMonitor.start(queue: networkMonitorQueue)
+        restorePersistedRecordingIntent()
+        // 系统若因重要位置变化重启 App，预先重新注册低频监控；精确连续采样仍需 App 被系统唤醒。
+        if hasRecordingIntent, authorizationStatus == .authorizedAlways,
+           CLLocationManager.significantLocationChangeMonitoringAvailable() {
+            manager.startMonitoringSignificantLocationChanges()
+        }
     }
 
     func startTracking(tripUuid: String, userUuid: String, session: SessionStore) {
@@ -70,8 +93,9 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         prepare(tripUuid: tripUuid, userUuid: userUuid, session: session)
         hasRecordingIntent = true
         trackingSegmentUuid = UUID().uuidString.lowercased()
+        persistRecordingIntent()
         locationError = nil
-        requestLocationPermissionIfNeeded()
+        requestRecordingPermissionIfNeeded()
         // 分支条件：用户已授予定位权限时立即开始采样；否则等待系统回调后的授权结果。
         resumeTrackingIfNeeded()
     }
@@ -83,16 +107,43 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
             resetRuntimeState()
             manualCheckinCoordinatesByTrip = [:]
         }
+        let previousTripUuid = currentTripUuid
+        let shouldRestoreIntent = restoredIntentUserUuid != userUuid
         currentTripUuid = tripUuid
         currentUserUuid = userUuid
         self.session = session
+        isBackgroundLocationAuthorized = authorizationStatus == .authorizedAlways
+        // 本次安装曾明确开始记录时，进程重建后恢复目标 Trip 和记录意图，不要求用户再次点击开始。
+        if shouldRestoreIntent {
+            restorePersistedRecordingIntent(for: userUuid)
+        }
+        if shouldRestoreIntent, hasRecordingIntent, restoredIntentUserUuid == userUuid,
+           let intent = loadRecordingIntent(for: userUuid) {
+            currentTripUuid = intent.tripUuid
+            trackingSegmentUuid = intent.segmentUuid
+            resumeTrackingIfNeeded()
+        } else if hasRecordingIntent {
+            // 用户在记录期间切换记录目标时，沿用明确选择的新 Trip 并持久化新的意图。
+            if previousTripUuid != tripUuid {
+                trackingSegmentUuid = UUID().uuidString.lowercased()
+            }
+            persistRecordingIntent()
+            resumeTrackingIfNeeded()
+        }
         pendingCount = allPendingSamples(for: userUuid).count
+            + LocalFootprintStore.shared.pendingManualCheckins(userUuid: userUuid).count
         localQueueRevision += 1
     }
 
     /// 更新当前已知手动打卡坐标，让下一次自动 GPS 回调可立即避开重复点。
     func updateManualCheckinCoordinates(_ coordinates: [ManualCheckinCoordinate], for tripUuid: String) {
         manualCheckinCoordinatesByTrip[tripUuid] = coordinates
+    }
+
+    func refreshPendingCount() {
+        guard let currentUserUuid else { return }
+        pendingCount = allPendingSamples(for: currentUserUuid).count
+            + LocalFootprintStore.shared.pendingManualCheckins(userUuid: currentUserUuid).count
     }
 
     /// 仅在记录中暴露当前段；非记录状态的打卡不应加入上一段路线。
@@ -104,11 +155,12 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         // 用户明确停止后清除记录意图；之后的授权或迟到定位回调不得再次写入足迹。
         hasRecordingIntent = false
         trackingSegmentUuid = nil
+        clearPersistedRecordingIntent()
         manager.stopUpdatingLocation()
         manager.stopUpdatingHeading()
         isTracking = false
         // 用户停止记录时立即尝试交接仍在设备中的样本，无需等待定时器。
-        Task { _ = await syncPendingSamples() }
+        Task { await syncPendingFootprints() }
     }
 
     /// 为地图定位触发一次异步请求；调用方不需要等待结果时使用这个便捷入口。
@@ -148,24 +200,21 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     /// App 生命周期由应用根部转交，避免某个 Tab 或 sheet 的显示状态意外停止记录。
     func handleScenePhase(_ phase: ScenePhase) {
         isAppActive = phase == .active
-        // 分支条件：应用离开前台时停止连续定位；恢复前台才按用户先前意图继续记录。
+        // 分支条件：回到前台时按持久化意图确认定位仍运行，并重试离线队列。
         if isAppActive {
             resumeTrackingIfNeeded()
-            // 回到前台是网络恢复后的常见时机，复用同一上传器重试离线队列。
-            Task { _ = await syncPendingSamples() }
+            Task { await syncPendingFootprints() }
         } else {
-            retrySyncTask?.cancel()
-            retrySyncTask = nil
-            manager.stopUpdatingLocation()
-            manager.stopUpdatingHeading()
-            isTracking = false
-            // 分支条件：前台连续记录被生命周期打断时清空旧段，恢复后必须生成新的持久化边界。
-            trackingSegmentUuid = nil
+            // 后台持续定位需要“始终”授权；仅有“使用期间”权限时系统可能暂停回调，提示用户升级授权。
+            if authorizationStatus != .authorizedAlways, hasRecordingIntent {
+                locationError = "后台持续记录需要在系统设置中将定位权限设为“始终”。"
+            }
         }
     }
 
     /// 注销或账号切换时只清理内存、停止系统服务，不删除按 userUuid 隔离的离线待传队列。
     func reset() {
+        clearPersistedRecordingIntent()
         resetRuntimeState()
         currentTripUuid = nil
         currentUserUuid = nil
@@ -174,9 +223,18 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     }
 
     func requestLocationPermissionIfNeeded() {
-        // 分支条件：首次使用定位功能时才请求系统权限，避免启动应用就打断用户。
+        // 单次定位/手动打卡只需要使用期间权限，不借此请求后台位置权限。
         if authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
+        }
+    }
+
+    private func requestRecordingPermissionIfNeeded() {
+        // 分支条件：首次授权先请求使用期间权限，授权回调后再向系统申请始终权限。
+        if authorizationStatus == .notDetermined {
+            manager.requestWhenInUseAuthorization()
+        } else if authorizationStatus == .authorizedWhenInUse {
+            manager.requestAlwaysAuthorization()
         }
     }
 
@@ -202,12 +260,38 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
             for batch in samples.chunked(into: 100) {
                 do {
                     let payload = LocationSyncPayload(tripUuid: tripUuid, samples: batch)
-                    let _: LocationSyncResult = try await client.request(
+                    let result: LocationSyncResult = try await client.request(
                         path: "footprints/location-samples/sync",
                         method: "POST",
                         body: payload,
                         tokenProvider: session
                     )
+                    if (result.skippedCount ?? 0) == 0 {
+                        let cached = batch.map { sample in
+                            TravelFootprint(
+                                uuid: sample.id.uuidString.lowercased(),
+                                clientEventUuid: sample.id.uuidString.lowercased(),
+                                tripUuid: sample.tripUuid,
+                                footprintType: .automaticGPS,
+                                latitude: sample.latitude,
+                                longitude: sample.longitude,
+                                accuracyM: sample.accuracyM,
+                                speedMps: sample.speedMps,
+                                trackingSegmentUuid: sample.trackingSegmentUuid,
+                                locationName: nil,
+                                note: nil,
+                                occurredAt: sample.recordedAt
+                            )
+                        }
+                        // 成功确认后即留一份本地持久副本，不依赖稍后的地图 GET 恰好成功。
+                        LocalFootprintStore.shared.upsertMany(cached, userUuid: userUuid)
+                    } else if let footprints: [TravelFootprint] = try? await client.request(
+                        path: "footprints/trips/\(tripUuid)/footprints",
+                        tokenProvider: session
+                    ) {
+                        // 服务端可能因附近打卡跳过批次中的部分点；有跳过时用权威完整快照校准本地副本。
+                        LocalFootprintStore.shared.replaceSnapshot(footprints, userUuid: userUuid, tripUuid: tripUuid)
+                    }
                     removePendingSamples(batch, for: userUuid)
                     confirmed.append(contentsOf: batch)
                 } catch {
@@ -228,6 +312,20 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         } else if errors.isEmpty {
             retryAttempt = 0
         }
+        return confirmed
+    }
+
+    /// 网络恢复或前台刷新时，GPS 与离线手动打卡共用现有 API 和稳定事件键补传。
+    func syncPendingFootprints() async -> [PendingLocationSample] {
+        let confirmed = await syncPendingSamples()
+        await syncPendingManualCheckins()
+        if let userUuid = currentUserUuid,
+           allPendingSamples(for: userUuid).isEmpty,
+           LocalFootprintStore.shared.pendingManualCheckins(userUuid: userUuid).isEmpty {
+            syncError = nil
+            retryAttempt = 0
+        }
+        refreshPendingCount()
         return confirmed
     }
 
@@ -265,9 +363,14 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
 
     private func handleAuthorizationChange(_ status: CLAuthorizationStatus) {
         authorizationStatus = status
+        isBackgroundLocationAuthorized = status == .authorizedAlways
         // 分支条件：授权后仅恢复用户已明确开始的记录，或补发等待中的一次定位请求。
         if isAuthorized {
             locationError = nil
+            // 分支条件：用户在首次弹窗选择“使用期间”时，连续记录意图继续请求“始终”授权。
+            if status == .authorizedWhenInUse, hasRecordingIntent {
+                manager.requestAlwaysAuthorization()
+            }
             if locationRequestContinuation != nil {
                 startHeadingUpdatesIfAvailable()
                 manager.requestLocation()
@@ -310,8 +413,8 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     }
 
     private func appendTrackingSampleIfNeeded(from location: CLLocation) {
-        // 分支条件：仅用户已开始记录、应用在前台且会话/行程完整时才持久化 GPS 样本。
-        guard hasRecordingIntent, isAppActive,
+        // 分支条件：仅用户已开始记录且会话/行程完整时才持久化 GPS 样本，前后台共用同一队列。
+        guard hasRecordingIntent,
               let tripUuid = currentTripUuid,
               let userUuid = currentUserUuid,
               let session,
@@ -413,8 +516,8 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     }
 
     private func resumeTrackingIfNeeded() {
-        // 分支条件：只有前台、已授权、用户仍希望记录且上下文有效时才恢复连续采样。
-        guard isAppActive, isAuthorized, hasRecordingIntent,
+        // 分支条件：已授权且用户仍希望记录、上下文有效时恢复连续采样，不因进入后台而停止。
+        guard isAuthorized, hasRecordingIntent,
               currentTripUuid != nil, currentUserUuid != nil,
               let session, case .signedIn = session.state else { return }
         // 分支条件：从后台中断恢复时旧段已被清空，现在创建新段以在服务端和其他设备上保留断点。
@@ -423,13 +526,18 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
         }
         startHeadingUpdatesIfAvailable()
         manager.startUpdatingLocation()
+        if authorizationStatus == .authorizedAlways {
+            manager.startMonitoringSignificantLocationChanges()
+        }
         isTracking = true
     }
 
     private func resetRuntimeState() {
         manager.stopUpdatingLocation()
         manager.stopUpdatingHeading()
+        manager.stopMonitoringSignificantLocationChanges()
         hasRecordingIntent = false
+        restoredIntentUserUuid = nil
         finishLocationRequest(with: .failure(LocationRequestError.cancelled))
         isTracking = false
         currentLocation = nil
@@ -458,7 +566,11 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     /// 返回当前账号指定行程的磁盘待传快照；只读暴露给 Repository，写入仍由 Store 管理。
     func pendingSamples(for tripUuid: String) -> [PendingLocationSample] {
         guard let currentUserUuid else { return [] }
-        return allPendingSamples(for: currentUserUuid).filter { $0.tripUuid == tripUuid }
+        return pendingSamples(for: tripUuid, userUuid: currentUserUuid)
+    }
+
+    func pendingSamples(for tripUuid: String, userUuid: String) -> [PendingLocationSample] {
+        allPendingSamples(for: userUuid).filter { $0.tripUuid == tripUuid }
     }
 
     private func storageKey(for userUuid: String) -> String {
@@ -493,6 +605,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
             UserDefaults.standard.set(data, forKey: storageKey(for: userUuid))
         }
         pendingCount = samples.count
+            + (currentUserUuid.map { LocalFootprintStore.shared.pendingManualCheckins(userUuid: $0).count } ?? 0)
         localQueueRevision += 1
     }
 
@@ -530,10 +643,108 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             self?.retrySyncTask = nil
-            // 分支条件：退避结束后仅前台重试，遵守当前应用不申请后台定位/上传的边界。
-            guard self?.isAppActive == true else { return }
-            _ = await self?.syncPendingSamples()
+            // 分支条件：前后台都允许有限退避重试；网络监听器还会在恢复时主动触发一次。
+            _ = await self?.syncPendingFootprints()
         }
+    }
+
+    private struct RecordingIntent: Codable {
+        let tripUuid: String
+        let segmentUuid: String
+    }
+
+    private static let activeRecordingUserKey = "vago.location.active-recording-user"
+
+    private func recordingIntentKey(for userUuid: String) -> String {
+        "vago.location.recording-intent.\(userUuid)"
+    }
+
+    private func persistRecordingIntent() {
+        guard let userUuid = currentUserUuid, let tripUuid = currentTripUuid,
+              let segmentUuid = trackingSegmentUuid,
+              let data = try? JSONEncoder().encode(RecordingIntent(tripUuid: tripUuid, segmentUuid: segmentUuid)) else { return }
+        UserDefaults.standard.set(data, forKey: recordingIntentKey(for: userUuid))
+        UserDefaults.standard.set(userUuid, forKey: Self.activeRecordingUserKey)
+        restoredIntentUserUuid = userUuid
+    }
+
+    private func loadRecordingIntent(for userUuid: String) -> RecordingIntent? {
+        guard let data = UserDefaults.standard.data(forKey: recordingIntentKey(for: userUuid)) else { return nil }
+        return try? JSONDecoder().decode(RecordingIntent.self, from: data)
+    }
+
+    private func restorePersistedRecordingIntent(for userUuid: String? = nil) {
+        let targetUser = userUuid ?? UserDefaults.standard.string(forKey: Self.activeRecordingUserKey)
+        guard let targetUser, let intent = loadRecordingIntent(for: targetUser) else { return }
+        currentUserUuid = targetUser
+        currentTripUuid = intent.tripUuid
+        trackingSegmentUuid = intent.segmentUuid
+        restoredIntentUserUuid = targetUser
+        hasRecordingIntent = true
+    }
+
+    private func clearPersistedRecordingIntent() {
+        guard let userUuid = currentUserUuid ?? UserDefaults.standard.string(forKey: Self.activeRecordingUserKey) else { return }
+        UserDefaults.standard.removeObject(forKey: recordingIntentKey(for: userUuid))
+        if UserDefaults.standard.string(forKey: Self.activeRecordingUserKey) == userUuid {
+            UserDefaults.standard.removeObject(forKey: Self.activeRecordingUserKey)
+        }
+        restoredIntentUserUuid = nil
+    }
+
+    private func handleNetworkAvailability(_ isAvailable: Bool) {
+        let becameAvailable = isAvailable && !isNetworkAvailable
+        isNetworkAvailable = isAvailable
+        // NWPath 只表示网络接口可用；API 的真实失败仍由同步请求捕获并保留待传数据。
+        if becameAvailable, currentUserUuid != nil, session != nil {
+            Task { await syncPendingFootprints() }
+        }
+    }
+
+    private func syncPendingManualCheckins() async {
+        guard let userUuid = currentUserUuid, let session,
+              case .signedIn = session.state, !isSyncing else { return }
+        let pending = LocalFootprintStore.shared.pendingManualCheckins(userUuid: userUuid)
+        guard !pending.isEmpty else { return }
+        isSyncing = true
+        defer { isSyncing = false }
+        var errors: [String] = []
+        var hasRetryableError = false
+        for record in pending {
+            let payload = CheckinRequest(
+                tripUuid: record.tripUuid,
+                clientEventUuid: UUID(uuidString: record.clientEventUuid) ?? UUID(),
+                locationName: record.locationName ?? "未命名地点",
+                latitude: record.latitude,
+                longitude: record.longitude,
+                note: record.note,
+                trackingSegmentUuid: record.trackingSegmentUuid,
+                checkedAt: record.occurredAt
+            )
+            do {
+                let footprint: TravelFootprint = try await client.request(
+                    path: "footprints/checkins/footprint",
+                    method: "POST",
+                    body: payload,
+                    tokenProvider: session
+                )
+                LocalFootprintStore.shared.upsert(footprint, userUuid: userUuid, isPendingUpload: false)
+            } catch {
+                // 失败项留在 SwiftData，使用原 clientEventUuid 在后续重试中安全幂等补传。
+                errors.append(error.localizedDescription)
+                hasRetryableError = hasRetryableError || isRetryableSyncError(error)
+            }
+        }
+        if !errors.isEmpty {
+            syncError = [syncError, errors.joined(separator: "\n")].compactMap { $0 }.joined(separator: "\n")
+            if hasRetryableError {
+                scheduleRetryIfNeeded()
+            }
+        }
+        localQueueRevision += 1
+        syncCompletionRevision += 1
+        pendingCount = allPendingSamples(for: userUuid).count
+            + LocalFootprintStore.shared.pendingManualCheckins(userUuid: userUuid).count
     }
 }
 

@@ -179,6 +179,10 @@ struct TrackingView: View {
             isTripStatusUnverified = true
             tracking.prepare(tripUuid: cachedTrip.uuid, userUuid: userUuid, session: session)
             footprintRepository.prepare(userUuid: userUuid, tripUuid: cachedTrip.uuid, tracking: tracking)
+            // 本地有完整地图缓存时先显示地图，网络校验在后台继续，不让离线冷启动卡在转圈页。
+            if showLoading, !footprintRepository.displayPoints.isEmpty {
+                isLoading = false
+            }
         }
         do {
             let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session)
@@ -208,7 +212,7 @@ struct TrackingView: View {
                     locateRequestID += 1
                     tracking.requestCurrentLocation()
                 }
-                let confirmed = await tracking.syncPendingSamples()
+                let confirmed = await tracking.syncPendingFootprints()
                 footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
             }
         } catch {
@@ -261,7 +265,7 @@ struct TrackingView: View {
             guard tripContext.recordingTrip?.uuid == recordingTrip.uuid, trip?.uuid == recordingTrip.uuid else { return }
             footprintRepository.replaceRemoteFootprints(footprints)
             tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: recordingTrip.uuid)
-            let confirmed = await tracking.syncPendingSamples()
+            let confirmed = await tracking.syncPendingFootprints()
             footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
         } catch {
             refreshError = error.localizedDescription
@@ -270,7 +274,7 @@ struct TrackingView: View {
 
     private func syncAndReload() async {
         // 同步本地队列后只重新拉轨迹点，避免为一个按钮重复读取行程与打卡数据。
-        let confirmed = await tracking.syncPendingSamples()
+        let confirmed = await tracking.syncPendingFootprints()
         footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
         guard let trip else { return }
         if let remoteFootprints: [TravelFootprint] = try? await client.request(
@@ -314,45 +318,77 @@ struct TrackingView: View {
         isCheckingIn = true
         checkinError = ""
         defer { isCheckingIn = false }
-        do {
-            guard let clientEventUuid = checkinClientEventUuid else { return }
-            let payload = CheckinRequest(
-                tripUuid: trip.uuid,
-                clientEventUuid: clientEventUuid,
-                locationName: locationName,
-                latitude: location.coordinate.latitude,
-                longitude: location.coordinate.longitude,
-                note: note.isEmpty ? nil : note,
-                trackingSegmentUuid: tracking.activeTrackingSegmentUuid,
-                checkedAt: Date()
-            )
-            let checkin: TravelFootprint = try await client.request(
-                path: "footprints/checkins/footprint",
-                method: "POST",
-                body: payload,
-                tokenProvider: session
-            )
-            footprintRepository.upsertManualCheckin(checkin)
-            tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
-            showCheckinSuccessMessage()
-            checkinClientEventUuid = nil
-            // 仅在服务端写入成功后收起输入 sheet，保留失败时用户已填写的内容。
-            isCheckinSheetPresented = false
-        } catch {
-            // 分支条件：其他设备刚写入附近打卡时由服务端兜底，客户端使用同一弹窗反馈。
-            if error.localizedDescription.contains("打卡点太近") || error.localizedDescription.contains("已有打卡") {
-                isNearbyCheckinAlertPresented = true
-            } else {
-                // 打卡失败应留在弹层内，用户可以保留已填写内容后再次提交。
-                checkinError = error.localizedDescription
-            }
+        guard let clientEventUuid = checkinClientEventUuid,
+              let userUuid = session.profile?.uuid else {
+            checkinError = "登录资料暂不可用，请稍后重试。"
+            return
+        }
+        let payload = CheckinRequest(
+            tripUuid: trip.uuid,
+            clientEventUuid: clientEventUuid,
+            locationName: locationName,
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude,
+            note: note.isEmpty ? nil : note,
+            trackingSegmentUuid: tracking.activeTrackingSegmentUuid,
+            checkedAt: Date()
+        )
+        // 先把用户确认的打卡事实写入 SwiftData；断网时也能立刻显示并在下次联网补传。
+        let localCheckin = TravelFootprint(
+            uuid: clientEventUuid.uuidString.lowercased(),
+            clientEventUuid: clientEventUuid.uuidString.lowercased(),
+            tripUuid: payload.tripUuid,
+            footprintType: .manualCheckin,
+            latitude: payload.latitude,
+            longitude: payload.longitude,
+            accuracyM: nil,
+            speedMps: nil,
+            trackingSegmentUuid: payload.trackingSegmentUuid,
+            locationName: payload.locationName,
+            note: payload.note,
+            occurredAt: payload.checkedAt
+        )
+        LocalFootprintStore.shared.upsert(localCheckin, userUuid: userUuid, isPendingUpload: true)
+        guard LocalFootprintStore.shared.persistenceError == nil else {
+            checkinError = LocalFootprintStore.shared.persistenceError ?? "无法保存离线打卡。"
+            return
+        }
+        footprintRepository.refreshLocalSamples(from: tracking)
+        tracking.refreshPendingCount()
+        tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
+        checkinClientEventUuid = nil
+        isCheckinSheetPresented = false
+        showTransientMessage(tracking.isNetworkAvailable
+            ? "已记录本次打卡，正在同步"
+            : "打卡已离线保存，联网后自动同步")
+        if tracking.isNetworkAvailable {
+            _ = await tracking.syncPendingFootprints()
+            footprintRepository.refreshLocalSamples(from: tracking)
         }
     }
 
     private func updateCheckin(_ checkin: FootprintDisplayPoint, locationName: String, note: String) async {
         // 分支条件：详情只会由远端手动打卡打开；缺少服务端 UUID 时拒绝发送不完整更新请求。
+        guard session.profile?.uuid != nil else { return }
         guard let serverUuid = checkin.serverUuid else {
-            checkinDetailError = "该打卡尚未同步完成，暂时无法编辑。"
+            // 离线待传打卡仍可本地修改；沿用原事件键和位置事实，不创建第二条记录。
+            let local = TravelFootprint(
+                uuid: checkin.stableKey,
+                clientEventUuid: checkin.stableKey,
+                tripUuid: checkin.tripUuid,
+                footprintType: .manualCheckin,
+                latitude: checkin.latitude,
+                longitude: checkin.longitude,
+                accuracyM: nil,
+                speedMps: nil,
+                trackingSegmentUuid: checkin.trackingSegmentUuid,
+                locationName: locationName,
+                note: note.isEmpty ? nil : note,
+                occurredAt: checkin.recordedAt
+            )
+            footprintRepository.upsertManualCheckin(local, pending: true)
+            selectedCheckin = nil
+            showTransientMessage("本地打卡已更新")
             return
         }
         isUpdatingCheckin = true
