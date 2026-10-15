@@ -173,7 +173,7 @@ def get_agent_travel_context(db: Session, user_uuid: str) -> dict:
             Trip.user_uuid == user_uuid,
             Trip.status == TRIP_STATUS_IN_PROGRESS,
             Trip.deleted_at.is_(None),
-        )
+        ).order_by(Trip.updated_at.desc(), Trip.created_at.desc(), Trip.uuid.desc()).limit(1)
     )
     # 取最近三条已结束的trip记录
     history = db.scalars(
@@ -202,7 +202,7 @@ def get_agent_current_active_trip(db: Session, user_uuid: str) -> dict | None:
             Trip.user_uuid == user_uuid,
             Trip.status == TRIP_STATUS_IN_PROGRESS,
             Trip.deleted_at.is_(None),
-        )
+        ).order_by(Trip.updated_at.desc(), Trip.created_at.desc(), Trip.uuid.desc()).limit(1)
     )
     return _to_agent_trip_brief(trip) if trip else None
 
@@ -338,9 +338,13 @@ def update_trip(
 ) -> TripResponse:
     """局部更新行程。"""
     trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
-    _ensure_trip_editable(trip)
     values = payload.model_dump(exclude_unset=True, by_alias=False)
+    # 如果已结束行程本次还要修改状态以外的字段，继续拒绝改写历史内容。
+    if trip.status == TRIP_STATUS_ENDED and any(key != "status" for key in values):
+        _ensure_trip_editable(trip)
     for field_name, value in values.items():
+        if field_name == "status" and value is None:
+            continue
         setattr(trip, field_name, value)
     trip.updated_at = utc_now_naive()
     db.commit()
@@ -359,27 +363,8 @@ def delete_trip(db: Session, user_uuid: str, trip_uuid: str) -> None:
 
 
 def start_trip(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
-    """开始未开始的行程；每位用户同一时间最多只能进行一个行程。"""
+    """将行程状态设为进行中；状态变化不影响用户选定的足迹记录目标。"""
     trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
-    # 分支条件：仅未开始行程可以切换到进行中，避免重复开始或重开历史行程。
-    if trip.status != TRIP_STATUS_NOT_STARTED:
-        raise AppException("仅未开始的行程可以开始", status_code=409, code="TRIP_NOT_STARTABLE")
-
-    active_trip = db.scalar(
-        select(Trip).where(
-            Trip.user_uuid == user_uuid,
-            Trip.status == TRIP_STATUS_IN_PROGRESS,
-            Trip.deleted_at.is_(None),
-        )
-    )
-    # 分支条件：已有进行中行程时，要求用户先结束该行程，保证当前旅行上下文唯一。
-    if active_trip is not None:
-        raise AppException(
-            f"当前已有进行中的行程「{active_trip.title}」",
-            status_code=409,
-            code="TRIP_ALREADY_IN_PROGRESS",
-        )
-
     trip.status = TRIP_STATUS_IN_PROGRESS
     trip.updated_at = utc_now_naive()
     db.commit()
@@ -388,44 +373,13 @@ def start_trip(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
 
 
 def switch_active_trip(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
-    """原子交接当前行程：旧行程结束，新行程开始。"""
-    target_trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
-    # 锁定目标行程与当前行程，避免两个并发切换请求各自读到同一份旧状态后产生双进行中行程。
-    target_trip = db.scalar(select(Trip).where(Trip.id == target_trip.id).with_for_update())
-    assert target_trip is not None
-    # 分支条件：只有未开始行程可以接替当前行程，历史行程不可被重新激活。
-    if target_trip.status != TRIP_STATUS_NOT_STARTED:
-        raise AppException("仅未开始的行程可以切换为当前行程", status_code=409, code="TRIP_NOT_SWITCHABLE")
-
-    active_trip = db.scalar(
-        select(Trip).where(
-            Trip.user_uuid == user_uuid,
-            Trip.status == TRIP_STATUS_IN_PROGRESS,
-            Trip.deleted_at.is_(None),
-        ).with_for_update()
-    )
-    # 分支条件：没有进行中行程时应使用既有 start 接口，避免“切换”悄悄改变其语义。
-    if active_trip is None:
-        raise AppException("当前没有进行中的行程，请直接开始该行程", status_code=409, code="NO_ACTIVE_TRIP")
-
-    now = utc_now_naive()
-    # 同一事务内完成状态交接，任一步失败都不会留下两份进行中行程。
-    active_trip.status = TRIP_STATUS_ENDED
-    active_trip.updated_at = now
-    target_trip.status = TRIP_STATUS_IN_PROGRESS
-    target_trip.updated_at = now
-    db.commit()
-    db.refresh(target_trip)
-    return _trip_to_response(target_trip)
+    """兼容旧切换入口，只更新目标行程状态，不联动修改其他行程。"""
+    return start_trip(db, user_uuid, trip_uuid)
 
 
 def finish_trip(db: Session, user_uuid: str, trip_uuid: str) -> TripResponse:
-    """结束进行中的行程，并将其归入历史行程。"""
+    """将行程状态设为已结束，不限制其他行程的状态。"""
     trip = _get_trip_or_raise(db, trip_uuid, user_uuid)
-    # 分支条件：未开始或已结束行程不能直接结束，避免产生无效历史记录。
-    if trip.status != TRIP_STATUS_IN_PROGRESS:
-        raise AppException("仅进行中的行程可以结束", status_code=409, code="TRIP_NOT_FINISHABLE")
-
     trip.status = TRIP_STATUS_ENDED
     trip.updated_at = utc_now_naive()
     db.commit()

@@ -6,7 +6,7 @@ import SwiftUI
 struct TrackingView: View {
     // 此 View 组合现有定位 Store 与 FastAPI 数据，不在这里实现 Core Location 或持久化细节。
     @EnvironmentObject private var session: SessionStore
-    // 行程上下文来自行程 Tab；它区分正在记录的唯一行程与用户仅用于浏览的历史行程。
+    // 行程上下文来自行程 Tab；足迹记录目标由用户单独选择，不由 Trip 状态推断。
     @EnvironmentObject private var tripContext: TripContextStore
     // App 注入的定位 Store 与登录会话同生命周期，离开记录 Tab 不会停止用户主动开启的记录。
     @EnvironmentObject private var tracking: LocationTrackingStore
@@ -47,7 +47,7 @@ struct TrackingView: View {
 
     var body: some View {
         Group {
-            //分支条件：初次读取数据时展示加载状态；完成后再依据是否有进行中行程选择内容。
+            // 分支条件：初次读取数据时展示加载状态；完成后再依据是否已选择记录行程展示内容。
             if isLoading {
                 ProgressView("正在读取旅行记录")
             } else if let trip {
@@ -62,16 +62,16 @@ struct TrackingView: View {
                         .buttonStyle(.borderedProminent)
                 }
             } else {
-                ContentUnavailableView("暂无进行中的行程", systemImage: "location.slash", description: Text("行程开始后可以记录足迹。"))
+                ContentUnavailableView("尚未选择记录行程", systemImage: "location.slash", description: Text("请在行程详情中选择一段行程作为当前足迹记录目标。"))
             }
         }
         // 让 Tab 内的每一种状态都按屏幕可用空间布局，而不是跟随内容高度收缩。
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // 用户切换后才重新初始读取；地图局部状态变化不应再次触发旅行接口请求。
         .task(id: session.profile?.uuid) { await loadInitially() }
-        .onChange(of: tripContext.activeTrip?.uuid) { _, activeTripUuid in
-            // 分支条件：行程页开始、结束或切换行程后，记录页只为新的进行中行程重建显示与采集上下文。
-            Task { await applyActiveTripChange(activeTripUuid: activeTripUuid) }
+        .onChange(of: tripContext.recordingTrip?.uuid) { _, recordingTripUuid in
+            // 分支条件：用户更换记录目标后，记录页只为选定 Trip 重建显示与采集上下文。
+            Task { await applyRecordingTripChange(recordingTripUuid: recordingTripUuid) }
         }
         .onChange(of: tracking.localQueueRevision) { _, _ in
             // 新采样落盘或成功批次移除后立即刷新合并视图，地图不必等待下一次 GET。
@@ -173,8 +173,8 @@ struct TrackingView: View {
                 isLoading = false
             }
         }
-        // 网络读取前先恢复最近一次已验证的进行中行程和本地队列，断网时仍可查看、继续记录足迹。
-        if let userUuid = session.profile?.uuid, let cachedTrip = FootprintRepository.cachedActiveTrip(for: userUuid) {
+        // 网络读取前先恢复上次选定的记录行程和本地队列，断网时仍可查看、继续记录足迹。
+        if let userUuid = session.profile?.uuid, let cachedTrip = FootprintRepository.cachedRecordingTrip(for: userUuid) {
             trip = cachedTrip
             isTripStatusUnverified = true
             tracking.prepare(tripUuid: cachedTrip.uuid, userUuid: userUuid, session: session)
@@ -186,11 +186,11 @@ struct TrackingView: View {
             refreshError = nil
             guard let userUuid = session.profile?.uuid else { return }
             tripContext.replaceTrips(trips, for: userUuid)
-            trip = tripContext.activeTrip
+            trip = tripContext.recordingTrip
             isTripStatusUnverified = false
-            // 分支条件：存在进行中行程时才读取其轨迹与打卡，并恢复该用户的待传队列。
+            // 分支条件：已选择记录行程时才读取其足迹，并恢复该用户的待传队列。
             if let trip {
-                FootprintRepository.cacheActiveTrip(trip, for: userUuid)
+                FootprintRepository.cacheRecordingTrip(trip, for: userUuid)
                 tracking.prepare(tripUuid: trip.uuid, userUuid: userUuid, session: session)
                 footprintRepository.prepare(userUuid: userUuid, tripUuid: trip.uuid, tracking: tracking)
                 // 统一足迹流按时间返回自动 GPS 与手动打卡，地图不再拼接两个独立远端集合。
@@ -202,7 +202,7 @@ struct TrackingView: View {
                 guard self.trip?.uuid == trip.uuid, session.profile?.uuid == userUuid else { return }
                 footprintRepository.replaceRemoteFootprints(remoteFootprints)
                 tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
-                // 分支条件：每个进行中行程首次进入记录页时请求一次当前位置，定位不会写入足迹队列。
+                // 分支条件：切换到新的记录目标时请求一次当前位置，定位本身不会写入足迹队列。
                 if locatedTripUuid != trip.uuid {
                     locatedTripUuid = trip.uuid
                     locateRequestID += 1
@@ -236,31 +236,31 @@ struct TrackingView: View {
         await load(showLoading: true)
     }
 
-    private func applyActiveTripChange(activeTripUuid: String?) async {
-        // 分支条件：结束当前行程后清空记录页的活动地图，不把旧旅行事实伪装成仍可继续写入的上下文。
-        guard let activeTripUuid, let activeTrip = tripContext.activeTrip,
+    private func applyRecordingTripChange(recordingTripUuid: String?) async {
+        // 分支条件：用户清除或尚未设置记录目标时，不保留旧 Trip 的可写地图上下文。
+        guard let recordingTripUuid, let recordingTrip = tripContext.recordingTrip,
               let userUuid = session.profile?.uuid else {
             trip = nil
             return
         }
         // 当前视图已经展示同一活动行程时，不因列表刷新重复下载足迹数据。
-        guard trip?.uuid != activeTripUuid else { return }
+        guard trip?.uuid != recordingTripUuid else { return }
 
-        trip = activeTrip
+        trip = recordingTrip
         loadError = ""
         isTripStatusUnverified = false
-        FootprintRepository.cacheActiveTrip(activeTrip, for: userUuid)
-        tracking.prepare(tripUuid: activeTrip.uuid, userUuid: userUuid, session: session)
-        footprintRepository.prepare(userUuid: userUuid, tripUuid: activeTrip.uuid, tracking: tracking)
+        FootprintRepository.cacheRecordingTrip(recordingTrip, for: userUuid)
+        tracking.prepare(tripUuid: recordingTrip.uuid, userUuid: userUuid, session: session)
+        footprintRepository.prepare(userUuid: userUuid, tripUuid: recordingTrip.uuid, tracking: tracking)
         do {
             let footprints: [TravelFootprint] = try await client.request(
-                path: "footprints/trips/\(activeTrip.uuid)/footprints",
+                path: "footprints/trips/\(recordingTrip.uuid)/footprints",
                 tokenProvider: session
             )
             // 分支条件：网络返回期间再次切换行程时，不让旧请求回填新行程的地图。
-            guard tripContext.activeTrip?.uuid == activeTrip.uuid, trip?.uuid == activeTrip.uuid else { return }
+            guard tripContext.recordingTrip?.uuid == recordingTrip.uuid, trip?.uuid == recordingTrip.uuid else { return }
             footprintRepository.replaceRemoteFootprints(footprints)
-            tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: activeTrip.uuid)
+            tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: recordingTrip.uuid)
             let confirmed = await tracking.syncPendingSamples()
             footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
         } catch {

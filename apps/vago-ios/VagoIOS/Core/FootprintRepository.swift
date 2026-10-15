@@ -13,18 +13,19 @@ final class FootprintRepository: ObservableObject {
     // 已确认点只保留在本次运行内，直到 GET 返回相同 clientUuid 后由远端快照接管。
     private var confirmedSamples: [PendingLocationSample] = []
 
-    private static func activeTripStorageKey(for userUuid: String) -> String {
+    private static func recordingTripStorageKey(for userUuid: String) -> String {
+        // 保留既有存储键，升级后仍可恢复旧版本缓存的行程摘要。
         "vago.footprint.active-trip.\(userUuid)"
     }
 
-    static func cacheActiveTrip(_ trip: Trip, for userUuid: String) {
-        // 仅保存最小行程摘要，供断网冷启动恢复本地足迹；服务端联网后仍会重新校验状态。
+    static func cacheRecordingTrip(_ trip: Trip, for userUuid: String) {
+        // 仅保存最小行程摘要，供断网冷启动恢复用户选定的足迹记录目标。
         guard let data = try? JSONEncoder().encode(trip) else { return }
-        UserDefaults.standard.set(data, forKey: activeTripStorageKey(for: userUuid))
+        UserDefaults.standard.set(data, forKey: recordingTripStorageKey(for: userUuid))
     }
 
-    static func cachedActiveTrip(for userUuid: String) -> Trip? {
-        guard let data = UserDefaults.standard.data(forKey: activeTripStorageKey(for: userUuid)) else { return nil }
+    static func cachedRecordingTrip(for userUuid: String) -> Trip? {
+        guard let data = UserDefaults.standard.data(forKey: recordingTripStorageKey(for: userUuid)) else { return nil }
         return try? JSONDecoder().decode(Trip.self, from: data)
     }
 

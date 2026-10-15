@@ -36,6 +36,8 @@ class TripUpdateRequest(BaseModel):
     end_date: date | None = Field(default=None, alias="endDate")
     # 新封面图对象存储 key；未传表示不修改。
     cover_image_key: str | None = Field(default=None, alias="coverImageKey")
+    # 行程状态可独立切换；仅接受 1=未开始、2=进行中、3=已结束。
+    status: int | None = Field(default=None, ge=1, le=3)
     model_config = ConfigDict(populate_by_name=True)
 
 

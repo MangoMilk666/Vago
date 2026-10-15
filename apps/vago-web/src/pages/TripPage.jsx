@@ -26,7 +26,7 @@ function EmptyState({ onAdd }) {
 }
 
 // ── 行程卡片 ─────────────────────────────────────────────────────────────────
-function TripCard({ trip, onEdit, onDelete, onPlan, onStart, onFinish }) {
+function TripCard({ trip, onEdit, onDelete, onPlan, onStatusChange }) {
   const ended = trip.status === 3
   const nights = trip.startDate && trip.endDate
     ? Math.max(0,
@@ -85,9 +85,18 @@ function TripCard({ trip, onEdit, onDelete, onPlan, onStart, onFinish }) {
                      hover:border-indigo-400 hover:text-indigo-600 transition-colors">
           编辑行程
         </button>}
-        {/* 分支条件：未开始行程可开始，进行中行程可结束，历史行程仅允许查看。 */}
-        {trip.status === 1 && <button onClick={() => onStart(trip)} className="py-1.5 px-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm font-medium hover:bg-emerald-100 transition-colors">开始</button>}
-        {trip.status === 2 && <button onClick={() => onFinish(trip)} className="py-1.5 px-3 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 transition-colors">结束行程</button>}
+        <label className="sr-only" htmlFor={`trip-status-${trip.uuid}`}>修改行程状态</label>
+        <select
+          id={`trip-status-${trip.uuid}`}
+          value={trip.status}
+          onChange={(event) => onStatusChange(trip, Number(event.target.value))}
+          className="py-1.5 px-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-700
+                     focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        >
+          {Object.entries(STATUS_MAP).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
         {!ended && <button onClick={() => onDelete(trip)}
           className="py-1.5 px-3 rounded-xl border border-gray-200 text-sm text-gray-600
                      hover:border-red-300 hover:text-red-500 transition-colors">
@@ -225,11 +234,9 @@ export default function TripPage() {
     }
   }
 
-  const changeTripState = async (trip, action) => {
+  const changeTripState = async (trip, status) => {
     try {
-      // 分支条件：点击开始或结束时，分别调用后端受约束的状态转换接口。
-      if (action === 'start') await tripApi.start(trip.uuid)
-      else await tripApi.finish(trip.uuid)
+      await tripApi.update(trip.uuid, { status })
       load()
     } catch (err) {
       alert(err.message)
@@ -288,8 +295,7 @@ export default function TripPage() {
                 onPlan={(t) => navigate(
                   `/trips/${t.uuid}/itinerary?type=trip&title=${encodeURIComponent(t.title)}&readonly=${t.status === 3}`
                 )}
-                onStart={(t) => changeTripState(t, 'start')}
-                onFinish={(t) => changeTripState(t, 'finish')}
+                onStatusChange={changeTripState}
               />
             ))}
           </div>

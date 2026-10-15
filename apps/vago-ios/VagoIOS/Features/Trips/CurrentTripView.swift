@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 行程 Tab 展示用户自己的正式行程，并把唯一“当前行程”同步给记录页。
+/// 行程 Tab 展示用户自己的正式行程，并管理独立于状态的唯一前台足迹记录目标。
 struct CurrentTripView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var tripContext: TripContextStore
@@ -160,7 +160,6 @@ private struct TripRow: View {
 private struct TripDetailView: View {
     let initialTrip: Trip
     @EnvironmentObject private var session: SessionStore
-    @EnvironmentObject private var tracking: LocationTrackingStore
     @EnvironmentObject private var tripContext: TripContextStore
     @State private var trip: Trip
     @State private var days: [ItineraryDay] = []
@@ -169,7 +168,6 @@ private struct TripDetailView: View {
     @State private var dayError = ""
     @State private var actionError = ""
     @State private var isEditorPresented = false
-    @State private var isSwitchConfirmationPresented = false
     private let client = APIClient()
 
     init(trip: Trip) {
@@ -178,7 +176,6 @@ private struct TripDetailView: View {
     }
 
     private var canEdit: Bool { trip.status != TripStatus.ended.rawValue }
-    private var activeTrip: Trip? { tripContext.activeTrip }
 
     var body: some View {
         List {
@@ -188,7 +185,15 @@ private struct TripDetailView: View {
                     Text("\(trip.startDate.formatted(date: .abbreviated, time: .omitted)) - \(trip.endDate.formatted(date: .abbreviated, time: .omitted))")
                         .multilineTextAlignment(.trailing)
                 }
-                LabeledContent("状态", value: TripStatus(rawValue: trip.status)?.title ?? "未知")
+                Picker("状态", selection: Binding(
+                    get: { TripStatus(rawValue: trip.status) ?? .notStarted },
+                    set: { selectedStatus in Task { await updateTripStatus(selectedStatus) } }
+                )) {
+                    ForEach(TripStatus.allCases, id: \.rawValue) { status in
+                        Text(status.title).tag(status)
+                    }
+                }
+                .disabled(isSaving)
             }
 
             Section("旅行记录") {
@@ -202,25 +207,15 @@ private struct TripDetailView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if canEdit {
-                Section("行程操作") {
-                    if trip.status == TripStatus.notStarted.rawValue {
-                        Button(activeTrip == nil ? "开始并设为当前行程" : "切换为当前行程") {
-                            // 分支条件：已有进行中行程时，切换会结束旧行程，必须先取得用户明确确认。
-                            if activeTrip == nil {
-                                Task { await startTrip() }
-                            } else {
-                                isSwitchConfirmationPresented = true
-                            }
-                        }
-                        .disabled(isSaving)
-                    } else if trip.status == TripStatus.inProgress.rawValue {
-                        Button("结束行程", role: .destructive) {
-                            Task { await finishTrip() }
-                        }
-                        .disabled(isSaving)
-                    }
+            Section("足迹记录") {
+                Button(tripContext.recordingTrip?.uuid == trip.uuid ? "当前足迹记录行程" : "设为足迹记录行程") {
+                    guard let userUuid = session.profile?.uuid else { return }
+                    tripContext.selectRecordingTrip(trip, for: userUuid)
                 }
+                .disabled(isSaving || tripContext.recordingTrip?.uuid == trip.uuid)
+                Text("行程状态与足迹记录目标相互独立。前台实时 GPS 和手动打卡只会写入当前选定的这一段行程。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("每日安排") {
@@ -260,12 +255,6 @@ private struct TripDetailView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .alert("切换当前行程？", isPresented: $isSwitchConfirmationPresented) {
-            Button("取消", role: .cancel) {}
-            Button("结束并切换", role: .destructive) { Task { await switchActiveTrip() } }
-        } message: {
-            Text("“\(activeTrip?.title ?? "当前行程")”会立即结束并进入历史记录，之后不可再编辑。")
-        }
         .alert("行程操作失败", isPresented: Binding(get: { !actionError.isEmpty }, set: { if !$0 { actionError = "" } })) {
             Button("好的", role: .cancel) {}
         } message: {
@@ -291,37 +280,14 @@ private struct TripDetailView: View {
         }
     }
 
-    private func startTrip() async {
-        await performTripAction(path: "travel/trips/\(trip.uuid)/start") { started in
-            trip = started
+    private func updateTripStatus(_ status: TripStatus) async {
+        await performTripWrite(
+            path: "travel/trips/\(trip.uuid)",
+            method: "PUT",
+            body: TripStatusUpdateRequest(status: status.rawValue)
+        ) { updated in
+            trip = updated
         }
-    }
-
-    private func finishTrip() async {
-        await performTripAction(path: "travel/trips/\(trip.uuid)/finish") { finished in
-            // 分支条件：唯一进行中行程结束前若正在采样，停止后续定位回调，待传旧点仍保留原 tripUuid。
-            if tracking.isTracking {
-                tracking.stopTracking()
-            }
-            trip = finished
-        }
-    }
-
-    private func switchActiveTrip() async {
-        let previousTripUuid = activeTrip?.uuid
-        // 切换前停止旧行程采样；已在本地队列中的点仍按其原 tripUuid 分批上传。
-        if tracking.isTracking {
-            tracking.stopTracking()
-        }
-        await performTripAction(path: "travel/trips/\(trip.uuid)/switch") { switched in
-            trip = switched
-            guard let userUuid = session.profile?.uuid else { return }
-            tripContext.replaceAfterSwitch(previousTripUuid: previousTripUuid, newActiveTrip: switched, for: userUuid)
-        }
-    }
-
-    private func performTripAction(path: String, onSuccess: @escaping (Trip) -> Void) async {
-        await performTripWrite(path: path, method: "POST", body: EmptyRequest(), onSuccess: onSuccess)
     }
 
     private func performTripWrite<Body: Encodable>(path: String, method: String, body: Body, onSuccess: @escaping (Trip) -> Void) async {

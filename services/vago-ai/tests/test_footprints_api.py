@@ -40,7 +40,7 @@ def client() -> Generator[TestClient, None, None]:
 
 
 def test_footprint_routes_sync_and_checkin_for_active_trip(client: TestClient):
-    """测试：批量轨迹与手动打卡应通过统一 envelope 返回，并绑定进行中 Trip。"""
+    """测试：批量轨迹与手动打卡应通过统一 envelope 返回，并绑定用户自有 Trip。"""
     trip = client.post(
         "/api/v1/travel/trips",
         json={"title": "新加坡行", "startDate": "2026-09-01", "endDate": "2026-09-05"},

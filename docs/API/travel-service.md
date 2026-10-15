@@ -9,13 +9,13 @@
 | POST / GET | `/trips` | 创建正式行程 / 列出自己的行程 |
 | GET | `/trips/history` | 列出历史行程 |
 | GET / PUT / DELETE | `/trips/{tripUuid}` | 详情 / 修改 / 软删除 |
-| POST | `/trips/{tripUuid}/start` | 开始未开始的行程 |
-| POST | `/trips/{tripUuid}/switch` | 在一次服务端事务中结束当前行程并开始指定行程 |
-| POST | `/trips/{tripUuid}/finish` | 结束进行中的行程 |
+| POST | `/trips/{tripUuid}/start` | 将指定行程状态设为进行中（兼容旧客户端） |
+| POST | `/trips/{tripUuid}/switch` | 兼容旧客户端；只更新目标行程，不联动其他行程 |
+| POST | `/trips/{tripUuid}/finish` | 将指定行程状态设为已结束（兼容旧客户端） |
 | GET | `/trips/{tripUuid}/days` | 读取正式行程每日安排 |
 | PUT | `/trips/{tripUuid}/days/{dayIndex}` | 修改指定日期安排 |
 
-服务端执行业务状态约束；已结束行程的只读边界不能仅靠客户端按钮控制。
+`PUT /trips/{tripUuid}` 可通过 `status` 直接设置 `1=未开始`、`2=进行中` 或 `3=已结束`，每个 Trip 独立变更，允许多个行程同时处于进行中。已结束行程仍不能修改标题、日期等其他资料，除非先将状态切回未结束状态。iOS 前台的唯一足迹记录目标由用户单独选择，不由 Trip 状态推断；服务端写入足迹时校验用户归属，不限制 Trip 状态。
 
 ## Plan
 

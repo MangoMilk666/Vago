@@ -5,47 +5,69 @@ import Foundation
 final class TripContextStore: ObservableObject {
     // 已读取的用户行程列表，行程页与记录页共用，避免状态切换后两边暂时展示不同的当前行程。
     @Published private(set) var trips: [Trip] = []
-    // 服务端 status=2 的唯一进行中行程，也是定位记录和手动打卡的唯一写入目标。
-    @Published private(set) var activeTrip: Trip?
+    // 与行程状态分离的唯一前台足迹记录目标；多个 Trip 可同时处于进行中。
+    @Published private(set) var recordingTrip: Trip?
+    private var selectedRecordingTripUuid: String?
     private var userUuid: String?
+
+    private static func selectionKey(for userUuid: String) -> String {
+        "vago.trip.recording-selection.\(userUuid)"
+    }
 
     func replaceTrips(_ trips: [Trip], for userUuid: String) {
         // 分支条件：账号变化时先丢弃旧账号内存数据，防止 Tab 切换时短暂回显其他用户的行程。
-        if self.userUuid != userUuid {
-            self.userUuid = userUuid
-            self.trips = []
-            activeTrip = nil
-        }
+        prepareAccount(userUuid)
         self.trips = trips
-        activeTrip = trips.first(where: { $0.status == TripStatus.inProgress.rawValue })
+        reconcileRecordingTrip()
     }
 
     func upsert(_ trip: Trip, for userUuid: String) {
         // 分支条件：尚未完整读取列表时也可接收开始、结束或编辑接口的单项响应。
-        if self.userUuid != userUuid {
-            self.userUuid = userUuid
-            trips = []
-        }
+        prepareAccount(userUuid)
         if let index = trips.firstIndex(where: { $0.uuid == trip.uuid }) {
             trips[index] = trip
         } else {
             trips.insert(trip, at: 0)
         }
-        activeTrip = trips.first(where: { $0.status == TripStatus.inProgress.rawValue })
+        reconcileRecordingTrip()
     }
 
-    func replaceAfterSwitch(previousTripUuid: String?, newActiveTrip: Trip, for userUuid: String) {
-        // 切换接口只回传新行程；将旧摘要本地标为已结束，随后刷新列表可得到其服务端完整版本。
-        if let previousTripUuid, let index = trips.firstIndex(where: { $0.uuid == previousTripUuid }) {
-            trips[index] = trips[index].withStatus(TripStatus.ended.rawValue)
+    func selectRecordingTrip(_ trip: Trip, for userUuid: String) {
+        guard self.userUuid == userUuid, trips.contains(where: { $0.uuid == trip.uuid }) else { return }
+        selectedRecordingTripUuid = trip.uuid
+        recordingTrip = trip
+        UserDefaults.standard.set(trip.uuid, forKey: Self.selectionKey(for: userUuid))
+    }
+
+    private func reconcileRecordingTrip() {
+        if let selectedRecordingTripUuid,
+           let selected = trips.first(where: { $0.uuid == selectedRecordingTripUuid }) {
+            recordingTrip = selected
+            return
         }
-        upsert(newActiveTrip, for: userUuid)
-        activeTrip = newActiveTrip
+        let inProgressTrips = trips.filter { $0.status == TripStatus.inProgress.rawValue }
+        let inferredTrip = inProgressTrips.count == 1 ? inProgressTrips.first : nil
+        selectedRecordingTripUuid = inferredTrip?.uuid
+        recordingTrip = inferredTrip
+        if let inferredTrip, let userUuid {
+            UserDefaults.standard.set(inferredTrip.uuid, forKey: Self.selectionKey(for: userUuid))
+        } else if let userUuid {
+            UserDefaults.standard.removeObject(forKey: Self.selectionKey(for: userUuid))
+        }
+    }
+
+    private func prepareAccount(_ userUuid: String) {
+        guard self.userUuid != userUuid else { return }
+        self.userUuid = userUuid
+        trips = []
+        recordingTrip = nil
+        selectedRecordingTripUuid = UserDefaults.standard.string(forKey: Self.selectionKey(for: userUuid))
     }
 
     func reset() {
         trips = []
-        activeTrip = nil
+        recordingTrip = nil
+        selectedRecordingTripUuid = nil
         userUuid = nil
     }
 }

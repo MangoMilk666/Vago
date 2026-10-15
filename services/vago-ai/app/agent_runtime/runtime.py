@@ -63,7 +63,7 @@ class AgentRuntime:
         selection_policy: ToolSelectionPolicy | None = None,
     ) -> None:
         self._registry = registry or ToolRegistry([
-            AgentTool("get_current_active_trip", "正在读取当前进行中的行程", _get_current_active_trip),
+            AgentTool("get_current_active_trip", "正在读取最近更新的进行中行程", _get_current_active_trip),
             AgentTool("get_trip_itinerary_by_date", "正在读取指定日期日程", _get_trip_itinerary_by_date),
             AgentTool("get_recent_trips", "正在读取最近行程", _get_recent_trips),
             AgentTool("get_recent_ended_trips", "正在读取最近已结束行程", _get_recent_ended_trips),
@@ -303,7 +303,7 @@ def _new_runtime_state() -> dict[str, Any]:
 
 
 def _get_current_active_trip(db: Session, user_uuid: str, _: dict[str, Any], __: dict[str, Any]) -> dict[str, Any] | None:
-    """读取当前唯一进行中 Trip 的基础事实。"""
+    """读取最近更新的一条进行中 Trip 基础事实；多个 Trip 可同时进行中。"""
     return travel_service.get_agent_current_active_trip(db, user_uuid)
 
 

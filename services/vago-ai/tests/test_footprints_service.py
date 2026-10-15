@@ -51,7 +51,7 @@ def _add_trip(db: Session, *, uuid: str, user_uuid: str, status: int) -> None:
 
 def test_location_sync_is_user_scoped_and_idempotent(db_session: Session):
     """测试：GPS 样本重试不重复写入，且其他用户不能读取该行程轨迹。"""
-    _add_trip(db_session, uuid="trip-a", user_uuid="user-a", status=2)
+    _add_trip(db_session, uuid="trip-a", user_uuid="user-a", status=1)
     payload = LocationSyncRequest(
         tripUuid="trip-a",
         samples=[
@@ -296,8 +296,8 @@ def test_agent_observation_date_range_returns_named_evidence_without_coordinates
     assert empty["trips"] == []
 
 
-def test_checkin_requires_an_in_progress_trip(db_session: Session):
-    """测试：打卡只能写入进行中行程，避免修改已结束旅行的事实记录。"""
+def test_checkin_can_be_added_to_any_owned_trip_status(db_session: Session):
+    """测试：用户可将手动打卡绑定到任意状态的本人行程。"""
     _add_trip(db_session, uuid="trip-not-started", user_uuid="user-a", status=1)
     payload = CheckinCreateRequest(
         tripUuid="trip-not-started",
@@ -307,12 +307,6 @@ def test_checkin_requires_an_in_progress_trip(db_session: Session):
         note="傍晚散步",
     )
 
-    with pytest.raises(AppException) as exc_info:
-        service.create_checkin(db_session, "user-a", payload)
-    assert exc_info.value.code == "TRIP_NOT_IN_PROGRESS"
-
-    db_session.query(Trip).filter(Trip.uuid == "trip-not-started").update({"status": 2})
-    db_session.commit()
     checkin = service.create_checkin(db_session, "user-a", payload)
 
     assert checkin.location_name == "滨海湾花园"
@@ -408,8 +402,8 @@ def test_checkin_event_key_is_idempotent(db_session: Session):
     assert db_session.query(TravelFootprint).count() == 1
 
 
-def test_checkin_update_only_changes_user_text_for_in_progress_trip(db_session: Session):
-    """测试：编辑打卡只能改名称与备注，坐标和发生时间仍是不可变旅行事实。"""
+def test_checkin_update_only_changes_user_text_for_any_trip_status(db_session: Session):
+    """测试：任意状态行程的打卡都仅允许改名称与备注，不改空间和时间事实。"""
     _add_trip(db_session, uuid="trip-checkin-edit", user_uuid="user-a", status=2)
     created = service.create_checkin_footprint(
         db_session,
@@ -438,11 +432,10 @@ def test_checkin_update_only_changes_user_text_for_in_progress_trip(db_session: 
 
     db_session.query(Trip).filter(Trip.uuid == "trip-checkin-edit").update({"status": 3})
     db_session.commit()
-    with pytest.raises(AppException) as exc_info:
-        service.update_checkin_footprint(
-            db_session,
-            "user-a",
-            created.uuid,
-            CheckinUpdateRequest(locationName="不应修改"),
-        )
-    assert exc_info.value.code == "TRIP_NOT_IN_PROGRESS"
+    updated_ended_trip = service.update_checkin_footprint(
+        db_session,
+        "user-a",
+        created.uuid,
+        CheckinUpdateRequest(locationName="已结束行程也可修正名称"),
+    )
+    assert updated_ended_trip.location_name == "已结束行程也可修正名称"

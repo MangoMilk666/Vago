@@ -87,7 +87,7 @@ def switch_active_trip(
     db: Session = Depends(get_db),
     user_uuid: str = Depends(get_current_user_uuid),
 ) -> ApiResponse[TripResponse]:
-    """结束当前进行中行程，并开始用户选定的未开始行程。"""
+    """兼容旧客户端的切换入口；仅将目标行程设为进行中。"""
     return success(service.switch_active_trip(db, user_uuid, trip_uuid), "当前行程已切换")
 
 

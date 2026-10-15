@@ -140,8 +140,8 @@ def test_agent_travel_reads_keep_current_and_history_boundaries(db_session: Sess
     }]
 
 
-def test_trip_lifecycle_allows_one_active_trip_and_locks_history(db_session: Session):
-    """测试：正式行程只能依次未开始、进行中、已结束，历史行程不可编辑。"""
+def test_trip_status_can_change_independently_and_history_can_be_reopened(db_session: Session):
+    """测试：多个行程可独立切换状态，已结束行程可恢复为可编辑状态。"""
     first_trip = service.create_trip(
         db_session,
         "user-a",
@@ -156,9 +156,9 @@ def test_trip_lifecycle_allows_one_active_trip_and_locks_history(db_session: Ses
     started = service.start_trip(db_session, "user-a", first_trip.uuid)
     assert started.status == service.TRIP_STATUS_IN_PROGRESS
 
-    with pytest.raises(AppException) as active_exc:
-        service.start_trip(db_session, "user-a", second_trip.uuid)
-    assert active_exc.value.code == "TRIP_ALREADY_IN_PROGRESS"
+    also_started = service.start_trip(db_session, "user-a", second_trip.uuid)
+    assert also_started.status == service.TRIP_STATUS_IN_PROGRESS
+    assert service.get_agent_current_active_trip(db_session, "user-a")["uuid"] == second_trip.uuid
 
     ended = service.finish_trip(db_session, "user-a", first_trip.uuid)
     assert ended.status == service.TRIP_STATUS_ENDED
@@ -168,9 +168,15 @@ def test_trip_lifecycle_allows_one_active_trip_and_locks_history(db_session: Ses
         service.update_trip(db_session, "user-a", first_trip.uuid, TripUpdateRequest(title="不应更新"))
     assert update_exc.value.code == "TRIP_ENDED"
 
+    reopened = service.update_trip(
+        db_session, "user-a", first_trip.uuid, TripUpdateRequest(status=service.TRIP_STATUS_NOT_STARTED)
+    )
+    assert reopened.status == service.TRIP_STATUS_NOT_STARTED
+    assert service.update_trip(db_session, "user-a", first_trip.uuid, TripUpdateRequest(title="重新编辑")).title == "重新编辑"
 
-def test_switch_active_trip_ends_previous_trip_and_starts_target(db_session: Session):
-    """测试：切换当前行程在同一用户范围内结束旧行程并激活选定未开始行程。"""
+
+def test_legacy_switch_endpoint_does_not_change_other_trip_status(db_session: Session):
+    """测试：兼容旧切换入口时只修改目标 Trip，不联动结束其他 Trip。"""
     first_trip = service.create_trip(
         db_session,
         "user-a",
@@ -188,12 +194,8 @@ def test_switch_active_trip_ends_previous_trip_and_starts_target(db_session: Ses
     assert switched.uuid == next_trip.uuid
     assert switched.status == service.TRIP_STATUS_IN_PROGRESS
     previous = service.get_trip_detail(db_session, "user-a", first_trip.uuid)
-    assert previous.status == service.TRIP_STATUS_ENDED
-    assert [trip.uuid for trip in service.list_history_trips(db_session, "user-a")] == [first_trip.uuid]
-
-    with pytest.raises(AppException) as exc_info:
-        service.switch_active_trip(db_session, "user-a", first_trip.uuid)
-    assert exc_info.value.code == "TRIP_NOT_SWITCHABLE"
+    assert previous.status == service.TRIP_STATUS_IN_PROGRESS
+    assert service.switch_active_trip(db_session, "user-a", first_trip.uuid).status == service.TRIP_STATUS_IN_PROGRESS
 
 
 def test_itinerary_initialization_supports_a_trip_longer_than_127_days(db_session: Session):

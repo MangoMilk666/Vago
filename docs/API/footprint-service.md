@@ -23,6 +23,6 @@
 | PATCH | `/checkins/footprint/{footprintUuid}` | 只修改用户输入的地点名和备注 |
 | POST | `/checkins` | 兼容旧客户端的打卡创建入口 |
 
-打卡创建请求含 `tripUuid`、`locationName`、`latitude`、`longitude`，可选 `note`、`checkedAt`、`trackingSegmentUuid` 与 `clientEventUuid`。新客户端应提供稳定的 `clientEventUuid` 以防重试重复创建。手动打卡只允许写入进行中的 Trip；更新入口不能修改坐标、时间、类型或段标识。统一足迹响应包括 `uuid`、`clientEventUuid`、`tripUuid`、`footprintType`、坐标、可选的精度/速度/段标识/文本，以及 `occurredAt`。
+打卡创建请求含 `tripUuid`、`locationName`、`latitude`、`longitude`，可选 `note`、`checkedAt`、`trackingSegmentUuid` 与 `clientEventUuid`。新客户端应提供稳定的 `clientEventUuid` 以防重试重复创建。自动 GPS 与手动打卡均可绑定当前用户拥有的任意状态 Trip；iOS 前台只允许用户选定一个 Trip 作为实时记录目标。更新入口不能修改坐标、时间、类型或段标识。统一足迹响应包括 `uuid`、`clientEventUuid`、`tripUuid`、`footprintType`、坐标、可选的精度/速度/段标识/文本，以及 `occurredAt`。
 
 地图分段、过滤和可见点密度属于显示层，详见 [足迹设计](../modules/footprint/ios/design.md)。

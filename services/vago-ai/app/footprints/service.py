@@ -20,7 +20,6 @@ from app.footprints.schemas import (
     TravelFootprintResponse,
 )
 from app.travel.models import Trip, utc_now_naive
-from app.travel.service import TRIP_STATUS_IN_PROGRESS
 
 
 AUTO_GPS = "AUTO_GPS"
@@ -505,10 +504,8 @@ def list_trip_checkins(db: Session, user_uuid: str, trip_uuid: str) -> list[Chec
 
 
 def create_checkin_footprint(db: Session, user_uuid: str, payload: CheckinCreateRequest) -> TravelFootprintResponse:
-    """为进行中的行程新增一条用户主动确认的手动打卡足迹。"""
+    """为用户选定的自有行程新增一条用户主动确认的手动打卡足迹。"""
     trip = _get_owned_trip(db, user_uuid, payload.trip_uuid)
-    if trip.status != TRIP_STATUS_IN_PROGRESS:
-        raise AppException("仅进行中的行程可以打卡", status_code=409, code="TRIP_NOT_IN_PROGRESS")
     client_event_uuid = payload.client_event_uuid or _new_uuid()
     existing_event = db.scalar(
         select(TravelFootprint).where(
@@ -588,10 +585,7 @@ def update_checkin_footprint(
     # 分支条件：非本人的记录、自动 GPS 或不存在的 UUID 都不暴露内部差异。
     if checkin is None:
         raise AppException("打卡不存在或无权访问", status_code=404, code="CHECKIN_NOT_FOUND")
-    trip = _get_owned_trip(db, user_uuid, checkin.trip_uuid)
-    # 分支条件：已结束旅行保留历史回顾，但不允许再修改其用户记录文本。
-    if trip.status != TRIP_STATUS_IN_PROGRESS:
-        raise AppException("仅进行中的行程可以编辑打卡", status_code=409, code="TRIP_NOT_IN_PROGRESS")
+    _get_owned_trip(db, user_uuid, checkin.trip_uuid)
     checkin.location_name = payload.location_name
     checkin.note = payload.note.strip() or None
     db.commit()

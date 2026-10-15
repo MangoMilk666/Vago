@@ -7,7 +7,7 @@ struct VagoIOSApp: App {
     @StateObject private var session = SessionStore()
     // 定位服务提升到 App 生命周期；切换 Tab、弹出 sheet 都不会重新创建 CLLocationManager。
     @StateObject private var tracking = LocationTrackingStore()
-    // 行程上下文独立于页面实例，行程页切换后记录页能立刻收到新的唯一进行中行程。
+    // 行程上下文独立于页面实例，跨 Tab 共享用户明确选择的唯一足迹记录目标。
     @StateObject private var tripContext = TripContextStore()
     @Environment(\.scenePhase) private var scenePhase
 

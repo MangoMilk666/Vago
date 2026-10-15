@@ -177,19 +177,15 @@ struct Trip: Codable, Identifiable {
     // 行程起止日期由 APIClient 的自定义日期解码器转换为 Date。
     let startDate: Date
     let endDate: Date
-    // 1=未开始、2=进行中、3=已结束；客户端用它筛选当前可记录足迹的行程。
+    // 1=未开始、2=进行中、3=已结束；状态不决定足迹记录目标。
     let status: Int
 
     var id: String { uuid }
 
-    /// struct 是值类型；复制后替换 status，供切换接口仅回传新行程时维持本地列表一致性。
-    func withStatus(_ status: Int) -> Trip {
-        Trip(uuid: uuid, title: title, destination: destination, startDate: startDate, endDate: endDate, status: status)
-    }
 }
 
 /// 与 FastAPI Trip 的状态值保持一致，避免页面散落难以理解的 1/2/3 魔法数字。
-enum TripStatus: Int {
+enum TripStatus: Int, CaseIterable {
     case notStarted = 1
     case inProgress = 2
     case ended = 3
@@ -222,6 +218,11 @@ struct TripUpdateRequest: Encodable {
         let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
     }
+}
+
+/// 仅修改行程状态，避免状态切换意外覆盖行程的其他元数据。
+struct TripStatusUpdateRequest: Encodable {
+    let status: Int
 }
 
 /// 手动创建正式行程的最小请求；服务端负责将新行程固定初始化为“未开始”。
@@ -334,7 +335,7 @@ struct LocationSyncResult: Decodable {
     let skippedCount: Int?
 }
 
-/// 手动打卡请求，使用当前位置并绑定进行中的正式行程；Encodable 表示仅需要写入 JSON。
+/// 手动打卡请求，使用当前位置并绑定用户选定的正式行程；Encodable 表示仅需要写入 JSON。
 struct CheckinRequest: Encodable {
     // 归属行程、展示地点、坐标、可选备注和用户触发时刻组成一次打卡事实。
     let tripUuid: String
