@@ -10,9 +10,9 @@
 
 ## 命名与迁移
 
-当前事实表为 `travel_observations`。将其更名为 `travel_footprints` 仍只是本设计中的提案，未获实施决定；任何调用方不得假定已改名。
+当前事实表为 `travel_footprints`。Alembic migration 以重命名方式保留既有 GPS、打卡及幂等键数据；全新数据库初始化脚本也使用新表名。
 
-- 该变更使用独立 Alembic migration 完成表重命名、索引与约束校验；不删表重建。
+- 该变更通过独立 Alembic migration 重命名表和类型列，并更新索引/唯一约束；不删表重建。
 - 已有 GPS、打卡、幂等键和 Trip 归属必须原样保留。
 - 测试工具通过 Footprint 的服务/模型边界写入，不依赖表名；迁移前后都可工作。
 

@@ -27,7 +27,7 @@ class TravelMemory(Base):
     trip_uuid: Mapped[str] = mapped_column(String(32), nullable=False)
     # 用户可编辑的回忆标题。
     title: Mapped[str] = mapped_column(String(100), nullable=False)
-    # 由领域事实生成的 JSON 快照；Agent 只能读取，不能改写原观察事实。
+    # 由领域事实生成的 JSON 快照；Agent 只能读取，不能改写原始足迹事实。
     fact_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
     # 可编辑的叙事文本；为空代表当前只有事实回忆，没有生成故事。
     narrative: Mapped[str | None] = mapped_column(Text)

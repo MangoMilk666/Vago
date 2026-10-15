@@ -28,7 +28,7 @@ http.interceptors.response.use(
   },
 )
 
-// 统一 observation API 同时返回自动 GPS 与手动打卡，避免 Web 拼接两个读模型。
+// 统一足迹 API 同时返回自动 GPS 与手动打卡，避免 Web 拼接两个读模型。
 export const footprintApi = {
-  listTripObservations: (tripUuid) => http.get(`/trips/${tripUuid}/observations`),
+  listTripFootprints: (tripUuid) => http.get(`/trips/${tripUuid}/footprints`),
 }

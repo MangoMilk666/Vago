@@ -29,7 +29,7 @@ from app.travel import service as travel_service
 
 logger = logging.getLogger(__name__)
 
-# 普通问题的首次读取预算；后续读取必须由已获得的 Observation 或确定性计划证明必要性。
+# 普通问题的首次读取预算；后续读取必须由已获得的工具结果或确定性计划证明必要性。
 INITIAL_READ_BUDGET = 3
 # 单轮总读取预算，防止复杂问题把 Personal Context 扩大为无界事实抓取。
 MAX_TOTAL_READ_STEPS = 6
@@ -72,7 +72,7 @@ class AgentRuntime:
             AgentTool("get_recent_footprint_summaries", "正在读取最近足迹行程", _get_recent_footprint_summaries),
             AgentTool("get_recent_checkins", "正在读取最近打卡", _get_recent_checkins),
             AgentTool("get_checkins_by_date_range", "正在读取指定日期范围打卡", _get_checkins_by_date_range),
-            AgentTool("get_observations_by_date_range", "正在读取指定日期范围旅行观察", _get_observations_by_date_range),
+            AgentTool("get_footprints_by_date_range", "正在读取指定日期范围旅行足迹", _get_footprints_by_date_range),
             AgentTool("get_user_preferences", "正在读取明确旅行偏好", _get_preferences),
             AgentTool("get_travel_memories", "正在读取旅行回忆摘要", _get_memories),
         ])
@@ -88,7 +88,7 @@ class AgentRuntime:
         prompt: str = "",
         recent_user_messages: tuple[str, ...] = (),
     ) -> AgentRuntimePreparation:
-        """执行有界的只读 Observation 链，并组装本轮 Prompt Context。"""
+        """执行有界的只读工具链，并组装本轮 Prompt Context。"""
         trace_id = uuid4().hex
         events: list[dict[str, str]] = [_event("agent.started", "开始整理本轮旅行上下文", trace_id=trace_id)]
         state = _new_runtime_state()
@@ -172,7 +172,7 @@ class AgentRuntime:
 
         while pending_calls and read_count < MAX_TOTAL_READ_STEPS:
             tool_call = pending_calls.pop(0)
-            # 如果已经用完初始预算，先让客户端获知此后的调用是基于前序 Observation 的受控续读。
+            # 如果已经用完初始预算，先让客户端获知此后的调用是基于前序工具结果的受控续读。
             if read_count >= INITIAL_READ_BUDGET and not continuation_announced:
                 continuation_announced = True
                 continuation_event = _event(
@@ -182,7 +182,7 @@ class AgentRuntime:
                 events.append(continuation_event)
                 yield AgentRuntimeProgress(continuation_event)
 
-            # 如果前序 Observation 未确认当前进行中 Trip，跳过依赖该 Trip 的tools调用，不伪造工具执行事件。
+            # 如果前序工具未确认当前进行中 Trip，跳过依赖该 Trip 的调用，不伪造工具执行事件。
             if _requires_current_active_trip(tool_call) and _active_trip_uuid(state) is None:
                 skipped_event = _event(
                     "agent.status", _dependency_unavailable_status(tool_call.name), trace_id=trace_id,
@@ -206,7 +206,7 @@ class AgentRuntime:
                 events.append(completed_event)
                 yield AgentRuntimeProgress(completed_event)
             except Exception as exc:
-                # 如果单一领域工具失败，把失败作为公开 Observation，继续处理其他已授权工具。
+                # 如果单一领域工具失败，把失败作为公开事件，继续处理其他已授权工具。
                 logger.warning("[agent_runtime] tool failed trace=%s tool=%s error=%s", trace_id, tool.name, exc)
                 failed_event = _event(
                     "tool.failed", f"{tool.label.replace('正在', '')}暂时不可用，已继续处理", tool=tool.name, trace_id=trace_id,
@@ -238,7 +238,7 @@ class AgentRuntime:
         trace_id: str,
     ) -> tuple[list[dict[str, str]], bool]:
         """执行一个同步 ToolCall；返回公开事件与是否实际占用读取预算。"""
-        # 如果前序 Observation 未确认当前进行中 Trip，跳过依赖该 Trip 的调用。
+        # 如果前序工具未确认当前进行中 Trip，跳过依赖该 Trip 的调用。
         if _requires_current_active_trip(tool_call) and _active_trip_uuid(state) is None:
             return [_event("agent.status", _dependency_unavailable_status(tool_call.name), trace_id=trace_id)], False
 
@@ -252,7 +252,7 @@ class AgentRuntime:
                 "tool.completed", _summary_for_tool(tool.name, output), tool=tool.name, trace_id=trace_id,
             ))
         except Exception as exc:
-            # 如果单一领域工具失败，失败 Observation 不阻断其他候选工具。
+            # 如果单一领域工具失败，失败事件不阻断其他候选工具。
             logger.warning("[agent_runtime] tool failed trace=%s tool=%s error=%s", trace_id, tool.name, exc)
             events.append(_event(
                 "tool.failed", f"{tool.label.replace('正在', '')}暂时不可用，已继续处理", tool=tool.name, trace_id=trace_id,
@@ -291,11 +291,11 @@ def _clarification_context(clarification: str | None) -> str | None:
 
 
 def _new_runtime_state() -> dict[str, Any]:
-    """初始化只保存本轮 Observation 的 Runtime State，不建立新的长期存储。"""
+    """初始化只保存本轮领域结果的 Runtime State，不建立新的长期存储。"""
     return {
         "travelContext": {"currentTrip": None, "travelHistory": []},
         "todayItinerary": None,
-        "liveObservations": {},
+        "liveFootprints": {},
         "preferences": {},
         "memories": [],
         "knowledgeSummary": {},
@@ -368,7 +368,7 @@ def _get_recent_footprint_summaries(
     _: dict[str, Any],
     arguments: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """按 Observation 时间倒序读取最近有足迹的 Trip 摘要。"""
+    """按足迹发生时间倒序读取最近有足迹的 Trip 摘要。"""
     return footprint_service.get_agent_recent_footprint_summaries(db, user_uuid, _read_limit(arguments))
 
 
@@ -378,7 +378,7 @@ def _get_recent_checkins(
     _: dict[str, Any],
     arguments: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """按 Observation 时间倒序读取最近的有限手动打卡。"""
+    """按足迹发生时间倒序读取最近的有限手动打卡。"""
     return footprint_service.get_agent_recent_checkins(db, user_uuid, _read_limit(arguments))
 
 
@@ -399,14 +399,14 @@ def _get_checkins_by_date_range(
     )
 
 
-def _get_observations_by_date_range(
+def _get_footprints_by_date_range(
     db: Session,
     user_uuid: str,
     _: dict[str, Any],
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     """读取日期范围内的有限足迹数量与命名打卡摘要。"""
-    return footprint_service.get_agent_observations_by_date_range(
+    return footprint_service.get_agent_footprints_by_date_range(
         db,
         user_uuid,
         date.fromisoformat(str(arguments["startDate"])),
@@ -433,9 +433,9 @@ def _read_limit(arguments: dict[str, Any], default: int = 3) -> int:
 
 
 def _resolve_tool_arguments(tool_call: ToolCall, state: dict[str, Any]) -> dict[str, Any]:
-    """把 Plan 中的安全引用解析为本轮 Observation 与当前日期的实际参数。"""
+    """把 Plan 中的安全引用解析为本轮结果与当前日期的实际参数。"""
     arguments = dict(tool_call.arguments)
-    # 如果工具参数引用当前进行中 Trip，用前序 Observation 的 UUID 替换该引用。
+    # 如果工具参数引用当前进行中 Trip，用前序查询结果中的 UUID 替换该引用。
     if arguments.get("tripUuid") == CURRENT_ACTIVE_TRIP_REFERENCE:
         arguments["tripUuid"] = _active_trip_uuid(state)
     # 如果工具参数引用当前日期，在 Runtime 内生成日期，避免客户端传入隐式日期范围。
@@ -445,11 +445,11 @@ def _resolve_tool_arguments(tool_call: ToolCall, state: dict[str, Any]) -> dict[
 
 
 def _store_tool_output(state: dict[str, Any], tool_name: str, output: Any) -> None:
-    """将工具 Observation 放入 Runtime State，供后续工具和 Prompt 使用。"""
-    # 如果读取当前行程，只更新当前 Trip Observation，不覆盖近期 Trip 摘要。
+    """将工具结果放入 Runtime State，供后续工具和 Prompt 使用。"""
+    # 如果读取当前行程，只更新当前 Trip 及其足迹数据，不覆盖近期 Trip 摘要。
     if tool_name == "get_current_active_trip":
         state["travelContext"]["currentTrip"] = output
-    # 如果读取最近 Trip，只更新最近 Trip Observation，不污染当前行程事实。
+    # 如果读取最近 Trip，只更新最近 Trip 摘要，不污染当前行程事实。
     elif tool_name in {"get_recent_trips", "get_recent_ended_trips"}:
         state["travelContext"]["travelHistory"] = output or []
     # 如果读取指定日期日程，将它独立保存，避免把日程伪装为 Trip 静态字段。
@@ -457,18 +457,18 @@ def _store_tool_output(state: dict[str, Any], tool_name: str, output: Any) -> No
         state["todayItinerary"] = output
     # 如果读取当前 Trip 的 GPS 或打卡摘要，按明确字段保存。
     elif tool_name == "get_footprint_summary_by_trip":
-        state["liveObservations"]["currentTripFootprint"] = output or {}
+        state["liveFootprints"]["currentTripFootprint"] = output or {}
     elif tool_name == "get_checkins_by_trip":
-        state["liveObservations"]["currentTripCheckins"] = (output or {}).get("recentCheckins", [])
+        state["liveFootprints"]["currentTripCheckins"] = (output or {}).get("recentCheckins", [])
     # 如果读取最近空间事实，保留它们与当前行程空间事实的来源边界。
     elif tool_name == "get_recent_footprint_summaries":
-        state["liveObservations"]["recentFootprintSummaries"] = output or []
+        state["liveFootprints"]["recentFootprintSummaries"] = output or []
     elif tool_name == "get_recent_checkins":
-        state["liveObservations"]["recentCheckins"] = output or []
+        state["liveFootprints"]["recentCheckins"] = output or []
     elif tool_name == "get_checkins_by_date_range":
-        state["liveObservations"]["dateRangeCheckins"] = output or {}
-    elif tool_name == "get_observations_by_date_range":
-        state["liveObservations"]["dateRangeObservations"] = output or {}
+        state["liveFootprints"]["dateRangeCheckins"] = output or {}
+    elif tool_name == "get_footprints_by_date_range":
+        state["liveFootprints"]["dateRangeFootprints"] = output or {}
     elif tool_name == "get_user_preferences":
         state["preferences"] = output or {}
     elif tool_name == "get_travel_memories":
@@ -476,13 +476,13 @@ def _store_tool_output(state: dict[str, Any], tool_name: str, output: Any) -> No
 
 
 def _active_trip_uuid(state: dict[str, Any]) -> str | None:
-    """从当前行程 Observation 中提取后续按 Trip 工具可使用的 UUID。"""
+    """从当前行程查询结果中提取后续按 Trip 工具可使用的 UUID。"""
     current_trip = state["travelContext"].get("currentTrip")
     return current_trip.get("uuid") if current_trip else None
 
 
 def _requires_current_active_trip(tool_call: ToolCall) -> bool:
-    """判断一个 ToolCall 是否引用前序当前进行中 Trip Observation。"""
+    """判断一个 ToolCall 是否引用前序查询到的当前进行中 Trip。"""
     return tool_call.arguments.get("tripUuid") == CURRENT_ACTIVE_TRIP_REFERENCE
 
 
@@ -502,7 +502,7 @@ def _build_preparation(
     events: list[dict[str, str]],
     allow_rag_search: bool,
 ) -> AgentRuntimePreparation:
-    """将本轮 Observation 转为 Prompt Context 与最终准备事件。"""
+    """将本轮查询结果转为 Prompt Context 与最终准备事件。"""
     context = _to_context_preview(state)
     events.append(_event("agent.status", "已完成上下文整理，正在生成旅行建议", trace_id=trace_id))
     return AgentRuntimePreparation(
@@ -523,7 +523,7 @@ def _to_context_preview(state: dict[str, Any]) -> PersonalContextPreview:
     preferences = state["preferences"] or {}
     memories = state["memories"] or []
     knowledge_summary = state["knowledgeSummary"] or {}
-    live_observations = state["liveObservations"] or None
+    live_footprints = state["liveFootprints"] or None
     labels: list[str] = []
     # 如果本轮实际读取到进行中 Trip，才向客户端标注当前行程上下文。
     if current_trip:
@@ -534,9 +534,9 @@ def _to_context_preview(state: dict[str, Any]) -> PersonalContextPreview:
     # 如果本轮实际读取到最近 Trip，才标注旅行历史。
     if travel_history:
         labels.append("最近旅行记录")
-    # 如果本轮读取到真实 GPS 或打卡观察，才标注近期旅行观察。
-    if _has_live_observations(live_observations):
-        labels.append("近期旅行观察")
+    # 如果本轮读取到真实 GPS 或打卡足迹，才标注近期旅行足迹。
+    if _has_live_footprints(live_footprints):
+        labels.append("近期旅行足迹")
     # 如果用户已明确保存偏好，才将其作为本轮上下文来源。
     if preferences.get("hasExplicitPreference"):
         labels.append("明确旅行偏好")
@@ -551,25 +551,25 @@ def _to_context_preview(state: dict[str, Any]) -> PersonalContextPreview:
         currentTrip=current_trip,
         todayItinerary=today_itinerary,
         travelHistory=travel_history,
-        liveObservations=live_observations,
+        liveFootprints=live_footprints,
         preferences=preferences,
         memories=memories,
         knowledgeSummary=knowledge_summary,
     )
 
 
-def _has_live_observations(live_observations: dict[str, Any] | None) -> bool:
-    """判断 Live Context 是否包含至少一项真实空间观察，而不是空摘要占位。"""
-    if not live_observations:
+def _has_live_footprints(live_footprints: dict[str, Any] | None) -> bool:
+    """判断 Live Context 是否包含真实足迹点位，而不是空摘要占位。"""
+    if not live_footprints:
         return False
-    footprint = live_observations.get("currentTripFootprint", {})
+    footprint = live_footprints.get("currentTripFootprint", {})
     return bool(
         footprint.get("automaticSampleCount", 0)
-        or live_observations.get("currentTripCheckins")
-        or live_observations.get("recentFootprintSummaries")
-        or live_observations.get("recentCheckins")
-        or live_observations.get("dateRangeCheckins")
-        or live_observations.get("dateRangeObservations")
+        or live_footprints.get("currentTripCheckins")
+        or live_footprints.get("recentFootprintSummaries")
+        or live_footprints.get("recentCheckins")
+        or live_footprints.get("dateRangeCheckins")
+        or live_footprints.get("dateRangeFootprints")
     )
 
 
@@ -593,7 +593,7 @@ def _summary_for_tool(tool_name: str, output: Any) -> str:
     # 如果读取的是指定 Trip 的打卡，根据有限打卡列表说明是否存在用户主动记录。
     if tool_name == "get_checkins_by_trip":
         return "已读取指定行程打卡" if output and output.get("recentCheckins") else "指定行程暂无手动打卡"
-    # 如果读取的是最近足迹 Trip，根据摘要列表说明是否存在空间观察。
+    # 如果读取的是最近足迹 Trip，根据摘要列表说明是否存在足迹点位。
     if tool_name == "get_recent_footprint_summaries":
         return "已读取最近足迹行程" if output else "暂无足迹记录"
     # 如果读取的是最近手动打卡，根据结果列表说明是否存在主动记录。
@@ -604,11 +604,11 @@ def _summary_for_tool(tool_name: str, output: Any) -> str:
         suffix = "，结果可能不完整" if output and output.get("truncated") else ""
         location_suffix = "，城市归属未验证" if output and output.get("locationScopeVerified") is False else ""
         return f"已读取指定日期范围打卡候选（{len(checkins)} 条{location_suffix}）{suffix}" if checkins else "指定日期范围内暂无打卡候选记录"
-    if tool_name == "get_observations_by_date_range":
+    if tool_name == "get_footprints_by_date_range":
         trips = output.get("trips", []) if output else []
         if not trips:
-            return "指定日期范围内暂无旅行观察"
-        return "已读取指定日期范围旅行观察，结果可能不完整" if output.get("truncated") else "已读取指定日期范围旅行观察"
+            return "指定日期范围内暂无旅行足迹点位"
+        return "已读取指定日期范围旅行足迹，结果可能不完整" if output.get("truncated") else "已读取指定日期范围旅行足迹"
     # 如果读取的是明确偏好，根据已确认字段判断是否可用于个性化建议。
     if tool_name == "get_user_preferences":
         return "已读取明确旅行偏好" if output and output.get("hasExplicitPreference") else "尚未设置明确旅行偏好"

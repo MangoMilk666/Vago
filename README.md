@@ -22,7 +22,7 @@ Plan → Travel → Observe → Memory → Learn → Next Plan
                           Vago Agent
 ```
 
-Personal Travel Context 不是单独的数据库，也不等同于 RAG。它是针对当前任务，从个人资料、结构化旅行事实、实时观察和必要外部信息组合出的状态视图。
+Personal Travel Context 不是单独的数据库，也不等同于 RAG。它是针对当前任务，从个人资料、结构化旅行事实、实时足迹点位和必要外部信息组合出的状态视图。
 
 ## 核心价值
 
@@ -42,7 +42,7 @@ Vago 负责上下文收集、协调、约束检查和重规划建议
 | Personal Travel Knowledge | KnowledgeSource、纯文本与 `.md/.txt` 导入、用户隔离、可选语义索引 | 更丰富的个人资料与知识整理能力 |
 | AI 对话 | SSE 对话、来源引用、按需个人知识语义检索和有界只读工具读取 | 跨领域重规划、写操作审批和外部工具 |
 | Plan / Trip / Itinerary | 计划、正式行程、每日安排、行程生命周期与编辑 | Agent 在确认后提出或执行受控的日程更新 |
-| Travel Observations | iOS 前台 GPS、离线队列、幂等同步、统一观察流、iOS/Web 轨迹与手动打卡 | Photos / Notes 等更多 grounded observations |
+| Travel Footprints | iOS 前台 GPS、离线队列、幂等同步、统一足迹点位流、iOS/Web 轨迹与手动打卡 | Photos / Notes 等更多 grounded travel facts |
 | Travel Memory | 已有已结束行程的事实快照、列表与用户可编辑叙事 | 更丰富的回忆体验和可审视的学习信号 |
 
 ## Personal Travel Context
@@ -67,7 +67,7 @@ Direct Context、SQL structured retrieval 和 semantic RAG 各有边界：明确
 | AI 规划 | 开发中 | 结构化计划输入与确认保存链路存在；完整 context-aware planning 仍在演进 |
 | Plans / Trips / Itinerary | 已实现 | 草稿计划、正式行程、每日安排、景点、交通、住宿与生命周期 |
 | Travel Footprints | 已实现 | iOS 前台采样、离线缓冲、幂等同步、分段轨迹、方向指示与手动打卡 |
-| Photos / Notes | 未开发 | 将作为旅行中的 grounded observations |
+| Photos / Notes | 未开发 | 将作为旅行中的 grounded facts |
 | Travel Memory | 基础已实现 | 基于已结束行程刷新事实快照，用户可编辑标题与叙事 |
 | Vago Agent Runtime | 部分已实现 | 有界、按需的只读领域工具与事件；跨领域重规划和写操作审批仍待建设 |
 
@@ -76,7 +76,7 @@ Direct Context、SQL structured retrieval 和 semantic RAG 各有边界：明确
 | 层次 | 当前使用 | 后续方向 |
 | --- | --- | --- |
 | Web | React 18、Vite 5、Tailwind CSS | 知识管理、规划与历史旅行管理 |
-| iOS | Swift 6、SwiftUI、MapKit、Core Location、URLSession、Keychain | 可靠采集、旅行观察与移动端旅行体验 |
+| iOS | Swift 6、SwiftUI、MapKit、Core Location、URLSession、Keychain | 可靠采集、旅行足迹与移动端旅行体验 |
 | Backend | FastAPI 0.111、Pydantic v2、SQLAlchemy 2.x、Alembic | 保持 Modular Monolith，逐步增加领域工具与 Agent Runtime |
 | Relational DB | MySQL | 结构化旅行事实主存储 |
 | Cache | Redis | 会话、限流和短期运行状态 |

@@ -36,7 +36,7 @@ function MapViewport({ points }) {
   const map = useMap()
 
   useEffect(() => {
-    // 如果当前 Trip 没有空间观察，保留世界视角，避免地图跳到无意义的零坐标。
+    // 如果当前 Trip 没有足迹点位，保留世界视角，避免地图跳到无意义的零坐标。
     if (!points.length) {
       map.setView(DEFAULT_CENTER, 2)
       return
@@ -130,7 +130,7 @@ function FootprintLayers({ segments, checkins, showGpsPoints }) {
           radius={3.5}
           pathOptions={{ color: '#ffffff', fillColor: '#5856d6', fillOpacity: 1, weight: 1.25 }}
         >
-          <Popup><ObservationPopup point={point} /></Popup>
+          <Popup><FootprintPopup point={point} /></Popup>
         </CircleMarker>
       ))}
 
@@ -141,19 +141,19 @@ function FootprintLayers({ segments, checkins, showGpsPoints }) {
           radius={6.5}
           pathOptions={{ color: '#ffffff', fillColor: '#e75b7b', fillOpacity: 1, weight: 2.5 }}
         >
-          <Popup><ObservationPopup point={point} /></Popup>
+          <Popup><FootprintPopup point={point} /></Popup>
         </CircleMarker>
       ))}
     </>
   )
 }
 
-function FootprintMap({ observations, showGpsPoints }) {
+function FootprintMap({ footprints, showGpsPoints }) {
   const checkins = useMemo(
-    () => observations.filter((item) => item.observationType === 'MANUAL_CHECKIN' && isRenderableCoordinate(item)),
-    [observations],
+    () => footprints.filter((item) => item.footprintType === 'MANUAL_CHECKIN' && isRenderableCoordinate(item)),
+    [footprints],
   )
-  const segments = useMemo(() => buildFootprintSegments(observations), [observations])
+  const segments = useMemo(() => buildFootprintSegments(footprints), [footprints])
   const viewportPoints = useMemo(() => selectFootprintViewportPoints(segments, checkins), [segments, checkins])
 
   return (
@@ -169,8 +169,8 @@ function FootprintMap({ observations, showGpsPoints }) {
   )
 }
 
-function ObservationPopup({ point }) {
-  const checkin = point.observationType === 'MANUAL_CHECKIN'
+function FootprintPopup({ point }) {
+  const checkin = point.footprintType === 'MANUAL_CHECKIN'
   return (
     <div className="min-w-40 font-sans text-sm text-slate-700">
       <p className="font-semibold">{checkin ? point.locationName || '未命名打卡' : 'GPS 采样点'}</p>
@@ -184,7 +184,7 @@ function ObservationPopup({ point }) {
 export default function FootprintPage() {
   const [trips, setTrips] = useState([])
   const [selectedTripUuid, setSelectedTripUuid] = useState(null)
-  const [observations, setObservations] = useState([])
+  const [footprints, setFootprints] = useState([])
   const [loadingTrips, setLoadingTrips] = useState(true)
   const [loadingMap, setLoadingMap] = useState(false)
   const [error, setError] = useState('')
@@ -214,30 +214,30 @@ export default function FootprintPage() {
 
   useEffect(() => {
     if (!selectedTripUuid) {
-      setObservations([])
+      setFootprints([])
       return undefined
     }
     let active = true
-    const loadObservations = async () => {
+    const loadFootprints = async () => {
       setLoadingMap(true)
       setError('')
       try {
-        const response = await footprintApi.listTripObservations(selectedTripUuid)
-        if (active) setObservations(response.data ?? [])
+        const response = await footprintApi.listTripFootprints(selectedTripUuid)
+        if (active) setFootprints(response.data ?? [])
       } catch (requestError) {
-        if (active) setObservations([])
+        if (active) setFootprints([])
         if (active) setError(requestError.message)
       } finally {
         if (active) setLoadingMap(false)
       }
     }
-    loadObservations()
+    loadFootprints()
     return () => { active = false }
   }, [selectedTripUuid])
 
   const selectedTrip = trips.find((trip) => trip.uuid === selectedTripUuid)
-  const automaticCount = observations.filter((item) => item.observationType === 'AUTO_GPS').length
-  const checkinCount = observations.filter((item) => item.observationType === 'MANUAL_CHECKIN').length
+  const automaticCount = footprints.filter((item) => item.footprintType === 'AUTO_GPS').length
+  const checkinCount = footprints.filter((item) => item.footprintType === 'MANUAL_CHECKIN').length
 
   return (
     <div className="app-page min-h-screen">
@@ -256,7 +256,7 @@ export default function FootprintPage() {
           </aside>
 
           <section className="relative min-h-[460px] overflow-hidden bg-slate-100">
-            <FootprintMap observations={observations} showGpsPoints={showGpsPoints} />
+            <FootprintMap footprints={footprints} showGpsPoints={showGpsPoints} />
             <div className="absolute left-4 top-4 z-[500] max-w-[calc(100%-2rem)] border border-white/80 bg-white/95 px-4 py-3 shadow-lg backdrop-blur" style={{ borderRadius: 8 }}>
               <div className="flex items-start gap-4">
                 <div className="min-w-0">
@@ -276,7 +276,7 @@ export default function FootprintPage() {
             </div>
 
             {loadingMap && <div className="absolute inset-0 z-[600] flex items-center justify-center bg-white/50 backdrop-blur-[1px]"><div className="rounded-md bg-white px-3 py-2 text-sm text-slate-600 shadow-sm">正在绘制足迹...</div></div>}
-            {!loadingMap && selectedTrip && !observations.length && !error && <div className="absolute inset-0 z-[500] flex items-center justify-center px-6 text-center"><div className="bg-white/90 px-5 py-4 text-sm leading-6 text-slate-500 shadow-sm" style={{ borderRadius: 8 }}>这个行程还没有已同步的足迹或打卡记录。</div></div>}
+            {!loadingMap && selectedTrip && !footprints.length && !error && <div className="absolute inset-0 z-[500] flex items-center justify-center px-6 text-center"><div className="bg-white/90 px-5 py-4 text-sm leading-6 text-slate-500 shadow-sm" style={{ borderRadius: 8 }}>这个行程还没有已同步的足迹或打卡记录。</div></div>}
             {error && <div className="absolute bottom-4 left-4 right-4 z-[600] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 shadow-sm" style={{ borderRadius: 8 }}>{error}</div>}
           </section>
         </section>

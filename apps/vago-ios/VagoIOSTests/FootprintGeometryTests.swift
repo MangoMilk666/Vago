@@ -48,9 +48,9 @@ final class FootprintGeometryTests: XCTestCase {
         )
         let after = point("after", northMeters: 100, minute: 2, segment: "same")
         let checkin = point("checkin", northMeters: 50, minute: 3, segment: "same", kind: .manualCheckin)
-        let observations = [before, drift, after, checkin]
+        let footprints = [before, drift, after, checkin]
 
-        let segments = FootprintRouteBuilder.segments(from: observations)
+        let segments = FootprintRouteBuilder.segments(from: footprints)
         let viewport = FootprintRouteBuilder.viewportLocations(
             from: segments,
             manualCheckins: [checkin]
@@ -74,7 +74,7 @@ final class FootprintGeometryTests: XCTestCase {
         XCTAssertEqual(segments.map { $0.locations.map(\.stableKey) }, [["nearby"], ["after-long-gap"], ["city-jump"]])
     }
 
-    func testReportedSuspiciousSpeedSeparatesBothSidesOfObservation() {
+    func testReportedSuspiciousSpeedSeparatesBothSidesOfFootprint() {
         let points = [
             point("before", northMeters: 0, minute: 0, segment: "same"),
             point("fast", northMeters: 30, minute: 1, segment: "same", speed: 80),
@@ -86,7 +86,7 @@ final class FootprintGeometryTests: XCTestCase {
         XCTAssertEqual(segments.map { $0.locations.map(\.stableKey) }, [["before"], ["fast"], ["after"]])
     }
 
-    func testLegacyObservationsWithoutSegmentIDCanStillConnect() {
+    func testLegacyFootprintsWithoutSegmentIDCanStillConnect() {
         let points = [
             point("older", northMeters: 0, minute: 0, segment: nil),
             point("middle", northMeters: 25, minute: 1, segment: nil),
@@ -152,11 +152,11 @@ final class FootprintGeometryTests: XCTestCase {
         repository.refreshLocalSamples(from: tracking)
         XCTAssertEqual(repository.displayPoints.count, 1)
 
-        let remote = TravelObservation(
-            uuid: "server-observation",
+        let remote = TravelFootprint(
+            uuid: "server-footprint",
             clientEventUuid: sample.id.uuidString.lowercased(),
             tripUuid: tripUuid,
-            observationType: .automaticGPS,
+            footprintType: .automaticGPS,
             latitude: sample.latitude,
             longitude: sample.longitude,
             accuracyM: sample.accuracyM,
@@ -166,7 +166,7 @@ final class FootprintGeometryTests: XCTestCase {
             note: nil,
             occurredAt: sample.recordedAt
         )
-        repository.replaceRemoteObservations([remote])
+        repository.replaceRemoteFootprints([remote])
 
         XCTAssertEqual(repository.displayPoints.count, 1)
         XCTAssertEqual(repository.displayPoints.first?.source, .remote)
@@ -202,7 +202,7 @@ final class FootprintGeometryTests: XCTestCase {
         eastMeters: Double = 0,
         minute: Int,
         segment: String?,
-        kind: FootprintDisplayPoint.ObservationKind = .automaticGPS,
+        kind: FootprintDisplayPoint.FootprintKind = .automaticGPS,
         accuracy: Double? = 8,
         speed: Double? = 1
     ) -> FootprintDisplayPoint {

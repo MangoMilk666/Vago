@@ -57,7 +57,7 @@ class ToolSelectionPolicy:
     _CHECKIN_TERMS = ("打卡", "签到")
     _PLACE_QUESTION_TERMS = ("哪里", "哪儿", "哪些地方", "什么地方", "去过什么")
     _PLACE_RECOMMENDATION_TERMS = ("值得", "推荐", "适合", "好玩的", "可以去")
-    _PERSONAL_OBSERVATION_TERMS = (
+    _PERSONAL_FOOTPRINT_TERMS = (
         "我的打卡", "我打卡", "我去过", "我去了", "我曾去", "我到过", "打卡过", "打卡了", "去了哪里",
         "我的足迹", "我的轨迹", "旅行历史", "历史行程", "当前行程", "本次行程", "这次行程",
         "记录",
@@ -113,14 +113,14 @@ class ToolSelectionPolicy:
         # 追问只继承上一轮的主题；日期必须由当前消息明确给出，不能沿用上一轮的日历日。
         requested_range = _parse_date_range(prompt, reference_date)
         has_personal_date_scoped_checkins = "我" in normalized_prompt and is_checkins and requested_range is not None
-        has_personal_observation_scope = (
-            _contains_any(normalized_prompt, self._PERSONAL_OBSERVATION_TERMS)
+        has_personal_footprint_scope = (
+            _contains_any(normalized_prompt, self._PERSONAL_FOOTPRINT_TERMS)
             or has_personal_date_scoped_checkins
         )
         # 如果用户在问目的地推荐而非自己的旅行事实，不因“打卡/哪些地方”触发历史范围澄清。
         is_general_place_recommendation = (
             _contains_any(normalized_prompt, self._PLACE_RECOMMENDATION_TERMS)
-            and not has_personal_observation_scope
+            and not has_personal_footprint_scope
         )
         if is_general_place_recommendation:
             is_footprint = False
@@ -133,14 +133,14 @@ class ToolSelectionPolicy:
 
         selected: list[ToolCall] = []
         clarification: str | None = None
-        # 如果问题询问最近足迹，按 Observation 时间倒序读取最近有足迹的 Trip，不依赖当前行程。
+        # 如果问题询问最近足迹，按足迹发生时间倒序读取最近有足迹的 Trip，不依赖当前行程。
         if is_footprint and is_recent and requested_range is None:
             selected.append(_tool_call("get_recent_footprint_summaries", limit=DEFAULT_RECENT_LIMIT))
         # 如果问题询问当前足迹，先确认进行中 Trip，再按明确 Trip UUID 读取摘要。
         elif is_footprint and requested_range:
             start_date, end_date = requested_range
             selected.append(_tool_call(
-                "get_observations_by_date_range",
+                "get_footprints_by_date_range",
                 startDate=start_date.isoformat(),
                 endDate=end_date.isoformat(),
                 limit=20,
@@ -256,12 +256,12 @@ def _current_active_trip_call() -> ToolCall:
 
 
 def _current_trip_footprint_call() -> ToolCall:
-    """返回绑定前序当前 Trip Observation 的足迹摘要调用。"""
+    """返回绑定前序当前 Trip 足迹的摘要调用。"""
     return _tool_call("get_footprint_summary_by_trip", tripUuid=CURRENT_ACTIVE_TRIP_REFERENCE)
 
 
 def _current_trip_checkins_call() -> ToolCall:
-    """返回绑定前序当前 Trip Observation 的有限打卡读取调用。"""
+    """返回绑定前序当前 Trip 足迹的有限打卡读取调用。"""
     return _tool_call(
         "get_checkins_by_trip",
         tripUuid=CURRENT_ACTIVE_TRIP_REFERENCE,
@@ -303,10 +303,10 @@ def _intent_name(tool_names: tuple[str, ...]) -> str:
     # 如果没有工具调用，归类为通用问题。
     if not tool_names:
         return "general"
-    # 如果包含最近或按 Trip 的空间观察工具，归类为实时旅行问题。
+    # 如果包含最近或按 Trip 的足迹工具，归类为实时旅行问题。
     if any(name in tool_names for name in {
         "get_recent_footprint_summaries", "get_recent_checkins",
-        "get_checkins_by_date_range", "get_observations_by_date_range",
+        "get_checkins_by_date_range", "get_footprints_by_date_range",
         "get_footprint_summary_by_trip", "get_checkins_by_trip",
     }):
         return "live_travel"

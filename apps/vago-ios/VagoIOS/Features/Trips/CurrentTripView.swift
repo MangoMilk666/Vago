@@ -197,7 +197,7 @@ private struct TripDetailView: View {
                 } label: {
                     Label("查看点位与轨迹", systemImage: "map")
                 }
-                Text("地图仅用于浏览这份行程的已同步观察数据，不会改变当前正在记录的行程。")
+                Text("地图仅用于浏览这份行程的已同步足迹点位，不会改变当前正在记录的行程。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

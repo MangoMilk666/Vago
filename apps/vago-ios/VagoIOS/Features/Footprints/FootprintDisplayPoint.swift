@@ -2,7 +2,7 @@ import Foundation
 
 /// 地图的统一显示点：既可来自服务端快照，也可来自本地待传或刚确认的样本。
 struct FootprintDisplayPoint: Identifiable {
-    enum ObservationKind {
+    enum FootprintKind {
         case automaticGPS
         case manualCheckin
     }
@@ -15,7 +15,7 @@ struct FootprintDisplayPoint: Identifiable {
 
     // stableKey 是 user + Trip 范围内的合并键；远端 clientUuid 缺失时退回 server UUID。
     let stableKey: String
-    // 手动打卡详情更新使用服务端观察 UUID；本地待传自动点尚未具备该值。
+    // 手动打卡详情更新使用服务端足迹 UUID；本地待传自动点尚未具备该值。
     let serverUuid: String?
     let tripUuid: String
     let latitude: Double
@@ -27,27 +27,27 @@ struct FootprintDisplayPoint: Identifiable {
     let recordedAt: Date
     let source: Source
     // 打卡保留用户填写的地点语义，自动 GPS 则只作为路线采样事实。
-    let kind: ObservationKind
+    let kind: FootprintKind
     let locationName: String?
     let note: String?
 
     var id: String { stableKey }
 
-    static func remote(_ observation: TravelObservation) -> Self {
+    static func remote(_ footprint: TravelFootprint) -> Self {
         Self(
-            stableKey: FootprintMergeKey.normalize(observation.clientEventUuid),
-            serverUuid: observation.uuid,
-            tripUuid: observation.tripUuid,
-            latitude: observation.latitude,
-            longitude: observation.longitude,
-            accuracyM: observation.accuracyM,
-            speedMps: observation.speedMps,
-            trackingSegmentUuid: observation.trackingSegmentUuid,
-            recordedAt: observation.occurredAt,
+            stableKey: FootprintMergeKey.normalize(footprint.clientEventUuid),
+            serverUuid: footprint.uuid,
+            tripUuid: footprint.tripUuid,
+            latitude: footprint.latitude,
+            longitude: footprint.longitude,
+            accuracyM: footprint.accuracyM,
+            speedMps: footprint.speedMps,
+            trackingSegmentUuid: footprint.trackingSegmentUuid,
+            recordedAt: footprint.occurredAt,
             source: .remote,
-            kind: observation.observationType == .manualCheckin ? .manualCheckin : .automaticGPS,
-            locationName: observation.locationName,
-            note: observation.note
+            kind: footprint.footprintType == .manualCheckin ? .manualCheckin : .automaticGPS,
+            locationName: footprint.locationName,
+            note: footprint.note
         )
     }
 

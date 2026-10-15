@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.core.exceptions import AppException
-from app.footprints.models import TravelObservation
+from app.footprints.models import TravelFootprint
 from app.memory import service as memory_service
 from app.memory.schemas import TravelMemoryUpdateRequest
 from app.personal_context.service import build_personal_context
@@ -73,13 +73,13 @@ def test_memory_is_grounded_in_ended_trip_facts_and_keeps_user_narrative(db_sess
         )
     )
     db_session.add_all([
-        TravelObservation(
-            uuid="auto-observation", client_event_uuid="auto-event", user_uuid="user-a", trip_uuid=trip.uuid,
-            observation_type="AUTO_GPS", latitude=1.28, longitude=103.85, occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+        TravelFootprint(
+            uuid="auto-footprint", client_event_uuid="auto-event", user_uuid="user-a", trip_uuid=trip.uuid,
+            footprint_type="AUTO_GPS", latitude=1.28, longitude=103.85, occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
         ),
-        TravelObservation(
-            uuid="manual-observation", client_event_uuid="manual-event", user_uuid="user-a", trip_uuid=trip.uuid,
-            observation_type="MANUAL_CHECKIN", latitude=1.29, longitude=103.86, location_name="鱼尾狮公园",
+        TravelFootprint(
+            uuid="manual-footprint", client_event_uuid="manual-event", user_uuid="user-a", trip_uuid=trip.uuid,
+            footprint_type="MANUAL_CHECKIN", latitude=1.29, longitude=103.86, location_name="鱼尾狮公园",
             occurred_at=datetime(2026, 9, 2, tzinfo=UTC),
         ),
     ])
@@ -136,9 +136,9 @@ def test_personal_context_uses_user_scoped_summaries_without_raw_coordinates(db_
         TravelPreferenceUpdateRequest(pace="leisurely", interests=["美食", "建筑"]),
     )
     db_session.add(
-        TravelObservation(
+        TravelFootprint(
             uuid="context-checkin", client_event_uuid="context-event", user_uuid="user-a", trip_uuid=trip.uuid,
-            observation_type="MANUAL_CHECKIN", latitude=1.3521, longitude=103.8198, location_name="小印度",
+            footprint_type="MANUAL_CHECKIN", latitude=1.3521, longitude=103.8198, location_name="小印度",
             occurred_at=datetime(2026, 9, 2, tzinfo=UTC),
         )
     )
@@ -149,7 +149,7 @@ def test_personal_context_uses_user_scoped_summaries_without_raw_coordinates(db_
 
     assert context.current_trip["uuid"] == trip.uuid
     assert context.preferences["interests"] == ["美食", "建筑"]
-    assert context.live_observations["recentCheckins"][0]["locationName"] == "小印度"
+    assert context.live_footprints["recentCheckins"][0]["locationName"] == "小印度"
     assert "明确旅行偏好" in context.labels
     assert "1.3521" not in dumped
     assert "103.8198" not in dumped

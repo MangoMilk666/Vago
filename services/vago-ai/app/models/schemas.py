@@ -255,7 +255,7 @@ class ChatRequest(BaseModel):
     use_personal_context: bool = Field(
         False,
         alias="usePersonalContext",
-        description="是否允许读取当前行程、历史、观察、明确偏好与 Grounded Memory 摘要。",
+        description="是否允许读取当前行程、历史足迹、明确偏好与 Grounded Memory 摘要。",
     )
     # 可选会话 UUID；缺省时保留原有无状态聊天接口兼容性。
     conversation_uuid: str | None = Field(

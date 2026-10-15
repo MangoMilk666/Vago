@@ -34,7 +34,7 @@ AI Companion 仍可作为对话入口，但不再被理解为只负责生成 Str
 | Human-in-the-loop | 读取和观察可自动完成；重要持久化或外部写操作必须经过适当确认 |
 | Grounded memory | Travel Memory 必须以可追溯旅行事实为依据，叙事与事实分离 |
 | Progressive evolution | 保留 FastAPI Modular Monolith 和已有领域资产，逐阶段演进，不进行 big-bang rewrite |
-| Privacy by default | 个人旅行数据按用户隔离；位置与观察数据默认私有 |
+| Privacy by default | 个人旅行数据按用户隔离；位置与足迹点位数据默认私有 |
 
 ## 2. 价值主张
 
@@ -75,7 +75,7 @@ constraint checking and replanning.
 | --- | --- | --- |
 | Long-term personal context | explicit preferences、历史 Trip、visited places、Travel Memories、节奏/预算/兴趣倾向 | 明确偏好是用户事实；learned preference signals 是可审视推断，不自动成为永久事实 |
 | Current trip context | current Trip、itinerary、交通/住宿、已确认计划、剩余活动与约束 | MySQL 中的结构化领域事实 |
-| Live travel context | current location、recent footprint、check-ins、当前时间、旅行进度 | 由 iOS 等观察面产生的 grounded observations |
+| Live travel context | current location、recent footprint、check-ins、当前时间、旅行进度 | iOS 等采集面产生的 GPS 足迹点位、打卡等 grounded 旅行事实 |
 | Personal knowledge | KnowledgeSource、导入笔记、资料、回忆、用户明确选择的上下文 | Direct Context 或按需 semantic retrieval |
 | External / ephemeral context | POI、路线、天气、日历、航班和其他现实世界信息 | 未来外部工具能力；不当作用户事实长期保存 |
 
@@ -204,14 +204,14 @@ Travel Memory 不只是总结文章。它必须区分 confirmed facts、generate
 | User / Auth | JWT、用户隔离、资料与会话、明确旅行偏好 | 更完整的数据管理与可审视信号 |
 | Personal Travel Knowledge | KnowledgeSource、文本/`.md/.txt`、可选索引 | URL 与更多资料来源的受控导入 |
 | Plan / Trip / Itinerary | 核心 CRUD、计划转行程、生命周期和日程编辑 | 约束表达、受确认的 Agent action |
-| Footprint / Check-in | 前台采样、离线同步、统一观察事实、iOS/Web 轨迹、历史行程浏览与打卡详情 | 视觉与性能验收、Fog 实验及观察扩展 |
+| Footprint / Check-in | 前台采样、离线同步、统一足迹点位事实、iOS/Web 轨迹、历史行程浏览与打卡详情 | 视觉与性能验收、Fog 实验及旅行事实扩展 |
 | Photos / Notes | 未开发 | 绑定 Trip / Day / Spot / Check-in，二进制走对象存储 |
 | Travel Memory | 已结束行程事实快照与可编辑叙事基础 | grounded summary、timeline、highlights 与长期学习闭环 |
 | Preferences | 明确旅行偏好与用户设置基础 | learned signals 的来源、审视与确认边界 |
 
-### 6.1 旅行观察与事实保护
+### 6.1 旅行足迹点位与事实保护
 
-GPS、Check-in、未来照片和用户笔记是 Travel Observations。它们是 Agent 理解旅行进度的重要输入，但原始事实不可被 AI 覆盖。地图路线、探索区域、Memory summary 与偏好信号均是基于事实的派生结果，应保留来源与不确定性边界。
+GPS 与 Check-in 是统一的 Travel Footprints，通过类型区分自动采样与用户主动打卡；未来照片和用户笔记也会成为旅行事实。它们是 Agent 理解旅行进度的重要输入，但原始事实不可被 AI 覆盖。地图路线、探索区域、Memory summary 与偏好信号均是基于事实的派生结果，应保留来源与不确定性边界。
 
 ### 6.2 Travel Memory 要求
 

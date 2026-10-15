@@ -98,7 +98,7 @@ Domain Tool / RAG Tool
 Task-scoped Personal Travel Context
 ```
 
-例如，普通目的地知识问题可以不读取任何个人资料；“我今天有点累，接下来怎么安排”才可能需要当前行程、今日日程与近期旅行观察。用户关闭个人资料授权时，选择器不得选择对应工具。
+例如，普通目的地知识问题可以不读取任何个人资料；“我今天有点累，接下来怎么安排”才可能需要当前行程、今日日程与近期旅行足迹点位。用户关闭个人资料授权时，选择器不得选择对应工具。
 
 当前只读 Runtime 已由确定性选择策略生成工具计划；授权开关定义可读上限，不能单独触发读取。日期只从当前消息解析，短追问可以继承主题，但不继承上一轮的日期。
 
@@ -121,7 +121,7 @@ Tool Registry
 ├── get_recent_footprint_summaries
 ├── get_recent_checkins
 ├── get_checkins_by_date_range
-├── get_observations_by_date_range
+├── get_footprints_by_date_range
 ├── get_user_preferences
 └── get_travel_memories
 ```
@@ -132,7 +132,7 @@ Tool Registry
 | ------------------ | ---------------------------- | ------------------------------------------------------------ |
 | Long-term          | SQL / future Memory          | `get_recent_trips(limit)`、`get_recent_ended_trips(limit)`、`get_user_preferences` |
 | Current trip       | Travel domain                | `get_current_active_trip`、`get_trip_itinerary_by_date`      |
-| Live travel        | Footprint domain             | `get_footprint_summary_by_trip`、`get_checkins_by_trip`、`get_observations_by_date_range` |
+| Live travel        | Footprint domain             | `get_footprint_summary_by_trip`、`get_checkins_by_trip`、`get_footprints_by_date_range` |
 | Personal knowledge | Direct Context / 按需 Qdrant | `search_personal_knowledge`                                  |
 | Constraint         | Deterministic service        | `check_itinerary_constraints`                                |
 | Write action       | Travel domain                | `propose_itinerary_update`、`apply_approved_itinerary_update` |
@@ -168,7 +168,7 @@ clarification
 | “我保存的京都资料有什么建议？” | `search_personal_knowledge` |
 | “那明天的日程呢？” | `get_current_active_trip`、`get_trip_itinerary_by_date(date=明天)` |
 | “我上周在东京打卡了哪里？” | `get_checkins_by_date_range(日期范围)`；返回候选，需说明城市归属未验证 |
-| “我昨天去了哪里？” | `get_observations_by_date_range(日期范围)`；仅使用命名打卡回答具体地点 |
+| “我昨天去了哪里？” | `get_footprints_by_date_range(日期范围)`；仅使用命名打卡回答具体地点 |
 
 “请帮我安排一趟京都旅行”不会仅因“安排”触发当前行程读取。`useRag` 只表示可注册 `search_personal_knowledge`，不导致每轮固定读取知识库摘要或固定检索 Qdrant。
 
@@ -410,7 +410,7 @@ DONE
   → 再读取验证
 ```
 
-初始场景以“我今天有点累，重新安排接下来四个小时，晚上八点前回酒店”为代表。Agent 只读取解决该问题所需的当前行程、剩余日程、近期观察和必要外部信息；重要 itinerary 更新必须在结构化 proposal 经用户确认后执行。
+初始场景以“我今天有点累，重新安排接下来四个小时，晚上八点前回酒店”为代表。Agent 只读取解决该问题所需的当前行程、剩余日程、近期旅行足迹点位和必要外部信息；重要 itinerary 更新必须在结构化 proposal 经用户确认后执行。
 
 ## 技术与验证
 

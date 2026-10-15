@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 指定行程的只读旅行地图；历史浏览与当前定位采集分开，避免误向历史行程写入观察数据。
+/// 指定行程的只读旅行地图；历史浏览与当前定位采集分开，避免误向历史行程写入足迹数据。
 struct TripMapDetailView: View {
     @EnvironmentObject private var session: SessionStore
     let trip: Trip
@@ -67,12 +67,12 @@ struct TripMapDetailView: View {
         errorMessage = ""
         defer { isLoading = false }
         do {
-            let observations: [TravelObservation] = try await client.request(
-                path: "footprints/trips/\(trip.uuid)/observations",
+            let footprints: [TravelFootprint] = try await client.request(
+                path: "footprints/trips/\(trip.uuid)/footprints",
                 tokenProvider: session
             )
-            // 服务端观察按发生时间返回；地图显示模型仍保留统一观察类型，交给现有分段构建器排序、断段与绘制。
-            points = observations.map(FootprintDisplayPoint.remote)
+            // 服务端按发生时间返回足迹点位；地图显示模型交给现有分段构建器排序、断段与绘制。
+            points = footprints.map(FootprintDisplayPoint.remote)
         } catch {
             errorMessage = error.localizedDescription
         }

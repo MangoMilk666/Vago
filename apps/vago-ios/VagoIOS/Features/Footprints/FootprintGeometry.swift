@@ -203,7 +203,7 @@ enum FootprintRouteBuilder {
             let allowedDeviation = min(maximumSmoothDeviationMeters, edgeLength * 0.15)
             for step in 1...3 {
                 let candidate = catmullRom(p0: p0, p1: p1, p2: p2, p3: p3, t: Double(step) / 4)
-                // 分支条件：插值点离原始观察点连线超过容差时回退，原始坐标始终不被改写。
+                // 分支条件：插值点离原始足迹点连线超过容差时回退，原始坐标始终不被改写。
                 if distance(candidate, fromSegmentStart: p1, to: p2) > allowedDeviation { return false }
             }
         }

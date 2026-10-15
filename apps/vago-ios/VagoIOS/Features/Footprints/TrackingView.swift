@@ -193,14 +193,14 @@ struct TrackingView: View {
                 FootprintRepository.cacheActiveTrip(trip, for: userUuid)
                 tracking.prepare(tripUuid: trip.uuid, userUuid: userUuid, session: session)
                 footprintRepository.prepare(userUuid: userUuid, tripUuid: trip.uuid, tracking: tracking)
-                // 统一观察流按时间返回自动 GPS 与手动打卡，地图不再拼接两个独立远端集合。
-                let remoteObservations: [TravelObservation] = try await client.request(
-                    path: "footprints/trips/\(trip.uuid)/observations",
+                // 统一足迹流按时间返回自动 GPS 与手动打卡，地图不再拼接两个独立远端集合。
+                let remoteFootprints: [TravelFootprint] = try await client.request(
+                    path: "footprints/trips/\(trip.uuid)/footprints",
                     tokenProvider: session
                 )
                 // 分支条件：异步请求回来前若用户已切换行程，不让旧结果覆盖新地图。
                 guard self.trip?.uuid == trip.uuid, session.profile?.uuid == userUuid else { return }
-                footprintRepository.replaceRemoteObservations(remoteObservations)
+                footprintRepository.replaceRemoteFootprints(remoteFootprints)
                 tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
                 // 分支条件：每个进行中行程首次进入记录页时请求一次当前位置，定位不会写入足迹队列。
                 if locatedTripUuid != trip.uuid {
@@ -243,7 +243,7 @@ struct TrackingView: View {
             trip = nil
             return
         }
-        // 当前视图已经展示同一活动行程时，不因列表刷新重复下载观察数据。
+        // 当前视图已经展示同一活动行程时，不因列表刷新重复下载足迹数据。
         guard trip?.uuid != activeTripUuid else { return }
 
         trip = activeTrip
@@ -253,13 +253,13 @@ struct TrackingView: View {
         tracking.prepare(tripUuid: activeTrip.uuid, userUuid: userUuid, session: session)
         footprintRepository.prepare(userUuid: userUuid, tripUuid: activeTrip.uuid, tracking: tracking)
         do {
-            let observations: [TravelObservation] = try await client.request(
-                path: "footprints/trips/\(activeTrip.uuid)/observations",
+            let footprints: [TravelFootprint] = try await client.request(
+                path: "footprints/trips/\(activeTrip.uuid)/footprints",
                 tokenProvider: session
             )
             // 分支条件：网络返回期间再次切换行程时，不让旧请求回填新行程的地图。
             guard tripContext.activeTrip?.uuid == activeTrip.uuid, trip?.uuid == activeTrip.uuid else { return }
-            footprintRepository.replaceRemoteObservations(observations)
+            footprintRepository.replaceRemoteFootprints(footprints)
             tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: activeTrip.uuid)
             let confirmed = await tracking.syncPendingSamples()
             footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
@@ -273,13 +273,13 @@ struct TrackingView: View {
         let confirmed = await tracking.syncPendingSamples()
         footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
         guard let trip else { return }
-        if let remoteObservations: [TravelObservation] = try? await client.request(
-            path: "footprints/trips/\(trip.uuid)/observations",
+        if let remoteFootprints: [TravelFootprint] = try? await client.request(
+            path: "footprints/trips/\(trip.uuid)/footprints",
             tokenProvider: session
         ) {
-            footprintRepository.replaceRemoteObservations(remoteObservations)
+            footprintRepository.replaceRemoteFootprints(remoteFootprints)
             tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
-            // 分支条件：统一观察流读取成功后，地图已恢复最新事实，旧刷新错误不应继续遮挡视图。
+            // 分支条件：统一足迹流读取成功后，地图已恢复最新事实，旧刷新错误不应继续遮挡视图。
             refreshError = nil
         }
     }
@@ -326,8 +326,8 @@ struct TrackingView: View {
                 trackingSegmentUuid: tracking.activeTrackingSegmentUuid,
                 checkedAt: Date()
             )
-            let checkin: TravelObservation = try await client.request(
-                path: "footprints/observations/checkins",
+            let checkin: TravelFootprint = try await client.request(
+                path: "footprints/checkins/footprint",
                 method: "POST",
                 body: payload,
                 tokenProvider: session
@@ -360,8 +360,8 @@ struct TrackingView: View {
         defer { isUpdatingCheckin = false }
         do {
             let payload = CheckinUpdateRequest(locationName: locationName, note: note)
-            let updated: TravelObservation = try await client.request(
-                path: "footprints/observations/checkins/\(serverUuid)",
+            let updated: TravelFootprint = try await client.request(
+                path: "footprints/checkins/footprint/\(serverUuid)",
                 method: "PATCH",
                 body: payload,
                 tokenProvider: session

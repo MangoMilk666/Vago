@@ -1,4 +1,4 @@
-"""旅行空间观察接口的请求与响应模型。"""
+"""旅行足迹点位接口的请求与响应模型。"""
 
 from datetime import UTC, datetime
 from typing import Literal
@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 
-ObservationType = Literal["AUTO_GPS", "MANUAL_CHECKIN"]
+FootprintType = Literal["AUTO_GPS", "MANUAL_CHECKIN"]
 
 
 def _serialize_utc_datetime(value: datetime) -> str:
@@ -61,13 +61,15 @@ class LocationSyncResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
-class TravelObservationResponse(BaseModel):
-    """地图与 Live Context 共用的统一旅行空间观察。"""
+class TravelFootprintResponse(BaseModel):
+    """地图与 Live Context 共用的统一旅行足迹点位。"""
 
     uuid: str
     client_event_uuid: str = Field(alias="clientEventUuid")
     trip_uuid: str = Field(alias="tripUuid")
-    observation_type: ObservationType = Field(alias="observationType")
+    footprint_type: FootprintType = Field(alias="footprintType")
+    # 兼容尚未升级的客户端；新客户端统一读取 footprintType。
+    observation_type: FootprintType = Field(alias="observationType", deprecated=True)
     latitude: float
     longitude: float
     accuracy_m: float | None = Field(default=None, alias="accuracyM")

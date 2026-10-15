@@ -1,4 +1,4 @@
-"""验证 Phase 10.2.1 Runtime 的工具边界、预算与 Observation 链。"""
+"""验证 Phase 10.2.1 Runtime 的工具边界、预算与 Footprint 链。"""
 
 import asyncio
 from datetime import date, timedelta
@@ -18,14 +18,14 @@ ALL_TOOL_NAMES = (
     "get_recent_footprint_summaries",
     "get_recent_checkins",
     "get_checkins_by_date_range",
-    "get_observations_by_date_range",
+    "get_footprints_by_date_range",
     "get_user_preferences",
     "get_travel_memories",
 )
 
 
 def _registry(overrides: dict[str, Any]) -> ToolRegistry:
-    """构造完整测试注册表，未覆盖工具默认返回空 Observation。"""
+    """构造完整测试注册表，未覆盖工具默认返回空 Footprint。"""
     def empty_handler(*_args: Any) -> None:
         return None
 
@@ -51,7 +51,7 @@ def test_runtime_respects_disabled_personal_context() -> None:
 
 
 def test_runtime_continues_when_one_domain_tool_fails() -> None:
-    """测试：单一领域读取失败应成为 Observation，不阻断后续可用工具。"""
+    """测试：单一领域读取失败应成为 Footprint，不阻断后续可用工具。"""
     def failing_tool(*_args: Any) -> None:
         raise RuntimeError("temporary failure")
 
@@ -128,8 +128,8 @@ def test_runtime_skips_personal_tools_for_general_question() -> None:
     assert preparation.personal_context is None
 
 
-def test_runtime_reads_current_trip_before_by_trip_observations() -> None:
-    """测试：当前足迹与打卡先建立 Trip Observation，再按明确 tripUuid 查询。"""
+def test_runtime_reads_current_trip_before_by_trip_footprints() -> None:
+    """测试：当前足迹与打卡先建立 Trip Footprint，再按明确 tripUuid 查询。"""
     calls: list[tuple[str, dict[str, Any]]] = []
 
     def current_trip(*_args: Any) -> dict[str, str]:
@@ -224,7 +224,7 @@ def test_runtime_uses_scoped_historical_checkins_without_current_trip_fallback()
 
     assert calls and calls[0][0] == "get_checkins_by_date_range"
     assert calls[0][1]["locationQuery"] == "东京"
-    assert preparation.context_labels == ["近期旅行观察"]
+    assert preparation.context_labels == ["近期旅行足迹"]
     assert "浅草寺" in preparation.personal_context
     assert '"locationScopeVerified": false' in preparation.personal_context
     assert any(
@@ -249,9 +249,9 @@ def test_runtime_marks_ambiguous_historical_checkin_as_clarification() -> None:
     assert "不得用当前行程" in preparation.personal_context
 
 
-def test_runtime_observation_answer_context_does_not_supply_gps_coordinates() -> None:
-    """测试：日期范围旅行观察只提供命名打卡和 GPS 数量，不暴露坐标。"""
-    observations = {
+def test_runtime_footprint_answer_context_does_not_supply_gps_coordinates() -> None:
+    """测试：日期范围旅行足迹只提供命名打卡和 GPS 数量，不暴露坐标。"""
+    footprints = {
         "dateRange": {"startDate": "2026-10-05", "endDate": "2026-10-05"},
         "trips": [{
             "tripTitle": "新加坡旅行",
@@ -264,7 +264,7 @@ def test_runtime_observation_answer_context_does_not_supply_gps_coordinates() ->
         "groundingNote": "GPS 数量不能证明具体到访地点。",
     }
     runtime = AgentRuntime(_registry({
-        "get_observations_by_date_range": lambda *_args: observations,
+        "get_footprints_by_date_range": lambda *_args: footprints,
     }))
     preparation = runtime.prepare(
         None,
@@ -286,7 +286,7 @@ def test_runtime_observation_answer_context_does_not_supply_gps_coordinates() ->
 
 
 def test_runtime_skips_by_trip_tools_without_an_active_trip() -> None:
-    """测试：当前 Trip Observation 为空时，不调用依赖当前 Trip 的工具。"""
+    """测试：当前 Trip Footprint 为空时，不调用依赖当前 Trip 的工具。"""
     calls: list[str] = []
 
     def record(name: str, result: Any):

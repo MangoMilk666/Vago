@@ -65,7 +65,7 @@ def test_current_place_question_also_reads_named_checkins() -> None:
 
 
 def test_recent_footprint_uses_limit_without_active_trip_dependency() -> None:
-    """测试：最近足迹按 Observation 倒序读取有限 Trip，不依赖当前进行中 Trip。"""
+    """测试：最近足迹按足迹发生时间倒序读取有限 Trip，不依赖当前进行中 Trip。"""
     plan = ToolSelectionPolicy().select(
         "最近的足迹记录是什么？",
         use_personal_context=True,

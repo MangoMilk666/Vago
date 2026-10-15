@@ -23,8 +23,8 @@ def build_personal_context(
     if include_travel_context:
         travel_context = travel_service.get_agent_travel_context(db, user_uuid)
         current_trip = travel_context["currentTrip"]
-        live_observations = (
-            footprint_service.get_agent_observation_context(db, user_uuid, current_trip["uuid"])
+        live_footprints = (
+            footprint_service.get_agent_footprint_context(db, user_uuid, current_trip["uuid"])
             if current_trip is not None
             else None
         )
@@ -33,7 +33,7 @@ def build_personal_context(
     else:
         current_trip = None
         travel_context = {"travelHistory": []}
-        live_observations = None
+        live_footprints = None
         preferences = {}
         memories = []
 
@@ -46,7 +46,7 @@ def build_personal_context(
     labels = _build_labels(
         current_trip=current_trip,
         travel_history=travel_context["travelHistory"],
-        live_observations=live_observations,
+        live_footprints=live_footprints,
         preferences=preferences,
         memories=memories,
         knowledge_summary=knowledge_summary,
@@ -55,7 +55,7 @@ def build_personal_context(
         labels=labels,
         currentTrip=current_trip,
         travelHistory=travel_context["travelHistory"],
-        liveObservations=live_observations,
+        liveFootprints=live_footprints,
         preferences=preferences,
         memories=memories,
         knowledgeSummary=knowledge_summary,
@@ -77,8 +77,8 @@ def _build_labels(**context: object) -> list[str]:
         labels.append("当前行程与日程")
     if context["travel_history"]:
         labels.append("近期旅行历史")
-    if context["live_observations"]:
-        labels.append("近期旅行观察")
+    if context["live_footprints"]:
+        labels.append("近期旅行足迹")
     preferences = context["preferences"]
     if isinstance(preferences, dict) and preferences.get("hasExplicitPreference"):
         labels.append("明确旅行偏好")

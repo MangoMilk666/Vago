@@ -4,7 +4,7 @@ import SwiftUI
 
 /// 地图画布只负责渲染个人空间数据；定位和网络请求仍由上层现有能力处理。
 struct TravelMapCanvas: View {
-    // 统一观察流同时包含自动轨迹与手动打卡；当前定位不必已经保存成足迹。
+    // 统一足迹流同时包含自动轨迹与手动打卡；当前定位不必已经保存成足迹。
     let locations: [FootprintDisplayPoint]
     let currentLocation: CurrentLocationFix?
     let locateRequestID: Int
@@ -31,7 +31,7 @@ struct TravelMapCanvas: View {
         MapReader { proxy in
             // Map 的闭包是 MapContentBuilder，内部声明的 Marker、Annotation、Polyline 会成为地图叠加物。
             Map(position: $cameraPosition) {
-                // 路线使用完整可信观察段；自动点的显示筛选绝不改变线几何或段边界。
+                // 路线使用完整可信足迹段；自动点的显示筛选绝不改变线几何或段边界。
                 ForEach(routeSegments) { segment in
                     if segment.locations.count > 1 {
                         MapPolyline(coordinates: segment.smoothedCoordinates)
@@ -51,7 +51,7 @@ struct TravelMapCanvas: View {
                         }
                     }
                 }
-                // 手动打卡来自同一观察流，但始终使用独立 Annotation，不受自动采样点显示开关影响。
+                // 手动打卡来自同一足迹流，但始终使用独立 Annotation，不受自动采样点显示开关影响。
                 ForEach(locations.filter { $0.kind == .manualCheckin }) { checkin in
                     Annotation(checkin.locationName ?? "打卡", coordinate: coordinate(for: checkin)) {
                         Button {

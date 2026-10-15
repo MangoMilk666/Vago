@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppException
-from app.footprints.models import TravelObservation
+from app.footprints.models import TravelFootprint
 from app.footprints.service import AUTO_GPS, MANUAL_CHECKIN
 from app.memory.models import TravelMemory
 from app.memory.schemas import (
@@ -144,10 +144,10 @@ def _build_facts(db: Session, trip: Trip) -> TravelMemoryFacts:
             .where(ItinerarySpot.day_uuid.in_(day_uuids))
             .order_by(ItinerarySpot.sort_order.asc())
         ).all()
-    observations = db.scalars(
-        select(TravelObservation)
-        .where(TravelObservation.trip_uuid == trip.uuid, TravelObservation.user_uuid == trip.user_uuid)
-        .order_by(TravelObservation.occurred_at.asc())
+    footprints = db.scalars(
+        select(TravelFootprint)
+        .where(TravelFootprint.trip_uuid == trip.uuid, TravelFootprint.user_uuid == trip.user_uuid)
+        .order_by(TravelFootprint.occurred_at.asc())
     ).all()
     # 返回结果，包含的手动打卡点最多20个
     return TravelMemoryFacts(
@@ -157,11 +157,11 @@ def _build_facts(db: Session, trip: Trip) -> TravelMemoryFacts:
         startDate=trip.start_date,
         endDate=trip.end_date,
         itinerarySpotNames=[spot.name for spot in spots[:30]],
-        automaticSampleCount=sum(item.observation_type == AUTO_GPS for item in observations),
+        automaticSampleCount=sum(item.footprint_type == AUTO_GPS for item in footprints),
         checkins=[
             MemoryCheckinFact(locationName=item.location_name or "未命名地点", occurredAt=item.occurred_at)
-            for item in observations
-            if item.observation_type == MANUAL_CHECKIN
+            for item in footprints
+            if item.footprint_type == MANUAL_CHECKIN
         ][:20],
     )
 

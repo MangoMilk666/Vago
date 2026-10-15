@@ -1,4 +1,4 @@
-"""为 Travel Footprint 开发调试生成可重复的空间观察数据。"""
+"""为 Travel Footprint 开发调试生成可重复的足迹点位数据。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.footprints.models import TravelObservation
+from app.footprints.models import TravelFootprint
 from app.footprints.service import (
     AUTO_GPS,
     MANUAL_CHECKIN,
@@ -75,10 +75,10 @@ class FootprintScenario:
 
 
 @dataclass(frozen=True)
-class GeneratedObservation:
-    """尚未持久化的测试空间观察，便于单元测试与 CLI 共用。"""
+class GeneratedFootprint:
+    """尚未持久化的测试足迹点位，便于单元测试与 CLI 共用。"""
 
-    observation_type: str
+    footprint_type: str
     latitude: float
     longitude: float
     occurred_at: datetime
@@ -196,19 +196,19 @@ def available_locations() -> tuple[str, ...]:
     return tuple(SCENARIOS)
 
 
-def build_scenario_observations(
+def build_scenario_footprints(
     location: str,
     seed: int,
     *,
     gps_spacing_meters: float = DEFAULT_GPS_SPACING_METERS,
     checkin_count: int = DEFAULT_CHECKIN_COUNT,
     day_hours: float = DEFAULT_DAY_HOURS,
-) -> list[GeneratedObservation]:
+) -> list[GeneratedFootprint]:
     """将固定路线细分为覆盖一天的不规则 GPS 轨迹和多处手动打卡。"""
     scenario = _get_scenario(location)
     _validate_generation_options(gps_spacing_meters, checkin_count, day_hours)
     randomizer = random.Random(seed)
-    observations: list[GeneratedObservation] = []
+    footprints: list[GeneratedFootprint] = []
     checkins = list(scenario.checkins)
     if scenario.code != "CHECKIN_PROXIMITY":
         checkins.extend(_build_supplemental_checkins(scenario, checkins, checkin_count, day_hours))
@@ -220,7 +220,7 @@ def build_scenario_observations(
             segment_index,
             day_hours,
         )
-        segment_samples = _build_segment_observations(
+        segment_samples = _build_segment_footprints(
             waypoints,
             segment_start,
             segment_uuid,
@@ -238,13 +238,13 @@ def build_scenario_observations(
                 )
             ]
         segment_samples = _spread_sample_times(segment_samples, segment_start, segment_duration)
-        observations.extend(segment_samples)
+        footprints.extend(segment_samples)
 
     for checkin in checkins:
         segment_uuid = str(uuid5(NAMESPACE_URL, f"vago-devseed:{scenario.code}:{seed}:segment:{checkin.segment_index}"))
         segment_start, _ = _segment_schedule(scenario, checkin.segment_index, day_hours)
-        observations.append(GeneratedObservation(
-            observation_type=MANUAL_CHECKIN,
+        footprints.append(GeneratedFootprint(
+            footprint_type=MANUAL_CHECKIN,
             latitude=checkin.latitude,
             longitude=checkin.longitude,
             occurred_at=segment_start + timedelta(minutes=checkin.minute_offset),
@@ -253,7 +253,7 @@ def build_scenario_observations(
             note=checkin.note,
         ))
 
-    return sorted(observations, key=lambda item: (item.occurred_at, item.observation_type))
+    return sorted(footprints, key=lambda item: (item.occurred_at, item.footprint_type))
 
 
 def _segment_schedule(
@@ -279,10 +279,10 @@ def _segment_schedule(
 
 
 def _spread_sample_times(
-    samples: list[GeneratedObservation],
+    samples: list[GeneratedFootprint],
     segment_start: datetime,
     segment_duration: timedelta,
-) -> list[GeneratedObservation]:
+) -> list[GeneratedFootprint]:
     """把该段有序 GPS 点均匀放到活动时段，令默认数据覆盖整日多时段。"""
     # 如果该段只有一个有效点，将时间设为段起点，避免除以零。
     if len(samples) <= 1:
@@ -298,15 +298,15 @@ def _spread_sample_times(
     ]
 
 
-def _build_segment_observations(
+def _build_segment_footprints(
     waypoints: tuple[Waypoint, ...],
     started_at: datetime,
     segment_uuid: str,
     randomizer: random.Random,
     spacing_meters: float,
-) -> list[GeneratedObservation]:
+) -> list[GeneratedFootprint]:
     """按空间间距细分相邻锚点，并保留可渲染的连续采样顺序。"""
-    observations: list[GeneratedObservation] = []
+    footprints: list[GeneratedFootprint] = []
     point_index = 0
     for start, end in zip(waypoints, waypoints[1:]):
         leg_distance = _distance_meters(start.latitude, start.longitude, end.latitude, end.longitude)
@@ -318,15 +318,15 @@ def _build_segment_observations(
             # 将米级随机偏移转为经纬度，避免测试路线呈现为机械的绝对直线。
             latitude, longitude = _jitter_coordinate(latitude, longitude, randomizer)
             # 如果相邻锚点距离或取整导致相邻候选太近，跳过该点以符合自动采样距离边界。
-            if observations and _distance_meters(
-                observations[-1].latitude,
-                observations[-1].longitude,
+            if footprints and _distance_meters(
+                footprints[-1].latitude,
+                footprints[-1].longitude,
                 latitude,
                 longitude,
             ) < MINIMUM_AUTOMATIC_SAMPLE_DISTANCE_TO_CHECKIN_METERS:
                 continue
-            observations.append(GeneratedObservation(
-                observation_type=AUTO_GPS,
+            footprints.append(GeneratedFootprint(
+                footprint_type=AUTO_GPS,
                 latitude=latitude,
                 longitude=longitude,
                 occurred_at=started_at + timedelta(minutes=point_index * GPS_SAMPLE_INTERVAL_MINUTES),
@@ -342,14 +342,14 @@ def _build_segment_observations(
         randomizer,
     )
     # 如果路线末端与上一采样点过近，保留上一点作为该段末端，避免制造重复近距样本。
-    if not observations or _distance_meters(
-        observations[-1].latitude,
-        observations[-1].longitude,
+    if not footprints or _distance_meters(
+        footprints[-1].latitude,
+        footprints[-1].longitude,
         endpoint_latitude,
         endpoint_longitude,
     ) >= MINIMUM_AUTOMATIC_SAMPLE_DISTANCE_TO_CHECKIN_METERS:
-        observations.append(GeneratedObservation(
-            observation_type=AUTO_GPS,
+        footprints.append(GeneratedFootprint(
+            footprint_type=AUTO_GPS,
             latitude=endpoint_latitude,
             longitude=endpoint_longitude,
             occurred_at=started_at + timedelta(minutes=point_index * GPS_SAMPLE_INTERVAL_MINUTES),
@@ -357,7 +357,7 @@ def _build_segment_observations(
             accuracy_m=round(randomizer.uniform(4.0, 10.0), 1),
             speed_mps=round(randomizer.uniform(0.8, 1.8), 2),
         ))
-    return observations
+    return footprints
 
 
 def _build_supplemental_checkins(
@@ -469,14 +469,14 @@ def seed_footprints(
     """为指定用户和 Trip 写入一个可追踪、可重复清理的测试场景。"""
     _validate_run_id(run_id)
     _get_owned_trip(db, user_uuid, trip_uuid)
-    existing_count = _count_run_observations(db, user_uuid, trip_uuid, run_id)
+    existing_count = _count_run_footprints(db, user_uuid, trip_uuid, run_id)
     # 如果同一 run 已存在且未明确允许替换，阻止重复写入影响地图读数。
     if existing_count and not replace:
         raise ValueError(f"测试 run '{run_id}' 已存在，请使用 --replace 或 --clear-run")
     if existing_count:
-        _clear_run_observations(db, user_uuid, trip_uuid, run_id)
+        _clear_run_footprints(db, user_uuid, trip_uuid, run_id)
 
-    generated = build_scenario_observations(
+    generated = build_scenario_footprints(
         location,
         seed,
         gps_spacing_meters=gps_spacing_meters,
@@ -484,12 +484,12 @@ def seed_footprints(
         day_hours=day_hours,
     )
     rows = [
-        TravelObservation(
+        TravelFootprint(
             uuid=uuid5(NAMESPACE_URL, f"vago-devseed:{user_uuid}:{trip_uuid}:{run_id}:{index}").hex,
             client_event_uuid=f"{DEV_SEED_PREFIX}{run_id}:{index}",
             user_uuid=user_uuid,
             trip_uuid=trip_uuid,
-            observation_type=item.observation_type,
+            footprint_type=item.footprint_type,
             latitude=item.latitude,
             longitude=item.longitude,
             accuracy_m=item.accuracy_m,
@@ -506,17 +506,17 @@ def seed_footprints(
     return {
         "location": _get_scenario(location).code,
         "run_id": run_id,
-        "observation_count": len(rows),
-        "automatic_sample_count": sum(row.observation_type == AUTO_GPS for row in rows),
-        "checkin_count": sum(row.observation_type == MANUAL_CHECKIN for row in rows),
+        "footprint_count": len(rows),
+        "automatic_sample_count": sum(row.footprint_type == AUTO_GPS for row in rows),
+        "checkin_count": sum(row.footprint_type == MANUAL_CHECKIN for row in rows),
     }
 
 
 def clear_seed_run(db: Session, *, user_uuid: str, trip_uuid: str, run_id: str) -> int:
-    """仅删除指定 run 标记的测试观察，绝不影响真实或其他 run 的数据。"""
+    """仅删除指定 run 标记的测试足迹点位，绝不影响真实或其他 run 的数据。"""
     _validate_run_id(run_id)
     _get_owned_trip(db, user_uuid, trip_uuid)
-    deleted_count = _clear_run_observations(db, user_uuid, trip_uuid, run_id)
+    deleted_count = _clear_run_footprints(db, user_uuid, trip_uuid, run_id)
     db.commit()
     return deleted_count
 
@@ -558,21 +558,21 @@ def _run_prefix(run_id: str) -> str:
     return f"{DEV_SEED_PREFIX}{run_id}:"
 
 
-def _count_run_observations(db: Session, user_uuid: str, trip_uuid: str, run_id: str) -> int:
-    """统计同一测试 run 已写入的观察数量。"""
-    return len(db.scalars(select(TravelObservation.id).where(
-        TravelObservation.user_uuid == user_uuid,
-        TravelObservation.trip_uuid == trip_uuid,
-        TravelObservation.client_event_uuid.startswith(_run_prefix(run_id)),
+def _count_run_footprints(db: Session, user_uuid: str, trip_uuid: str, run_id: str) -> int:
+    """统计同一测试 run 已写入的足迹点位数量。"""
+    return len(db.scalars(select(TravelFootprint.id).where(
+        TravelFootprint.user_uuid == user_uuid,
+        TravelFootprint.trip_uuid == trip_uuid,
+        TravelFootprint.client_event_uuid.startswith(_run_prefix(run_id)),
     )).all())
 
 
-def _clear_run_observations(db: Session, user_uuid: str, trip_uuid: str, run_id: str) -> int:
-    """删除同一 user、Trip 和 run 前缀下的测试观察。"""
-    result = db.execute(delete(TravelObservation).where(
-        TravelObservation.user_uuid == user_uuid,
-        TravelObservation.trip_uuid == trip_uuid,
-        TravelObservation.client_event_uuid.startswith(_run_prefix(run_id)),
+def _clear_run_footprints(db: Session, user_uuid: str, trip_uuid: str, run_id: str) -> int:
+    """删除同一 user、Trip 和 run 前缀下的测试足迹点位。"""
+    result = db.execute(delete(TravelFootprint).where(
+        TravelFootprint.user_uuid == user_uuid,
+        TravelFootprint.trip_uuid == trip_uuid,
+        TravelFootprint.client_event_uuid.startswith(_run_prefix(run_id)),
     ))
     return result.rowcount or 0
 

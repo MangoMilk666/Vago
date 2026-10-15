@@ -13,7 +13,7 @@ from app.footprints.schemas import (
     LocationSampleResponse,
     LocationSyncRequest,
     LocationSyncResponse,
-    TravelObservationResponse,
+    TravelFootprintResponse,
 )
 from app.shared.responses import ApiResponse, success
 
@@ -40,14 +40,15 @@ def list_trip_locations(
     return success(service.list_trip_locations(db, user_uuid, trip_uuid))
 
 
-@router.get("/trips/{trip_uuid}/observations", response_model=ApiResponse[list[TravelObservationResponse]])
-def list_trip_observations(
+@router.get("/trips/{trip_uuid}/footprints", response_model=ApiResponse[list[TravelFootprintResponse]])
+@router.get("/trips/{trip_uuid}/observations", response_model=ApiResponse[list[TravelFootprintResponse]], include_in_schema=False)
+def list_trip_footprints(
     trip_uuid: str,
     db: Session = Depends(get_db),
     user_uuid: str = Depends(get_current_user_uuid),
-) -> ApiResponse[list[TravelObservationResponse]]:
-    """读取统一旅行空间观察流，供新版 iOS 同时构建路线与打卡标记。"""
-    return success(service.list_trip_observations(db, user_uuid, trip_uuid))
+) -> ApiResponse[list[TravelFootprintResponse]]:
+    """读取行程的统一足迹点位，供客户端构建路线与独立打卡标记。"""
+    return success(service.list_trip_footprints(db, user_uuid, trip_uuid))
 
 
 @router.get("/trips/{trip_uuid}/checkins", response_model=ApiResponse[list[CheckinResponse]])
@@ -70,22 +71,24 @@ def create_checkin(
     return success(service.create_checkin(db, user_uuid, payload), "打卡成功")
 
 
-@router.post("/observations/checkins", response_model=ApiResponse[TravelObservationResponse])
-def create_checkin_observation(
+@router.post("/checkins/footprint", response_model=ApiResponse[TravelFootprintResponse])
+@router.post("/observations/checkins", response_model=ApiResponse[TravelFootprintResponse], include_in_schema=False)
+def create_checkin_footprint(
     payload: CheckinCreateRequest,
     db: Session = Depends(get_db),
     user_uuid: str = Depends(get_current_user_uuid),
-) -> ApiResponse[TravelObservationResponse]:
-    """创建手动打卡并返回统一观察，供新版 iOS 立即合并地图。"""
-    return success(service.create_checkin_observation(db, user_uuid, payload), "打卡成功")
+) -> ApiResponse[TravelFootprintResponse]:
+    """创建手动打卡并返回统一足迹点位，供客户端立即更新地图。"""
+    return success(service.create_checkin_footprint(db, user_uuid, payload), "打卡成功")
 
 
-@router.patch("/observations/checkins/{observation_uuid}", response_model=ApiResponse[TravelObservationResponse])
-def update_checkin_observation(
-    observation_uuid: str,
+@router.patch("/checkins/footprint/{footprint_uuid}", response_model=ApiResponse[TravelFootprintResponse])
+@router.patch("/observations/checkins/{footprint_uuid}", response_model=ApiResponse[TravelFootprintResponse], include_in_schema=False)
+def update_checkin_footprint(
+    footprint_uuid: str,
     payload: CheckinUpdateRequest,
     db: Session = Depends(get_db),
     user_uuid: str = Depends(get_current_user_uuid),
-) -> ApiResponse[TravelObservationResponse]:
-    """更新用户主动打卡的可编辑文本，不改写已记录的空间事实。"""
-    return success(service.update_checkin_observation(db, user_uuid, observation_uuid, payload), "打卡已更新")
+) -> ApiResponse[TravelFootprintResponse]:
+    """更新手动打卡的可编辑文本，不改写已记录的足迹事实。"""
+    return success(service.update_checkin_footprint(db, user_uuid, footprint_uuid, payload), "打卡已更新")

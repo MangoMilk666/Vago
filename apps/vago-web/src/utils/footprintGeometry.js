@@ -30,7 +30,7 @@ function timeMillis(point) {
 }
 
 function isUsableAutomaticFix(point) {
-  if (point.observationType !== 'AUTO_GPS') return true
+  if (point.footprintType !== 'AUTO_GPS') return true
   if (point.accuracyM == null) return true
   return isFiniteNumber(point.accuracyM) && point.accuracyM >= 0 && point.accuracyM <= MAX_ACCURACY_METERS
 }
@@ -57,7 +57,7 @@ function isUntrustedConnection(previous, next) {
     || (next.speedMps != null && next.speedMps > MAX_SPEED_METERS_PER_SECOND)
 }
 
-function compareObservations(left, right) {
+function compareFootprints(left, right) {
   const timeDifference = timeMillis(left) - timeMillis(right)
   if (timeDifference !== 0) return timeDifference
   return String(left.clientEventUuid || left.uuid).localeCompare(String(right.clientEventUuid || right.uuid))
@@ -90,14 +90,14 @@ function routeSegmentsFromSorted(sorted) {
       return
     }
 
-    if (point.observationType === 'MANUAL_CHECKIN') {
+    if (point.footprintType === 'MANUAL_CHECKIN') {
       current.push(point)
       return
     }
 
     if (distanceMeters(previous, point) < MIN_RENDER_DISTANCE_METERS) {
       // 近距离自动 GPS 属于显示层降噪；手动打卡仍始终作为独立路线顶点保留。
-      if (previous.observationType === 'AUTO_GPS') current[current.length - 1] = point
+      if (previous.footprintType === 'AUTO_GPS') current[current.length - 1] = point
       return
     }
 
@@ -108,8 +108,8 @@ function routeSegmentsFromSorted(sorted) {
   return segments
 }
 
-export function buildFootprintSegments(observations) {
-  return routeSegmentsFromSorted([...observations].sort(compareObservations))
+export function buildFootprintSegments(footprints) {
+  return routeSegmentsFromSorted([...footprints].sort(compareFootprints))
 }
 
 /** 自动取景只围住可信路线点与独立有效打卡，不让弱信号漂移拉远地图。 */
@@ -143,7 +143,7 @@ export function selectVisibleAutomaticPoints(segments, project, minimumSpacing =
   segments.forEach((segment) => {
     const automaticIndexes = []
     segment.forEach((point, index) => {
-      if (point.observationType === 'AUTO_GPS') automaticIndexes.push(index)
+      if (point.footprintType === 'AUTO_GPS') automaticIndexes.push(index)
     })
     let lastSelected = null
 

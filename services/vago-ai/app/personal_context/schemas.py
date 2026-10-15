@@ -12,7 +12,7 @@ class PersonalContextPreview(BaseModel):
     current_trip: dict[str, Any] | None = Field(default=None, alias="currentTrip")
     today_itinerary: dict[str, Any] | None = Field(default=None, alias="todayItinerary")
     travel_history: list[dict[str, Any]] = Field(default_factory=list, alias="travelHistory")
-    live_observations: dict[str, Any] | None = Field(default=None, alias="liveObservations")
+    live_footprints: dict[str, Any] | None = Field(default=None, alias="liveFootprints")
     preferences: dict[str, Any] = Field(default_factory=dict)
     memories: list[dict[str, Any]] = Field(default_factory=list)
     knowledge_summary: dict[str, int] = Field(default_factory=dict, alias="knowledgeSummary")

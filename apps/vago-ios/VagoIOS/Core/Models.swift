@@ -355,18 +355,18 @@ struct CheckinUpdateRequest: Encodable {
     let note: String
 }
 
-/// 同一条旅行空间观察的类型；打卡仍是用户主动确认的特殊观察，而不是普通 GPS 点。
-enum TravelObservationType: String, Decodable {
+/// 足迹点位类型；手动打卡也是足迹点位，但保留独立的用户确认语义。
+enum TravelFootprintType: String, Decodable {
     case automaticGPS = "AUTO_GPS"
     case manualCheckin = "MANUAL_CHECKIN"
 }
 
-/// FastAPI 统一观察流，地图、Live Context 与后续旅行回忆均以它作为真实空间事实来源。
-struct TravelObservation: Decodable, Identifiable {
+/// FastAPI 返回的统一旅行足迹点位，供地图与旅行上下文读取事实。
+struct TravelFootprint: Decodable, Identifiable {
     let uuid: String
     let clientEventUuid: String
     let tripUuid: String
-    let observationType: TravelObservationType
+    let footprintType: TravelFootprintType
     let latitude: Double
     let longitude: Double
     let accuracyM: Double?

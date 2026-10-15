@@ -61,14 +61,14 @@ React Web (Vite :5173)                   SwiftUI iOS (iOS 17+)
 | 用户、Plan、Trip、Itinerary | MySQL | 结构化旅行事实；已结束 Trip 只读 |
 | KnowledgeSource | MySQL + local storage abstraction | MySQL 保存元数据/文本/状态，原始文件由存储抽象保存 |
 | 语义向量 | Qdrant | 仅服务于非结构化个人知识的可选 semantic retrieval |
-| GPS 与 Check-in | MySQL `travel_observations` | 以 `observation_type` 区分自动 GPS 和手动打卡；服务端按认证用户与客户端事件键处理归属和幂等 |
+| GPS 与 Check-in | MySQL `travel_footprints` | 以 `footprint_type` 区分自动 GPS 和手动打卡；服务端按认证用户与客户端事件键处理归属和幂等 |
 | Travel Memory 与明确偏好 | MySQL | 回忆事实快照与用户叙事分离；推断信号不能覆盖明确偏好 |
 | iOS 待传足迹 | UserDefaults | 短期、按用户隔离的 pending 队列，不是历史数据库 |
 | 会话、限流 | Redis + iOS Keychain | Token 不存入 UserDefaults |
 
 `KnowledgeSource` 与 Qdrant 解耦：资料的创建、读取、更新和删除不依赖向量库。RAG 不可用时，资料 CRUD 仍可工作；索引能力以明确状态和错误降级。
 
-### 2.3 当前 Travel Observation 数据流
+### 2.3 当前 Travel Footprint 数据流
 
 ```text
 Core Location（仅用户明确开始、前台）
@@ -77,14 +77,14 @@ LocationTrackingStore → 本地 pending 队列 → 100 条/批幂等同步
                                                    ↓
                                                 FastAPI
                                                    ↓
-                                      MySQL travel_observations
+                                      MySQL travel_footprints
                                                    ↓
-                              MapKit 合并本地与远端观察后渲染
+                              MapKit 合并本地与远端足迹点位后渲染
 
-一次手动打卡 → FastAPI 统一观察接口 → travel_observations → MapKit 标记与可信段内轨迹顶点
+一次手动打卡 → FastAPI 统一足迹接口 → travel_footprints → MapKit 标记与可信段内轨迹顶点
 ```
 
-定位、打卡与未来照片/笔记是 **Travel Observations**。它们可成为 Personal Travel Context 的 grounded 输入，但 AI 不应写回或覆盖原始事实。Web 已可按行程浏览足迹；iOS 负责前台采集、同步与地图显示，并不承载 Agent Runtime。
+GPS 与打卡当前统一保存为 **Travel Footprints**；未来照片/笔记也会成为旅行事实来源。它们可成为 Personal Travel Context 的 grounded 输入，但 AI 不应写回或覆盖原始事实。Web 已可按行程浏览足迹；iOS 负责前台采集、同步与地图显示，并不承载 Agent Runtime。
 
 ## 3. Personal Travel Context
 

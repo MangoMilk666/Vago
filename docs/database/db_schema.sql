@@ -1,5 +1,5 @@
 -- ============================================================
--- Vago (叠迹) — 当前 Travel Observation 全量数据库 DDL
+-- Vago (叠迹) — 当前 Travel Footprint 全量数据库 DDL
 -- 数据库：MySQL 8.0+  字符集：utf8mb4_unicode_ci
 -- 一键重建：mysql -u <user> -p <database> < docs/database/db_schema.sql
 -- 注意：本脚本会 DROP 并重建下列所有表，仅用于全新本地数据库。
@@ -15,7 +15,7 @@
 --   8. knowledge_sources  个人知识来源
 --   9. itinerary_days     每日行程主表
 --  10. itinerary_spots    每日景点/活动
---  11. travel_observations 统一旅行空间观察（自动 GPS / 手动打卡）
+--  11. travel_footprints 统一旅行足迹点位（自动 GPS / 手动打卡）
 --  12. travel_memories    Grounded Travel Memory
 -- ============================================================
 
@@ -25,7 +25,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- ------------------------------------------------------------
 -- 清空旧表（按依赖逆序 DROP，重建时幂等）
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS travel_observations;
+DROP TABLE IF EXISTS travel_footprints;
 DROP TABLE IF EXISTS travel_memories;
 DROP TABLE IF EXISTS itinerary_spots;
 DROP TABLE IF EXISTS itinerary_days;
@@ -302,21 +302,21 @@ CREATE TABLE itinerary_spots (
 
 
 -- ============================================================
--- 模块四：旅行空间观察
+-- 模块四：旅行足迹点位
 -- ============================================================
 
 -- ------------------------------------------------------------
--- 统一旅行空间观察（travel_observations）
--- 自动 GPS 与手动打卡共享空间事实基础；observation_type 保留用户主动确认语义。
+-- 统一旅行足迹点位（travel_footprints）
+-- 自动 GPS 与手动打卡共享事实基础；footprint_type 区分采集方式并保留打卡语义。
 -- 不建立外键：当前 Trip / User 跨迁移阶段仍由业务层做归属校验。
 -- ------------------------------------------------------------
-CREATE TABLE travel_observations (
+CREATE TABLE travel_footprints (
     id              INT             NOT NULL AUTO_INCREMENT      COMMENT '自增主键',
-    uuid            VARCHAR(32)     NOT NULL                     COMMENT '服务端旅行观察 UUID',
+    uuid            VARCHAR(32)     NOT NULL                     COMMENT '服务端旅行足迹 UUID',
     client_event_uuid VARCHAR(64)   NOT NULL                     COMMENT '客户端生成的稳定事件键',
     user_uuid       VARCHAR(32)     NOT NULL                     COMMENT '归属用户 UUID',
     trip_uuid       VARCHAR(32)     NOT NULL                     COMMENT '关联正式行程 UUID',
-    observation_type VARCHAR(24)    NOT NULL                     COMMENT 'AUTO_GPS 或 MANUAL_CHECKIN',
+    footprint_type  VARCHAR(24)     NOT NULL                     COMMENT 'AUTO_GPS 或 MANUAL_CHECKIN',
     latitude        FLOAT           NOT NULL                     COMMENT 'WGS-84 纬度',
     longitude       FLOAT           NOT NULL                     COMMENT 'WGS-84 经度',
     accuracy_m      FLOAT           DEFAULT NULL                 COMMENT '自动 GPS 的水平定位精度（米）',
@@ -324,15 +324,15 @@ CREATE TABLE travel_observations (
     tracking_segment_uuid VARCHAR(36) DEFAULT NULL               COMMENT '连续前台记录段 UUID；非记录时打卡可为空',
     location_name   VARCHAR(256)    DEFAULT NULL                 COMMENT '手动打卡的地点名称',
     note            TEXT            DEFAULT NULL                 COMMENT '手动打卡的旅行笔记',
-    occurred_at     DATETIME        NOT NULL                     COMMENT '观察实际发生时间（UTC）',
+    occurred_at     DATETIME        NOT NULL                     COMMENT '足迹点位实际发生时间（UTC）',
     created_at      DATETIME        NOT NULL                     COMMENT '服务端持久化时间（UTC）',
 
     PRIMARY KEY (id),
-    UNIQUE KEY uk_travel_observations_uuid        (uuid),
-    UNIQUE KEY uk_travel_observations_user_client (user_uuid, client_event_uuid),
-    INDEX      idx_travel_observations_user_uuid  (user_uuid),
-    INDEX      idx_travel_observations_trip_time  (trip_uuid, occurred_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户旅行空间观察事实';
+    UNIQUE KEY uk_travel_footprints_uuid        (uuid),
+    UNIQUE KEY uk_travel_footprints_user_client (user_uuid, client_event_uuid),
+    INDEX      idx_travel_footprints_user_uuid  (user_uuid),
+    INDEX      idx_travel_footprints_trip_occurred_at (trip_uuid, occurred_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户旅行足迹点位事实';
 
 
 -- ============================================================
@@ -341,7 +341,7 @@ CREATE TABLE travel_observations (
 
 -- ------------------------------------------------------------
 -- 旅行回忆（travel_memories）
--- fact_snapshot 是从 Trip / Itinerary / Observation 生成的可追溯事实；
+-- fact_snapshot 是从 Trip / Itinerary / TravelFootprint 生成的可追溯事实；
 -- narrative 是用户可编辑叙事，不能覆盖原始旅行事实。
 -- ------------------------------------------------------------
 CREATE TABLE travel_memories (
