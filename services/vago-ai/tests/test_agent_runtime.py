@@ -1,6 +1,7 @@
 """验证 Phase 10.2.1 Runtime 的工具边界、预算与 Observation 链。"""
 
 import asyncio
+from datetime import date, timedelta
 from typing import Any
 
 from app.agent_runtime.registry import AgentTool, ToolRegistry
@@ -16,6 +17,8 @@ ALL_TOOL_NAMES = (
     "get_checkins_by_trip",
     "get_recent_footprint_summaries",
     "get_recent_checkins",
+    "get_checkins_by_date_range",
+    "get_observations_by_date_range",
     "get_user_preferences",
     "get_travel_memories",
 )
@@ -151,7 +154,7 @@ def test_runtime_reads_current_trip_before_by_trip_observations() -> None:
         "user-a",
         use_personal_context=True,
         use_rag=False,
-        prompt="我今天的足迹和打卡记录怎么样？",
+        prompt="我当前行程的足迹和打卡记录怎么样？",
     )
 
     assert calls == [
@@ -159,6 +162,127 @@ def test_runtime_reads_current_trip_before_by_trip_observations() -> None:
         ("get_footprint_summary_by_trip", {"tripUuid": "trip-a"}),
         ("get_checkins_by_trip", {"tripUuid": "trip-a", "limit": 3}),
     ]
+
+
+def test_runtime_passes_tomorrow_to_itinerary_domain_service() -> None:
+    """测试：跨日追问把目标日期传给日程领域服务，而不是固定查询今天。"""
+    calls: list[dict[str, Any]] = []
+
+    def itinerary(_db: Any, _user: str, _state: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
+        calls.append(arguments)
+        return {"dayDate": arguments["date"], "dayIndex": 2, "spots": ["明日日程景点"]}
+
+    runtime = AgentRuntime(_registry({
+        "get_current_active_trip": lambda *_args: {"uuid": "trip-a"},
+        "get_trip_itinerary_by_date": itinerary,
+    }))
+    preparation = runtime.prepare(
+        None,
+        "user-a",
+        use_personal_context=True,
+        use_rag=False,
+        prompt="那明天呢？",
+        recent_user_messages=("看看我今天的行程安排",),
+    )
+
+    assert calls == [{"tripUuid": "trip-a", "date": (date.today() + timedelta(days=1)).isoformat()}]
+    assert '"dayDate"' in preparation.personal_context
+    assert (date.today() + timedelta(days=1)).isoformat() in preparation.personal_context
+
+
+def test_runtime_uses_scoped_historical_checkins_without_current_trip_fallback() -> None:
+    """测试：指定上周地点的打卡按日期和地点查询，不读取进行中 Trip。"""
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def current_trip(*_args: Any) -> None:
+        raise AssertionError("历史范围查询不应读取当前 Trip")
+
+    def checkins(_db: Any, _user: str, _state: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
+        calls.append(("get_checkins_by_date_range", arguments))
+        return {
+            "checkins": [{
+                "locationName": "浅草寺",
+                "tripTitle": "东京旅行",
+                "tripDestinationDeclared": "东京",
+                "locationVerified": False,
+            }],
+            "locationScopeVerified": False,
+            "groundingNote": "日期候选打卡，城市归属未验证。",
+        }
+
+    runtime = AgentRuntime(_registry({
+        "get_current_active_trip": current_trip,
+        "get_checkins_by_date_range": checkins,
+    }))
+    preparation = runtime.prepare(
+        None,
+        "user-a",
+        use_personal_context=True,
+        use_rag=False,
+        prompt="我上周在东京打卡了哪里？",
+    )
+
+    assert calls and calls[0][0] == "get_checkins_by_date_range"
+    assert calls[0][1]["locationQuery"] == "东京"
+    assert preparation.context_labels == ["近期旅行观察"]
+    assert "浅草寺" in preparation.personal_context
+    assert '"locationScopeVerified": false' in preparation.personal_context
+    assert any(
+        "城市归属未验证" in event["label"]
+        for event in preparation.events
+        if event["type"] == "tool.completed"
+    )
+
+
+def test_runtime_marks_ambiguous_historical_checkin_as_clarification() -> None:
+    """测试：未明确日期/行程的历史打卡请求携带澄清要求且不运行读取工具。"""
+    preparation = AgentRuntime(_registry({})).prepare(
+        None,
+        "user-a",
+        use_personal_context=True,
+        use_rag=False,
+        prompt="我以前在哪里打卡过？",
+    )
+
+    assert preparation.personal_context is not None
+    assert "queryGuidance" in preparation.personal_context
+    assert "不得用当前行程" in preparation.personal_context
+
+
+def test_runtime_observation_answer_context_does_not_supply_gps_coordinates() -> None:
+    """测试：日期范围旅行观察只提供命名打卡和 GPS 数量，不暴露坐标。"""
+    observations = {
+        "dateRange": {"startDate": "2026-10-05", "endDate": "2026-10-05"},
+        "trips": [{
+            "tripTitle": "新加坡旅行",
+            "destination": "新加坡",
+            "automaticSampleCount": 42,
+            "checkins": [{"locationName": "滨海湾花园"}],
+        }],
+        "truncated": True,
+        "checkinsTruncated": True,
+        "groundingNote": "GPS 数量不能证明具体到访地点。",
+    }
+    runtime = AgentRuntime(_registry({
+        "get_observations_by_date_range": lambda *_args: observations,
+    }))
+    preparation = runtime.prepare(
+        None,
+        "user-a",
+        use_personal_context=True,
+        use_rag=False,
+        prompt="我昨天去了哪里？",
+    )
+
+    assert "滨海湾花园" in preparation.personal_context
+    assert "GPS 数量不能证明" in preparation.personal_context
+    assert '"checkinsTruncated": true' in preparation.personal_context
+    assert "latitude" not in preparation.personal_context
+    assert "longitude" not in preparation.personal_context
+    assert any(
+        event["type"] == "tool.completed" and "结果可能不完整" in event["label"]
+        for event in preparation.events
+    )
 
 
 def test_runtime_skips_by_trip_tools_without_an_active_trip() -> None:
@@ -182,7 +306,7 @@ def test_runtime_skips_by_trip_tools_without_an_active_trip() -> None:
         "user-a",
         use_personal_context=True,
         use_rag=False,
-        prompt="我今天的足迹和打卡记录怎么样？",
+        prompt="我当前行程的足迹和打卡记录怎么样？",
     )
 
     assert calls == ["get_current_active_trip"]

@@ -1,6 +1,6 @@
 # Vago Agent Runtime 设计与开发参考
 
-> 状态：Phase 10 基线已实现。当前具备 SSE 对话、持久化会话、可选个人知识检索，以及最小只读 Agent Runtime / Tool Registry / Agent Event Stream。该 Runtime 仍按用户授权预取固定领域上下文，尚未实现 prompt-aware tool selection、跨领域协调、约束检查、审批或外部工具接入。
+> 状态：Phase 10.1–10.2.1 的确定性 prompt-aware 只读工具选择已实现；支持有限对话主题承接、日期范围查询、歧义澄清和地点事实约束。跨领域重规划、写操作审批与外部工具接入仍属后续能力。
 
 ## 定位
 
@@ -100,7 +100,7 @@ Task-scoped Personal Travel Context
 
 例如，普通目的地知识问题可以不读取任何个人资料；“我今天有点累，接下来怎么安排”才可能需要当前行程、今日日程与近期旅行观察。用户关闭个人资料授权时，选择器不得选择对应工具。
 
-当前 Phase 10 基线仍以授权开关固定读取部分工具，这是兼容既有对话链路的过渡实现。Phase 10.1 起应以本节定义的选择策略替代它。
+当前只读 Runtime 已由确定性选择策略生成工具计划；授权开关定义可读上限，不能单独触发读取。日期只从当前消息解析，短追问可以继承主题，但不继承上一轮的日期。
 
 Runtime 必须具有明确终止条件：Goal 完成、等待 Approval、不可恢复错误、达到最大 Loop Step 或用户取消。禁止无上限循环或无限 Tool Retry。
 
@@ -108,7 +108,7 @@ Runtime 必须具有明确终止条件：Goal 完成、等待 Approval、不可�
 
 Runtime 不应通过大量 `if tool_name == ...` 管理工具。工具统一注册到 Tool Registry，并至少描述：Tool name、description、input/output schema、read/write 属性、approval requirement 与 execution handler。
 
-Phase 10.2.1 的目标命名示例：
+当前已注册的只读工具：
 
 ```text
 Tool Registry
@@ -118,25 +118,30 @@ Tool Registry
 ├── get_recent_ended_trips
 ├── get_footprint_summary_by_trip
 ├── get_checkins_by_trip
+├── get_recent_footprint_summaries
+├── get_recent_checkins
+├── get_checkins_by_date_range
+├── get_observations_by_date_range
 ├── get_user_preferences
-├── search_personal_knowledge
-├── check_itinerary_constraints
-├── propose_itinerary_update
-└── apply_approved_itinerary_update
+└── get_travel_memories
 ```
+
+`search_personal_knowledge` 由现有 RAG/LangChain 链路按需提供；约束检查、写操作提案与执行仍未实现。
 
 | Context 类型       | 首选来源                     | 示例工具                                                     |
 | ------------------ | ---------------------------- | ------------------------------------------------------------ |
 | Long-term          | SQL / future Memory          | `get_recent_trips(limit)`、`get_recent_ended_trips(limit)`、`get_user_preferences` |
 | Current trip       | Travel domain                | `get_current_active_trip`、`get_trip_itinerary_by_date`      |
-| Live travel        | Footprint domain             | `get_footprint_summary_by_trip`、`get_checkins_by_trip`      |
+| Live travel        | Footprint domain             | `get_footprint_summary_by_trip`、`get_checkins_by_trip`、`get_observations_by_date_range` |
 | Personal knowledge | Direct Context / 按需 Qdrant | `search_personal_knowledge`                                  |
 | Constraint         | Deterministic service        | `check_itinerary_constraints`                                |
 | Write action       | Travel domain                | `propose_itinerary_update`、`apply_approved_itinerary_update` |
 
 Tool 使用结构化输入输出，内部完成 user ownership 校验并隐藏 SQL。不要向 Agent 暴露 `execute_sql`、`update_any_table` 等基础设施级工具。
 
-当前已运行的初版工具名会在 Phase 10.2.1 中迁移到上述命名；迁移前的 SSE 历史事件保留原始工具名以维持对话记录可读性。
+历史足迹按用户归属和日期范围读取有限摘要。当前数据没有单条打卡的城市归属字段，因此城市条件只表达用户想查询的范围；结果是该日期内的候选打卡，必须标记城市未验证，不能把 Trip 标题或目的地当作实际到访证明，也不能因打卡名称不含城市词就认定没有记录。日期范围不明确时要求澄清，不将当前 Trip 或最近几条记录伪装成历史命中。GPS 仅提供采样数量，不能证明地点；Trip destination 只表示行程声明。若摘要达到上限，会标记结果截断并要求 Agent 说明不完整性。
+
+如果用户询问“已结束的行程去了哪里”但没有说明哪次行程或时间范围，Runtime 暂停本轮领域读取并先澄清；单独的 Trip 列表或 GPS 数量不足以回答实际到访地点。
 
 Qdrant 只用于非结构化个人资料语义检索；结构化旅行事实通过 Domain Service / MySQL 获取。
 
@@ -148,7 +153,7 @@ Qdrant 只用于非结构化个人资料语义检索；结构化旅行事实通�
 intent
 selected_tools
 max_steps
-needs_clarification
+clarification
 ```
 
 第一版优先采用确定性规则，不为了决定是否读一条 SQL 数据而额外调用 LLM。规则无法判断的模糊复杂请求，后续才可使用受限的结构化 LLM selector；该 selector 也只能选择已授权的工具或 `no_tool`，不能直接访问事实、写数据或绕过 Domain Service。
@@ -156,12 +161,16 @@ needs_clarification
 | 用户目标示例 | 预期初始工具 |
 | --- | --- |
 | “新加坡十月天气如何？” | 无个人工具 |
-| “我当前行程还剩什么？” | `get_current_trip`、`get_today_itinerary` |
-| “结合我的旅行习惯推荐目的地” | `get_user_preferences`、`get_recent_travel_history`、必要时 `get_travel_memories` |
-| “我今天累了，接下来四小时怎么安排？” | `get_current_trip`、`get_today_itinerary`，确认进行中行程后可读取 `get_recent_footprint` |
+| “京都有哪些地方值得打卡？” | 无个人旅行事实工具；作为目的地建议回答 |
+| “我当前行程还剩什么？” | `get_current_active_trip`、`get_trip_itinerary_by_date(date=今天)` |
+| “结合我的旅行习惯推荐目的地” | `get_user_preferences`、`get_recent_trips`，必要时 `get_travel_memories` |
+| “我今天累了，接下来四小时怎么安排？” | `get_current_active_trip`、`get_trip_itinerary_by_date(date=今天)` |
 | “我保存的京都资料有什么建议？” | `search_personal_knowledge` |
+| “那明天的日程呢？” | `get_current_active_trip`、`get_trip_itinerary_by_date(date=明天)` |
+| “我上周在东京打卡了哪里？” | `get_checkins_by_date_range(日期范围)`；返回候选，需说明城市归属未验证 |
+| “我昨天去了哪里？” | `get_observations_by_date_range(日期范围)`；仅使用命名打卡回答具体地点 |
 
-当前 `get_current_trip` 同时返回当前行程和近期历史，粒度过粗；后续必须拆分，避免“查今天日程”顺带注入历史旅行数据。`useRag` 只表示可注册 `search_personal_knowledge`，不应导致每轮固定读取知识库摘要或固定检索 Qdrant。
+“请帮我安排一趟京都旅行”不会仅因“安排”触发当前行程读取。`useRag` 只表示可注册 `search_personal_knowledge`，不导致每轮固定读取知识库摘要或固定检索 Qdrant。
 
 ## Tool Failure 与 Replanning
 

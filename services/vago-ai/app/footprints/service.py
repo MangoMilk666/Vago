@@ -1,10 +1,10 @@
 """旅行空间观察领域服务：校验行程归属后持久化移动端事实记录。"""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from math import asin, cos, radians, sin, sqrt
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,6 +30,7 @@ MINIMUM_AUTOMATIC_SAMPLE_DISTANCE_TO_CHECKIN_METERS = 15.0
 # 两次用户主动打卡的阈值更大，减少 GPS 漂移造成的重复地点记录。
 MINIMUM_CHECKIN_DISTANCE_METERS = 30.0
 AGENT_MAX_RECENT_OBSERVATIONS = 5
+AGENT_MAX_DATE_RANGE_OBSERVATIONS = 20
 
 
 def _new_uuid() -> str:
@@ -272,11 +273,16 @@ def get_agent_recent_footprint_summaries(db: Session, user_uuid: str, limit: int
     ).all()
     summaries: list[dict] = []
     for trip, latest_observed_at in rows:
+        checkins = get_agent_checkins_by_trip(db, user_uuid, trip.uuid, limit=safe_limit)["recentCheckins"]
         summaries.append({
             "tripUuid": trip.uuid,
             "tripTitle": trip.title,
             "destination": trip.destination,
             "latestObservedAt": latest_observed_at.isoformat(),
+            "manualCheckins": [
+                {"locationName": item["locationName"], "occurredAt": item["occurredAt"]}
+                for item in checkins
+            ],
             **get_agent_footprint_summary_by_trip(db, user_uuid, trip.uuid),
         })
     return summaries
@@ -307,6 +313,136 @@ def get_agent_recent_checkins(db: Session, user_uuid: str, limit: int = 3) -> li
         }
         for observation, trip in rows
     ]
+
+
+def get_agent_checkins_by_date_range(
+    db: Session,
+    user_uuid: str,
+    start_date: date,
+    end_date: date,
+    *,
+    location_query: str | None = None,
+    limit: int = AGENT_MAX_DATE_RANGE_OBSERVATIONS,
+) -> dict:
+    """读取日期范围内的有限打卡候选；没有单条城市字段时不声称地点已验证。"""
+    start_at = datetime.combine(start_date, time.min)
+    end_at = datetime.combine(end_date + timedelta(days=1), time.min)
+    safe_limit = max(1, min(limit, AGENT_MAX_DATE_RANGE_OBSERVATIONS))
+    statement = (
+        select(TravelObservation, Trip)
+        .join(Trip, Trip.uuid == TravelObservation.trip_uuid)
+        .where(
+            TravelObservation.user_uuid == user_uuid,
+            TravelObservation.observation_type == MANUAL_CHECKIN,
+            TravelObservation.occurred_at >= start_at,
+            TravelObservation.occurred_at < end_at,
+            Trip.user_uuid == user_uuid,
+            Trip.deleted_at.is_(None),
+        )
+    )
+    normalized_location = (location_query or "").strip()
+    rows = db.execute(
+        statement.order_by(TravelObservation.occurred_at.desc(), TravelObservation.uuid.desc())
+        .limit(safe_limit + 1)
+    ).all()
+    return {
+        "dateRange": {"startDate": start_date.isoformat(), "endDate": end_date.isoformat()},
+        "locationQuery": normalized_location or None,
+        "locationScopeVerified": False if normalized_location else None,
+        "checkins": [
+            {
+                "tripTitle": trip.title,
+                "tripDestinationDeclared": trip.destination,
+                "locationName": observation.location_name or "未命名地点",
+                "occurredAt": observation.occurred_at.isoformat(),
+                "locationVerified": False if normalized_location else None,
+            }
+            for observation, trip in rows[:safe_limit]
+        ],
+        "truncated": len(rows) > safe_limit,
+        "groundingNote": (
+            "打卡按日期范围返回候选记录；系统没有逐条打卡的城市归属，不能确认这些记录位于所询问的城市。"
+            "Trip 目的地只是行程声明，不是单条打卡的位置证明。"
+            if normalized_location else "结果仅按日期范围筛选，地点名称来自用户打卡记录。"
+        ),
+    }
+
+
+def get_agent_observations_by_date_range(
+    db: Session,
+    user_uuid: str,
+    start_date: date,
+    end_date: date,
+    *,
+    limit: int = AGENT_MAX_DATE_RANGE_OBSERVATIONS,
+) -> dict:
+    """按明确日期汇总 Trip、GPS 数量与命名打卡，不向 Agent 暴露原始坐标。"""
+    start_at = datetime.combine(start_date, time.min)
+    end_at = datetime.combine(end_date + timedelta(days=1), time.min)
+    safe_limit = max(1, min(limit, AGENT_MAX_DATE_RANGE_OBSERVATIONS))
+    trip_rows = db.execute(
+        select(
+            Trip.uuid,
+            Trip.title,
+            Trip.destination,
+            func.sum(case((TravelObservation.observation_type == AUTO_GPS, 1), else_=0)).label("automatic_sample_count"),
+        )
+        .join(TravelObservation, TravelObservation.trip_uuid == Trip.uuid)
+        .where(
+            Trip.user_uuid == user_uuid,
+            Trip.deleted_at.is_(None),
+            TravelObservation.user_uuid == user_uuid,
+            TravelObservation.occurred_at >= start_at,
+            TravelObservation.occurred_at < end_at,
+        )
+        .group_by(Trip.uuid, Trip.title, Trip.destination)
+        .order_by(func.max(TravelObservation.occurred_at).desc(), Trip.uuid.desc())
+        .limit(safe_limit + 1)
+    ).all()
+    trips = trip_rows[:safe_limit]
+    trip_uuids = [row.uuid for row in trips]
+    checkin_rows = []
+    if trip_uuids:
+        # 如果范围内存在 GPS 观察，只附带少量命名打卡作为地点证据，不传递 GPS 坐标。
+        checkin_rows = db.execute(
+            select(TravelObservation, Trip.uuid)
+            .join(Trip, Trip.uuid == TravelObservation.trip_uuid)
+            .where(
+                TravelObservation.user_uuid == user_uuid,
+                TravelObservation.trip_uuid.in_(trip_uuids),
+                TravelObservation.observation_type == MANUAL_CHECKIN,
+                TravelObservation.occurred_at >= start_at,
+                TravelObservation.occurred_at < end_at,
+                Trip.user_uuid == user_uuid,
+                Trip.deleted_at.is_(None),
+            )
+            .order_by(TravelObservation.occurred_at.desc(), TravelObservation.uuid.desc())
+            .limit(safe_limit + 1)
+        ).all()
+    checkins_truncated = len(checkin_rows) > safe_limit
+    checkins_by_trip: dict[str, list[dict[str, str | None]]] = {trip_uuid: [] for trip_uuid in trip_uuids}
+    for observation, trip_uuid in checkin_rows[:safe_limit]:
+        checkins_by_trip[trip_uuid].append({
+            "locationName": observation.location_name or "未命名地点",
+            "occurredAt": observation.occurred_at.isoformat(),
+        })
+    trips_truncated = len(trip_rows) > safe_limit
+    return {
+        "dateRange": {"startDate": start_date.isoformat(), "endDate": end_date.isoformat()},
+        "trips": [
+            {
+                "tripTitle": row.title,
+                "destination": row.destination,
+                "automaticSampleCount": int(row.automatic_sample_count or 0),
+                "checkins": checkins_by_trip[row.uuid],
+            }
+            for row in trips
+        ],
+        "truncated": trips_truncated or checkins_truncated,
+        "tripsTruncated": trips_truncated,
+        "checkinsTruncated": checkins_truncated,
+        "groundingNote": "GPS 采样数量不能证明具体到访地点；行程目的地是行程声明，不等于实际到访；确认到访的地点名称仅来自手动打卡。若结果已截断，不能将当前列表表述为完整记录。",
+    }
 
 
 def get_agent_observation_context(db: Session, user_uuid: str, trip_uuid: str) -> dict:

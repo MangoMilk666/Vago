@@ -136,10 +136,164 @@ def test_agent_recent_observations_are_ordered_by_occurrence_and_limited(db_sess
 
     assert [item["tripUuid"] for item in recent_footprints] == ["trip-newer"]
     assert recent_footprints[0]["automaticSampleCount"] == 1
+    assert recent_footprints[0]["manualCheckins"][0]["locationName"] == "最近打卡"
     assert recent_checkins == [{
         "tripUuid": "trip-newer", "tripTitle": "测试行程", "locationName": "最近打卡",
         "occurredAt": "2026-09-26T00:00:00", "note": None,
     }]
+
+
+def test_agent_checkins_by_date_return_city_unverified_candidates(db_session: Session):
+    """测试：城市缺少单条打卡归属字段时返回日期候选并明确未验证，不误收也不漏报。"""
+    _add_trip(db_session, uuid="trip-tokyo", user_uuid="user-a", status=3)
+    _add_trip(db_session, uuid="trip-kyoto", user_uuid="user-a", status=1)
+    db_session.query(Trip).filter(Trip.uuid == "trip-tokyo").update({"title": "东京自由行", "destination": "东京"})
+    db_session.query(Trip).filter(Trip.uuid == "trip-kyoto").update({"destination": "京都"})
+    db_session.add_all([
+        TravelObservation(
+            uuid=f"tokyo-{day.isoformat()}", client_event_uuid=f"tokyo-event-{day.isoformat()}", user_uuid="user-a",
+            trip_uuid="trip-tokyo", observation_type=service.MANUAL_CHECKIN,
+            latitude=35.6, longitude=139.7,
+            location_name="浅草寺" if day.day == 28 else f"东京地点{day.day}",
+            occurred_at=datetime.combine(day, datetime.min.time(), tzinfo=UTC),
+        )
+        for day in (date(2026, 9, 28), date(2026, 9, 29), date(2026, 9, 30), date(2026, 10, 1))
+    ] + [
+        TravelObservation(
+            uuid="kyoto-checkin", client_event_uuid="kyoto-event", user_uuid="user-a",
+            trip_uuid="trip-kyoto", observation_type=service.MANUAL_CHECKIN,
+            latitude=35.0, longitude=135.7, location_name="京都车站",
+            occurred_at=datetime(2026, 10, 2, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="tokyo-trip-kyoto-checkin", client_event_uuid="tokyo-trip-kyoto-event", user_uuid="user-a",
+            trip_uuid="trip-tokyo", observation_type=service.MANUAL_CHECKIN,
+            latitude=35.0, longitude=135.7, location_name="京都车站",
+            occurred_at=datetime(2026, 10, 3, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="tokyo-trip-unnamed-checkin", client_event_uuid="tokyo-trip-unnamed-event", user_uuid="user-a",
+            trip_uuid="trip-tokyo", observation_type=service.MANUAL_CHECKIN,
+            latitude=35.0, longitude=135.7, location_name=None,
+            occurred_at=datetime(2026, 10, 3, 1, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="tokyo-outside-week", client_event_uuid="tokyo-outside-event", user_uuid="user-a",
+            trip_uuid="trip-tokyo", observation_type=service.MANUAL_CHECKIN,
+            latitude=35.6, longitude=139.7, location_name="东京周末", occurred_at=datetime(2026, 10, 5, tzinfo=UTC),
+        ),
+    ])
+    db_session.commit()
+
+    result = service.get_agent_checkins_by_date_range(
+        db_session,
+        "user-a",
+        date(2026, 9, 28),
+        date(2026, 10, 4),
+        location_query="东京",
+    )
+
+    assert len(result["checkins"]) == 7
+    names = [item["locationName"] for item in result["checkins"]]
+    assert "浅草寺" in names
+    assert names.count("京都车站") == 2
+    assert "未命名地点" in names
+    assert result["locationScopeVerified"] is False
+    assert all(item["locationVerified"] is False for item in result["checkins"])
+    assert "Trip 目的地只是行程声明" in result["groundingNote"]
+    assert result["truncated"] is False
+
+
+def test_agent_observation_date_range_marks_checkin_truncation_at_limit(db_session: Session):
+    """测试：同一 Trip 内 20 条完整、21 条超限时正确返回地点列表截断状态。"""
+    _add_trip(db_session, uuid="trip-checkin-limit", user_uuid="user-a", status=3)
+    db_session.query(Trip).filter(Trip.uuid == "trip-checkin-limit").update({"title": "地点上限测试"})
+    db_session.add_all([
+        TravelObservation(
+            uuid=f"checkin-{day}-{index}",
+            client_event_uuid=f"checkin-event-{day}-{index}",
+            user_uuid="user-a",
+            trip_uuid="trip-checkin-limit",
+            observation_type=service.MANUAL_CHECKIN,
+            latitude=1.0,
+            longitude=103.0,
+            location_name=f"地点{index}",
+            occurred_at=datetime(2026, 10, day, 8, index % 60, tzinfo=UTC),
+        )
+        for day, count in ((5, 20), (6, 21))
+        for index in range(count)
+    ])
+    db_session.commit()
+
+    complete = service.get_agent_observations_by_date_range(
+        db_session, "user-a", date(2026, 10, 5), date(2026, 10, 5),
+    )
+    truncated = service.get_agent_observations_by_date_range(
+        db_session, "user-a", date(2026, 10, 6), date(2026, 10, 6),
+    )
+
+    assert len(complete["trips"][0]["checkins"]) == 20
+    assert complete["checkinsTruncated"] is False
+    assert complete["truncated"] is False
+    assert len(truncated["trips"][0]["checkins"]) == 20
+    assert truncated["checkinsTruncated"] is True
+    assert truncated["truncated"] is True
+    assert "不能将当前列表表述为完整记录" in truncated["groundingNote"]
+
+
+def test_agent_observation_date_range_returns_named_evidence_without_coordinates(db_session: Session):
+    """测试：按日期汇总 GPS 数量和打卡地点，不向 Agent 暴露原始坐标。"""
+    _add_trip(db_session, uuid="trip-observation-date", user_uuid="user-a", status=3)
+    _add_trip(db_session, uuid="trip-gps-only", user_uuid="user-a", status=3)
+    db_session.query(Trip).filter(Trip.uuid == "trip-observation-date").update({"title": "含打卡旅行"})
+    db_session.query(Trip).filter(Trip.uuid == "trip-gps-only").update({"title": "仅 GPS 旅行"})
+    db_session.add_all([
+        TravelObservation(
+            uuid="date-auto-1", client_event_uuid="date-auto-event-1", user_uuid="user-a",
+            trip_uuid="trip-observation-date", observation_type=service.AUTO_GPS,
+            latitude=1.28, longitude=103.85, occurred_at=datetime(2026, 10, 5, 8, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="date-auto-2", client_event_uuid="date-auto-event-2", user_uuid="user-a",
+            trip_uuid="trip-observation-date", observation_type=service.AUTO_GPS,
+            latitude=1.29, longitude=103.86, occurred_at=datetime(2026, 10, 5, 9, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="date-checkin", client_event_uuid="date-checkin-event", user_uuid="user-a",
+            trip_uuid="trip-observation-date", observation_type=service.MANUAL_CHECKIN,
+            latitude=1.30, longitude=103.87, location_name="滨海湾花园",
+            occurred_at=datetime(2026, 10, 5, 10, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="outside-auto", client_event_uuid="outside-auto-event", user_uuid="user-a",
+            trip_uuid="trip-observation-date", observation_type=service.AUTO_GPS,
+            latitude=1.31, longitude=103.88, occurred_at=datetime(2026, 10, 4, 23, tzinfo=UTC),
+        ),
+        TravelObservation(
+            uuid="gps-only-auto", client_event_uuid="gps-only-event", user_uuid="user-a",
+            trip_uuid="trip-gps-only", observation_type=service.AUTO_GPS,
+            latitude=1.32, longitude=103.89, occurred_at=datetime(2026, 10, 5, 11, tzinfo=UTC),
+        ),
+    ])
+    db_session.commit()
+
+    result = service.get_agent_observations_by_date_range(
+        db_session, "user-a", date(2026, 10, 5), date(2026, 10, 5),
+    )
+
+    trip_summaries = {item["tripTitle"]: item for item in result["trips"]}
+    assert trip_summaries["含打卡旅行"]["automaticSampleCount"] == 2
+    assert trip_summaries["含打卡旅行"]["checkins"][0]["locationName"] == "滨海湾花园"
+    assert trip_summaries["仅 GPS 旅行"]["automaticSampleCount"] == 1
+    assert trip_summaries["仅 GPS 旅行"]["checkins"] == []
+    assert "groundingNote" in result
+    assert "latitude" not in str(result)
+    assert "longitude" not in str(result)
+
+    empty = service.get_agent_observations_by_date_range(
+        db_session, "user-a", date(2026, 10, 6), date(2026, 10, 6),
+    )
+    assert empty["trips"] == []
 
 
 def test_checkin_requires_an_in_progress_trip(db_session: Session):

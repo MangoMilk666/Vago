@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -70,6 +71,8 @@ class AgentRuntime:
             AgentTool("get_checkins_by_trip", "正在读取指定行程打卡", _get_checkins_by_trip),
             AgentTool("get_recent_footprint_summaries", "正在读取最近足迹行程", _get_recent_footprint_summaries),
             AgentTool("get_recent_checkins", "正在读取最近打卡", _get_recent_checkins),
+            AgentTool("get_checkins_by_date_range", "正在读取指定日期范围打卡", _get_checkins_by_date_range),
+            AgentTool("get_observations_by_date_range", "正在读取指定日期范围旅行观察", _get_observations_by_date_range),
             AgentTool("get_user_preferences", "正在读取明确旅行偏好", _get_preferences),
             AgentTool("get_travel_memories", "正在读取旅行回忆摘要", _get_memories),
         ])
@@ -93,8 +96,15 @@ class AgentRuntime:
 
         # 如果未授权或本轮问题无需个人事实，直接进入通用建议，空工具计划是正常结果。
         if not selection_plan.tool_calls:
-            events.append(_event("agent.status", _no_tool_status(use_personal_context, use_rag), trace_id=trace_id))
-            return AgentRuntimePreparation(trace_id, None, [], events, selection_plan.allow_rag_search)
+            status = "需要补充查询范围" if selection_plan.clarification else _no_tool_status(use_personal_context, use_rag)
+            events.append(_event("agent.status", status, trace_id=trace_id))
+            return AgentRuntimePreparation(
+                trace_id,
+                _clarification_context(selection_plan.clarification),
+                [],
+                events,
+                selection_plan.allow_rag_search,
+            )
 
         events.append(_event("agent.status", "正在读取与本轮问题相关的旅行信息", trace_id=trace_id))
         read_count = 0
@@ -143,8 +153,15 @@ class AgentRuntime:
 
         # 如果未授权或本轮问题无需个人事实，直接进入通用 LLM 对话，不读取领域事实。
         if not selection_plan.tool_calls:
-            yield AgentRuntimeProgress(_event("agent.status", _no_tool_status(use_personal_context, use_rag), trace_id=trace_id))
-            yield AgentRuntimePreparation(trace_id, None, [], [], selection_plan.allow_rag_search)
+            status = "需要补充查询范围" if selection_plan.clarification else _no_tool_status(use_personal_context, use_rag)
+            yield AgentRuntimeProgress(_event("agent.status", status, trace_id=trace_id))
+            yield AgentRuntimePreparation(
+                trace_id,
+                _clarification_context(selection_plan.clarification),
+                [],
+                [],
+                selection_plan.allow_rag_search,
+            )
             return
 
         yield AgentRuntimeProgress(_event("agent.status", "正在读取与本轮问题相关的旅行信息", trace_id=trace_id))
@@ -266,6 +283,13 @@ def _no_tool_status(use_personal_context: bool, use_rag: bool) -> str:
     return "本轮问题无需读取个人旅行资料，正在生成建议"
 
 
+def _clarification_context(clarification: str | None) -> str | None:
+    """把选择器无法安全确定的查询边界传给回答链，避免静默改查当前行程。"""
+    if clarification is None:
+        return None
+    return json.dumps({"queryGuidance": clarification}, ensure_ascii=False)
+
+
 def _new_runtime_state() -> dict[str, Any]:
     """初始化只保存本轮 Observation 的 Runtime State，不建立新的长期存储。"""
     return {
@@ -358,6 +382,39 @@ def _get_recent_checkins(
     return footprint_service.get_agent_recent_checkins(db, user_uuid, _read_limit(arguments))
 
 
+def _get_checkins_by_date_range(
+    db: Session,
+    user_uuid: str,
+    _: dict[str, Any],
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """按选择器给出的日期与地点范围读取用户打卡摘要。"""
+    return footprint_service.get_agent_checkins_by_date_range(
+        db,
+        user_uuid,
+        date.fromisoformat(str(arguments["startDate"])),
+        date.fromisoformat(str(arguments["endDate"])),
+        location_query=arguments.get("locationQuery"),
+        limit=_read_limit(arguments, default=20),
+    )
+
+
+def _get_observations_by_date_range(
+    db: Session,
+    user_uuid: str,
+    _: dict[str, Any],
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """读取日期范围内的有限足迹数量与命名打卡摘要。"""
+    return footprint_service.get_agent_observations_by_date_range(
+        db,
+        user_uuid,
+        date.fromisoformat(str(arguments["startDate"])),
+        date.fromisoformat(str(arguments["endDate"])),
+        limit=_read_limit(arguments, default=20),
+    )
+
+
 def _get_preferences(db: Session, user_uuid: str, _: dict[str, Any], __: dict[str, Any]) -> dict[str, Any]:
     """读取用户明确确认的偏好，不读取模型推断的信号。"""
     return preference_service.get_agent_preference_context(db, user_uuid)
@@ -408,6 +465,10 @@ def _store_tool_output(state: dict[str, Any], tool_name: str, output: Any) -> No
         state["liveObservations"]["recentFootprintSummaries"] = output or []
     elif tool_name == "get_recent_checkins":
         state["liveObservations"]["recentCheckins"] = output or []
+    elif tool_name == "get_checkins_by_date_range":
+        state["liveObservations"]["dateRangeCheckins"] = output or {}
+    elif tool_name == "get_observations_by_date_range":
+        state["liveObservations"]["dateRangeObservations"] = output or {}
     elif tool_name == "get_user_preferences":
         state["preferences"] = output or {}
     elif tool_name == "get_travel_memories":
@@ -507,6 +568,8 @@ def _has_live_observations(live_observations: dict[str, Any] | None) -> bool:
         or live_observations.get("currentTripCheckins")
         or live_observations.get("recentFootprintSummaries")
         or live_observations.get("recentCheckins")
+        or live_observations.get("dateRangeCheckins")
+        or live_observations.get("dateRangeObservations")
     )
 
 
@@ -536,6 +599,16 @@ def _summary_for_tool(tool_name: str, output: Any) -> str:
     # 如果读取的是最近手动打卡，根据结果列表说明是否存在主动记录。
     if tool_name == "get_recent_checkins":
         return "已读取最近打卡" if output else "暂无手动打卡"
+    if tool_name == "get_checkins_by_date_range":
+        checkins = output.get("checkins", []) if output else []
+        suffix = "，结果可能不完整" if output and output.get("truncated") else ""
+        location_suffix = "，城市归属未验证" if output and output.get("locationScopeVerified") is False else ""
+        return f"已读取指定日期范围打卡候选（{len(checkins)} 条{location_suffix}）{suffix}" if checkins else "指定日期范围内暂无打卡候选记录"
+    if tool_name == "get_observations_by_date_range":
+        trips = output.get("trips", []) if output else []
+        if not trips:
+            return "指定日期范围内暂无旅行观察"
+        return "已读取指定日期范围旅行观察，结果可能不完整" if output.get("truncated") else "已读取指定日期范围旅行观察"
     # 如果读取的是明确偏好，根据已确认字段判断是否可用于个性化建议。
     if tool_name == "get_user_preferences":
         return "已读取明确旅行偏好" if output and output.get("hasExplicitPreference") else "尚未设置明确旅行偏好"
