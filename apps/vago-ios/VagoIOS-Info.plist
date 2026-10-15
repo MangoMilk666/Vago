@@ -13,10 +13,10 @@
     <key>UILaunchScreen</key><dict/>
     <!-- 指定API请求的发送地址 本机simulator调试可用127.0.0.1 -->
     <!-- 真机调试iOS端需要用Mac局域网ip 172.20.10.7 手机热点-->
-    <!-- 真机调试iOS端需要用Mac局域网ip 192.168.10.37 房间家庭宽带-->
+    <!-- 真机调试iOS端需要用Mac局域网ip 192.168.10.38 房间家庭宽带-->
     <!-- 以后 Wi-Fi 再变化时，在 Mac 终端执行：ipconfig getifaddr en0 -->
     <!-- 将输出的新 IP 替换到同一个 VAGO_API_BASE_URL 配置即可。 -->
-    <key>VAGO_API_BASE_URL</key><string>http://192.168.10.37:8000/api/v1</string>
+    <key>VAGO_API_BASE_URL</key><string>http://192.168.10.38:8000/api/v1</string>
     <!-- 用户明确开始足迹记录时说明前台定位用途。 -->
     <key>NSLocationWhenInUseUsageDescription</key><string>Vago 使用你的位置记录当前旅行的足迹，并支持在当前位置打卡。</string>
     <!-- 用户明确开始连续记录后，允许旅行途中切换到其他应用时继续记录位置。 -->
