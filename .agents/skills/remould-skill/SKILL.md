@@ -16,7 +16,7 @@ description: 指导 Vago 项目的长期产品演进、Agent 架构、Personal T
 - 已完成 Phase；
 - 固定 Agent 框架选择。
 
-这些内容分别以当前代码、PRD、architecture、migration inventory 和 `docs/design/` 为准。
+这些内容分别以当前代码、PRD、architecture、历史 migration inventory 和 `docs/modules/` 中的任务相关设计为准；先看 `docs/README.md` 的文档状态。
 
 若文档与代码冲突，以仓库事实为准；若用户当前 prompt 与本 Skill 冲突，以用户明确要求为准。
 
@@ -707,13 +707,13 @@ docs/architecture.md
 迁移状态：
 
 ```text
-docs/remould-migration-inventory.md
+docs/evolution/remould-migration-inventory.md（历史记录）
 ```
 
 Feature 设计：
 
 ```text
-docs/design/
+docs/modules/
 ```
 
 例如未来按需建立：

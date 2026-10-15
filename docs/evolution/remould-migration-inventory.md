@@ -7,7 +7,7 @@
 
 本文是 remould 的**历史迁移事实记录**，保留 Phase 1–8 中的关键盘点与完成事实，不把它改写成 PRD。早期章节出现的 Spring Boot、Java 路由和兼容窗口描述均为当时的迁移快照；`services/vago-backend` 已在 Phase 5 后从当前仓库移除，不能将其视为当前可运行架构。
 
-当前可运行后端是 `services/vago-ai` 中的 FastAPI Modular Monolith；当前 Alembic head 为 `20260913_01`。当前工作区状态应以实际 `git status` 为准，不再在本历史盘点中固化某一次工作区改动。
+当前可运行后端是 `services/vago-ai` 中的 FastAPI Modular Monolith。Alembic head 和工作区状态应分别以当前迁移目录与 `git status` 为准，不再在本历史盘点中固化某一次状态。
 
 ## 2. 历史 Web 路由盘点
 
@@ -86,7 +86,7 @@
 | `itinerary_days` | 每日行程 | 保留 / 迁移 |
 | `itinerary_spots` | 景点 / 活动 | 保留 / 迁移 |
 
-`docs/database/schema.md` 中包含 AI sessions、GPS tracks、fog tiles、photos、archives、statistics 等更完整的未来设计。当前应将其视为目标草案，而 `db_schema.sql` 代表较小的当前实现。
+早期数据库草案已移至 [`docs/archive/database-schema-2026-05-16.md`](../archive/database-schema-2026-05-16.md)，其中的 AI sessions、GPS tracks、fog tiles、photos、archives、statistics 不代表当前表结构。全新数据库建表脚本见 [`docs/database/db_schema.sql`](../database/db_schema.sql)；已有数据库以 Alembic 迁移升级。
 
 ## 6. React API 依赖
 

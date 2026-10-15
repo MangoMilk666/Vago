@@ -24,6 +24,7 @@ Personal Travel Context 是按任务组合的状态视图，不是单一数据�
 
 ## 文档入口
 
+- 文档状态与导航：[docs/README.md](docs/README.md)
 - 项目概览：[README.md](README.md)
 - 产品需求与目标：[docs/prd/PRD.md](docs/prd/PRD.md)
 - 当前与目标架构：[docs/architecture.md](docs/architecture.md)

@@ -1,67 +1,28 @@
 # Travel Footprint API
 
-Phase 8 新增的足迹接口由 FastAPI `/api/v1/footprints` 提供。它们只服务登录用户自己的正式行程，不依赖 Web Cookie，也不暴露任何社区或公开地图数据。
+**状态：当前 FastAPI 接口摘要。** 路由与 schema 分别在 `services/vago-ai/app/footprints/router.py` 和 `schemas.py`。所有路径以 `/api/v1/footprints` 开头，必须携带 Bearer token；服务端校验 Trip 属于已认证用户。成功响应使用 `{ code, message, data }`。
 
-## 认证与边界
+`TravelObservation` 统一表示空间观察，用 `observationType` 区分 `AUTO_GPS` 与 `MANUAL_CHECKIN`。同一可信连续段内，打卡可以是轨迹顶点，同时保留独立打卡标记；段边界与异常定位不得被打卡跨越。原始观察坐标不因显示层平滑而改变。
 
-所有接口都需要请求头：
+## 自动 GPS
 
-```text
-Authorization: Bearer <access-token>
-```
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| POST | `/location-samples/sync` | 将一个 Trip 的 1–100 条待传 GPS 样本幂等同步 |
+| GET | `/trips/{tripUuid}/locations` | 兼容旧客户端的仅 GPS 列表 |
 
-- GPS 样本必须绑定当前用户拥有的未删除 Trip。
-- 位置批量同步按 `userUuid + clientUuid` 幂等，可安全重试。
-- 手动打卡仅允许写入 `进行中(status=2)` 的行程。
-- 已结束行程可接收此前离线缓存的 GPS 样本，但不能新增手动打卡，避免旅行历史被继续编辑。
+同步请求含 `tripUuid` 与 `samples`。每条样本有稳定的 `clientUuid`、`latitude`、`longitude`、`recordedAt`，可选 `accuracyM`、`speedMps`、`trackingSegmentUuid`。响应分别返回 `acceptedCount`、`duplicateCount`、`skippedCount`；客户端应以成功响应为依据移除对应待传项。已结束 Trip 可补传先前离线记录的 GPS，不能新建手动打卡。
 
-## 同步 GPS 样本
+## 统一观察与打卡
 
-`POST /api/v1/footprints/location-samples/sync`
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/trips/{tripUuid}/observations` | 读取 GPS 与手动打卡的统一观察流 |
+| GET | `/trips/{tripUuid}/checkins` | 兼容旧客户端的仅打卡列表 |
+| POST | `/observations/checkins` | 创建打卡并返回统一观察对象 |
+| PATCH | `/observations/checkins/{observationUuid}` | 只修改用户输入的地点名和备注 |
+| POST | `/checkins` | 兼容旧客户端的打卡创建入口 |
 
-一次最多传入 100 条记录。iOS 应先写入本地队列，收到成功响应后才删除该批样本。
+打卡创建请求含 `tripUuid`、`locationName`、`latitude`、`longitude`，可选 `note`、`checkedAt`、`trackingSegmentUuid` 与 `clientEventUuid`。新客户端应提供稳定的 `clientEventUuid` 以防重试重复创建。手动打卡只允许写入进行中的 Trip；更新入口不能修改坐标、时间、类型或段标识。统一观察响应包括 `uuid`、`clientEventUuid`、`tripUuid`、`observationType`、坐标、可选的精度/速度/段标识/文本，以及 `occurredAt`。
 
-```json
-{
-  "tripUuid": "trip-uuid",
-  "samples": [{
-    "clientUuid": "ios-local-uuid",
-    "latitude": 1.3521,
-    "longitude": 103.8198,
-    "accuracyM": 12.5,
-    "speedMps": 1.4,
-    "recordedAt": "2026-09-04T09:00:00Z"
-  }]
-}
-```
-
-```json
-{
-  "code": 200,
-  "message": "轨迹同步成功",
-  "data": { "acceptedCount": 1, "duplicateCount": 0 }
-}
-```
-
-## 读取行程轨迹
-
-`GET /api/v1/footprints/trips/{tripUuid}/locations`
-
-按采样时间升序返回当前用户该行程的已同步轨迹点，供 MapKit 或 Web 地图回放使用。
-
-## 手动打卡
-
-`POST /api/v1/footprints/checkins`
-
-```json
-{
-  "tripUuid": "trip-uuid",
-  "locationName": "滨海湾花园",
-  "latitude": 1.2816,
-  "longitude": 103.8636,
-  "note": "傍晚散步",
-  "checkedAt": "2026-09-04T10:00:00Z"
-}
-```
-
-第一版只保存用户输入的地点名与坐标，不进行反向地理编码，也不关联照片或笔记对象；这些能力留给后续阶段。
+地图分段、过滤和可见点密度属于显示层，详见 [足迹设计](../modules/footprint/ios/design.md)。

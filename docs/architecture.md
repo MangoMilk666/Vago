@@ -1,12 +1,12 @@
 # Vago 架构说明
 
-> 最后更新：2026-09-14
+> 最后核对：2026-10-15；目标章节仍是设计，不表示全部已实现
 > 当前状态：FastAPI Modular Monolith + React Web + Native SwiftUI iOS
 > 本文明确区分当前可运行架构与目标 Agent 架构；目标图不代表已存在的 Python module。
 
 ## 1. 架构原则
 
-Vago 围绕 **Personal Travel Intelligence** 建设：用户的知识、计划、正式行程、足迹、打卡和未来回忆属于同一用户的私有旅行上下文。AI 服务于这些旅行事实与用户目标，而不替代或篡改它们。
+Vago 围绕 **Personal Travel Intelligence** 建设：用户的知识、计划、正式行程、足迹、打卡和旅行回忆属于同一用户的私有旅行上下文。AI 服务于这些旅行事实与用户目标，而不替代或篡改它们。
 
 - **Personal-first**：领域记录按 `user_uuid` 隔离；不恢复公共 Feed 或陌生人社交关系。
 - **Facts first**：GPS、Check-in 与未来 Photos / Notes 是原始旅行事实；路线、Memory 和偏好信号均为派生结果。
@@ -47,10 +47,12 @@ React Web (Vite :5173)                   SwiftUI iOS (iOS 17+)
 | `travel` | `/api/v1/travel` | Plan、Trip、Itinerary、计划转行程与 Trip 生命周期 |
 | `knowledge` | `/api/v1/knowledge` | KnowledgeSource 文本/`.md/.txt` 导入、状态与可选索引 |
 | `footprints` | `/api/v1/footprints` | GPS 批量同步、读取、Check-in 和归属校验 |
+| `memory` / `preferences` | `/api/v1/memories`、`/api/v1/users/travel-preferences` | 已结束行程的事实回忆与明确旅行偏好 |
+| `agent_runtime` | 经 `/api/v1/ai/chat` 使用 | 有界、按需的只读领域工具选择与公开事件；无写操作审批闭环 |
 | `routers.chat` | `/api/v1/ai/chat` | SSE 对话、可选个人知识检索、来源引用 |
 | `routers.ai` | `/api/v1/ai` | 现有 AI 规划入口与结构化计划保存适配；完整规划生成仍在演进 |
 
-当前对话链路已经使用 Tool Calling 形式按需搜索个人知识，但它不是跨领域协调、审批或重规划的完整 Agent Runtime。
+当前对话链路可按需搜索个人知识，也可通过只读 Agent Runtime 获取旅行领域事实；尚不具备跨领域重规划、审批或受控写操作的完整闭环。
 
 ### 2.2 当前数据边界
 
@@ -59,7 +61,8 @@ React Web (Vite :5173)                   SwiftUI iOS (iOS 17+)
 | 用户、Plan、Trip、Itinerary | MySQL | 结构化旅行事实；已结束 Trip 只读 |
 | KnowledgeSource | MySQL + local storage abstraction | MySQL 保存元数据/文本/状态，原始文件由存储抽象保存 |
 | 语义向量 | Qdrant | 仅服务于非结构化个人知识的可选 semantic retrieval |
-| GPS 与 Check-in | MySQL | 用户旅行事实；服务端按认证用户与 `client_uuid` 处理归属和幂等 |
+| GPS 与 Check-in | MySQL `travel_observations` | 以 `observation_type` 区分自动 GPS 和手动打卡；服务端按认证用户与客户端事件键处理归属和幂等 |
+| Travel Memory 与明确偏好 | MySQL | 回忆事实快照与用户叙事分离；推断信号不能覆盖明确偏好 |
 | iOS 待传足迹 | UserDefaults | 短期、按用户隔离的 pending 队列，不是历史数据库 |
 | 会话、限流 | Redis + iOS Keychain | Token 不存入 UserDefaults |
 
@@ -74,14 +77,14 @@ LocationTrackingStore → 本地 pending 队列 → 100 条/批幂等同步
                                                    ↓
                                                 FastAPI
                                                    ↓
-                                         MySQL location_samples
+                                      MySQL travel_observations
                                                    ↓
-                                    MapKit 合并本地与远端事实后渲染
+                              MapKit 合并本地与远端观察后渲染
 
-一次手动打卡 → FastAPI checkins → MySQL checkins → MapKit annotation
+一次手动打卡 → FastAPI 统一观察接口 → travel_observations → MapKit 标记与可信段内轨迹顶点
 ```
 
-定位、打卡与未来照片/笔记是 **Travel Observations**。它们可成为 Personal Travel Context 的 grounded 输入，但 AI 不应写回或覆盖原始事实。iOS 当前优先负责采集、同步与显示，并不承载 Agent Runtime。
+定位、打卡与未来照片/笔记是 **Travel Observations**。它们可成为 Personal Travel Context 的 grounded 输入，但 AI 不应写回或覆盖原始事实。Web 已可按行程浏览足迹；iOS 负责前台采集、同步与地图显示，并不承载 Agent Runtime。
 
 ## 3. Personal Travel Context
 
@@ -188,7 +191,7 @@ MCP 是接入外部工具的一种标准化协议，不是 Agent Runtime 本身�
 | Phase | 目标 | 当前状态 |
 | --- | --- | --- |
 | 9 | Travel Memory & Personal Context Foundation：grounded Memory、历史上下文、明确偏好与可审视 signal | 进行中：已完成 Memory / 显式偏好 / Web Context 注入；signals 待后续真实数据验证 |
-| 10 | Agent Runtime & Vago Domain Tools：Agent loop、上下文获取、工具边界、约束检查、审批原则、最小 tracing/testability | 未来 |
+| 10 | Agent Runtime & Vago Domain Tools：Agent loop、上下文获取、工具边界、约束检查、审批原则、最小 tracing/testability | 只读工具选择与事件已实现；写操作审批及重规划仍是目标 |
 | 11 | Context-aware Coordination & Replanning：以 Adaptive Day Planner 为代表的旅行中协调与确认后更新 | 未来 |
 | 12 | External Tool / MCP Integration：在有真实 workflow 后接入外部能力 | 未来 |
 
@@ -198,4 +201,4 @@ MCP 是接入外部工具的一种标准化协议，不是 Agent Runtime 本身�
 - 不把 RAG 描述为 Memory，也不把 Qdrant 当作所有 Personal Travel Context 的存储。
 - 当前仅支持纯文本和 `.md/.txt` 知识源；复杂文档解析不在当前范围。
 - Travel Memory 已具备事实快照与用户叙事的最小基础；Photos、Notes、Preference signals、Adaptive Day Planner、MCP 和外部工具仍属于未来能力。
-- 当前 Alembic head 为 `20260922_02`；全新数据库使用 [db_schema.sql](database/db_schema.sql)，已有数据库使用 Alembic 增量升级。
+- 全新数据库使用 [db_schema.sql](database/db_schema.sql)，已有数据库使用 Alembic 增量升级；当前迁移 head 应由迁移目录或 Alembic 命令查询，不在架构文档中固化。

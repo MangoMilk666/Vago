@@ -1,5 +1,7 @@
 # Footprint 测试数据工具
 
+**状态：Phase 1 CLI 已实现；Phase 2 地图编辑器是待决提案。** 当前命令入口在 `services/vago-ai/app/devtools/seed_footprints.py`；运行前核对目标用户、Trip 和环境。
+
 ## 目标
 
 为 Travel Map、Footprint Domain、Personal Travel Context 与 Agent 提供可重复、可清理的本地开发数据。测试数据只能服务于开发和演示，不能混入真实用户旅行事实。
@@ -8,7 +10,7 @@
 
 ## 命名与迁移
 
-当前事实表为 `travel_observations`。后续统一更名为 `travel_footprints`，使表名与 Footprint Domain、地图和 API 概念一致。
+当前事实表为 `travel_observations`。将其更名为 `travel_footprints` 仍只是本设计中的提案，未获实施决定；任何调用方不得假定已改名。
 
 - 该变更使用独立 Alembic migration 完成表重命名、索引与约束校验；不删表重建。
 - 已有 GPS、打卡、幂等键和 Trip 归属必须原样保留。

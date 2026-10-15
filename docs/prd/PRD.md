@@ -1,8 +1,8 @@
 # Vago（叠迹）产品需求文档（PRD）
 
 **文档版本**：v0.5-agent-evolution
-**最后更新**：2026-09-14
-**状态**：定位深化；已实现能力与目标能力分层记录
+**最后核对**：2026-10-15
+**状态**：产品目标与已实现基础分层记录；具体接口和阶段完成度以代码及模块文档核对
 
 ## 1. 项目定位
 
@@ -92,7 +92,7 @@ Qdrant / RAG 是 Personal Context 的可选能力，不是 KnowledgeSource 的�
 
 ### 4.1 当前已实现的 AI 能力
 
-当前 FastAPI 已提供 SSE 对话、可选个人知识语义检索、来源引用、现有 Tool Calling 形式的对话链路，以及结构化计划输入后的确认保存路径。这些能力仍主要服务于聊天、检索和计划草稿，不应被描述成完整的 Agent Runtime。
+当前 FastAPI 已提供 SSE 对话、可选个人知识语义检索、来源引用、结构化计划保存路径，以及有界、按需的只读 Agent 领域工具选择与公开事件。它尚不具备跨领域重规划、写操作审批和外部工具执行的完整闭环。
 
 ### 4.2 目标 Agent Runtime
 
@@ -116,7 +116,7 @@ Agent Runtime 的职责是目标理解、循环与步骤协调、上下文获取
 
 ### 4.3 Domain Services 与 Domain Tools
 
-真实业务规则继续由 FastAPI 领域模块承担：Auth / User、Travel、Plan / Trip / Itinerary、Footprint / Check-in、Knowledge，以及未来的 Memory 与 Preferences。
+真实业务规则继续由 FastAPI 领域模块承担：Auth / User、Travel、Plan / Trip / Itinerary、Footprint / Check-in、Knowledge、Memory 与 Preferences。
 
 Agent 应通过明确的内部 Domain Tools 使用这些能力，例如概念上的：
 
@@ -195,19 +195,19 @@ Future Agent decisions
 
 Travel Memory 不只是总结文章。它必须区分 confirmed facts、generated narrative 与 inferred preference signals。推断信号不自动等同于用户确认的偏好，未来可通过置信度、可见性或用户确认机制处理。
 
-**状态：目标能力。** 当前尚未有 Memory、Photos 或 Notes domain。
+**状态：部分实现。** 已有已结束行程的事实快照和用户可编辑叙事；Photos、Notes、学习信号及完整旅行后体验仍待建设。
 
 ## 6. 领域需求与状态
 
 | 领域 | 当前已实现 | 继续建设 |
 | --- | --- | --- |
-| User / Auth | JWT、用户隔离、资料与会话 | 明确偏好与数据管理 |
+| User / Auth | JWT、用户隔离、资料与会话、明确旅行偏好 | 更完整的数据管理与可审视信号 |
 | Personal Travel Knowledge | KnowledgeSource、文本/`.md/.txt`、可选索引 | URL 与更多资料来源的受控导入 |
 | Plan / Trip / Itinerary | 核心 CRUD、计划转行程、生命周期和日程编辑 | 约束表达、受确认的 Agent action |
-| Footprint / Check-in | 前台采样、离线同步、服务端事实、MapKit 轨迹与打卡 | 历史地图、详情、Fog 实验与观察扩展 |
+| Footprint / Check-in | 前台采样、离线同步、统一观察事实、iOS/Web 轨迹、历史行程浏览与打卡详情 | 视觉与性能验收、Fog 实验及观察扩展 |
 | Photos / Notes | 未开发 | 绑定 Trip / Day / Spot / Check-in，二进制走对象存储 |
-| Travel Memory | 未开发 | grounded summary、timeline、highlights 与可编辑 narrative |
-| Preferences | 用户设置基础存在 | explicit preferences 与 learned signals 的边界 |
+| Travel Memory | 已结束行程事实快照与可编辑叙事基础 | grounded summary、timeline、highlights 与长期学习闭环 |
+| Preferences | 明确旅行偏好与用户设置基础 | learned signals 的来源、审视与确认边界 |
 
 ### 6.1 旅行观察与事实保护
 
@@ -247,8 +247,8 @@ External Tools 是未来补足现实世界临时信息的能力边界。候选�
 
 | Phase | 目标 | 状态 |
 | --- | --- | --- |
-| 9 | **Travel Memory & Personal Context Foundation**：grounded Memory、历史旅行上下文、明确偏好与可审视行为信号 | 未来 |
-| 10 | **Agent Runtime & Vago Domain Tools**：Agent loop、context acquisition、工具边界、观察、约束检查、审批原则、最小 tracing/testability 设计 | 未来 |
+| 9 | **Travel Memory & Personal Context Foundation**：grounded Memory、历史旅行上下文、明确偏好与可审视行为信号 | 基础能力已实现；信号仍待验证 |
+| 10 | **Agent Runtime & Vago Domain Tools**：Agent loop、context acquisition、工具边界、观察、约束检查、审批原则、最小 tracing/testability 设计 | 只读工具选择与事件已实现；重规划、写操作及审批仍待建设 |
 | 11 | **Context-aware Coordination & Replanning**：以 Adaptive Day Planner 为代表，在确认后更新 itinerary | 未来 |
 | 12 | **External Tool / MCP Integration**：在已有有意义的 workflow 上渐进接入地图、日历、天气或航班等外部能力 | 未来 |
 

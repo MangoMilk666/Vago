@@ -40,10 +40,10 @@ Vago 负责上下文收集、协调、约束检查和重规划建议
 | 范围 | 当前已实现 | 后续目标 |
 | --- | --- | --- |
 | Personal Travel Knowledge | KnowledgeSource、纯文本与 `.md/.txt` 导入、用户隔离、可选语义索引 | 更丰富的个人资料与知识整理能力 |
-| AI 对话 | SSE 对话、来源引用、按需个人知识语义检索 | Agent Runtime 的跨领域上下文获取、协调和多步执行 |
+| AI 对话 | SSE 对话、来源引用、按需个人知识语义检索和有界只读工具读取 | 跨领域重规划、写操作审批和外部工具 |
 | Plan / Trip / Itinerary | 计划、正式行程、每日安排、行程生命周期与编辑 | Agent 在确认后提出或执行受控的日程更新 |
-| Travel Observations | iOS 前台 GPS、离线队列、幂等同步、轨迹、当前位置与手动打卡 | Photos / Notes 等更多 grounded observations |
-| Travel Memory | 尚未实现 | 基于真实旅行事实生成可编辑回忆，并形成可审视的偏好信号 |
+| Travel Observations | iOS 前台 GPS、离线队列、幂等同步、统一观察流、iOS/Web 轨迹与手动打卡 | Photos / Notes 等更多 grounded observations |
+| Travel Memory | 已有已结束行程的事实快照、列表与用户可编辑叙事 | 更丰富的回忆体验和可审视的学习信号 |
 
 ## Personal Travel Context
 
@@ -68,8 +68,8 @@ Direct Context、SQL structured retrieval 和 semantic RAG 各有边界：明确
 | Plans / Trips / Itinerary | 已实现 | 草稿计划、正式行程、每日安排、景点、交通、住宿与生命周期 |
 | Travel Footprints | 已实现 | iOS 前台采样、离线缓冲、幂等同步、分段轨迹、方向指示与手动打卡 |
 | Photos / Notes | 未开发 | 将作为旅行中的 grounded observations |
-| Travel Memory | 后续建设 | 基于事实数据的可编辑回忆与学习输入 |
-| Vago Agent Runtime | 后续建设 | 上下文获取、约束检查、重规划、审批边界与领域工具调用 |
+| Travel Memory | 基础已实现 | 基于已结束行程刷新事实快照，用户可编辑标题与叙事 |
+| Vago Agent Runtime | 部分已实现 | 有界、按需的只读领域工具与事件；跨领域重规划和写操作审批仍待建设 |
 
 ## 技术栈
 
@@ -95,8 +95,9 @@ Vago/
 │   └── nginx/
 ├── docs/
 │   ├── API/                      # API 文档
-│   ├── database/                 # DDL 与数据库说明
-│   ├── design/                   # 设计与实施文档
+│   ├── database/                 # 全新数据库 DDL
+│   ├── modules/                  # 当前模块设计与验收
+│   ├── archive/                  # 历史快照
 │   └── prd/                      # 项目需求文档
 ├── dev-up.sh
 ├── .env.example
@@ -110,20 +111,20 @@ Vago/
 | 登录与会话 | 手机号 / OAuth、浏览器会话 | 手机号登录、Keychain 凭证与刷新会话 |
 | 知识与 AI | KnowledgeSource 管理、资料导入、AI 对话与规划入口 | 暂不复制复杂资料管理与规划流程 |
 | 计划与行程 | Plan / Trip / Itinerary CRUD、日程编辑 | 查看进行中行程与每日安排 |
-| 旅行足迹 | 稳定入口，真实 Web 浏览仍待建设 | 前台定位、本地待传队列、幂等同步、分段路线、当前位置与打卡 |
+| 旅行足迹 | 已有按行程浏览的 Leaflet 地图、分段路线与打卡 | 前台定位、本地待传队列、幂等同步、分段路线、当前位置与打卡 |
 
 ## 后续路线
 
 | 阶段 | 方向 | 状态 |
 | --- | --- | --- |
-| Phase 9 | Travel Memory & Personal Context Foundation：grounded memory、历史旅行上下文与可审视偏好信号 | 未来 |
-| Phase 10 | Agent Runtime & Vago Domain Tools：上下文获取、领域工具边界、观察、约束检查与审批原则 | 未来 |
+| Phase 9 | Travel Memory & Personal Context Foundation：grounded memory、历史旅行上下文与可审视偏好信号 | 基础能力已落地，信号仍待验证 |
+| Phase 10 | Agent Runtime & Vago Domain Tools：上下文获取、领域工具边界、观察、约束检查与审批原则 | 只读工具选择已实现，写操作与审批仍待建设 |
 | Phase 11 | Context-aware Coordination & Replanning：以 Adaptive Day Planner 为代表的旅行中协调 | 未来 |
 | Phase 12 | External Tools / MCP Integration：在有明确工作流后接入地图、日历、天气或航班等外部能力 | 未来 |
 
 ## 数据库初始化
 
-全量 DDL 位于 [db_schema.sql](docs/database/db_schema.sql)，适用于全新本地数据库：
+全量 DDL 位于 [db_schema.sql](docs/database/db_schema.sql)，**只适用于全新、空白的本地数据库**；脚本包含 `DROP TABLE IF EXISTS`，不要用于已有用户数据的数据库。参见[数据库使用说明](docs/database/README.md)。
 
 ```bash
 mysql -u <user> -p <database_name> < docs/database/db_schema.sql
@@ -138,13 +139,13 @@ cd services/vago-ai
 
 ## 文档
 
+- [文档索引与状态](docs/README.md)
 - [项目需求文档](docs/prd/PRD.md)
 - [项目架构说明](docs/architecture.md)
-- [重塑迁移盘点](docs/evolution/remould-migration-inventory.md)
-- [iOS Travel Map 实施计划](docs/modules/footprint/ios/implementation-plan.md)
+- [当前 API 索引](docs/API/README.md)
+- [iOS Travel Map 设计与待验收项](docs/modules/footprint/ios/README.md)
 - [Agent Runtime 设计与开发参考](docs/modules/agent/agent-runtime.md)
-- [版本更新记录](docs/CHANGELOG.md)
-- [数据库文档](docs/database/schema.md)
+- [数据库使用说明与全新数据库 DDL](docs/database/README.md)
 
 ## License
 

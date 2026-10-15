@@ -1,39 +1,18 @@
-# Vago Knowledge API
+# Personal Knowledge API
 
-> 最后更新：2026-08-31
-> 当前阶段：Remould Phase 4A–4D
+**状态：当前 FastAPI 接口摘要。** 路由在 `services/vago-ai/app/knowledge/router.py`，请求和响应字段在同目录 `schemas.py`。所有路径以 `/api/v1/knowledge` 开头，需 Bearer token，并按认证用户隔离；成功响应使用 `{ code, message, data }`。
 
-`KnowledgeSource` 是用户拥有的一份个人旅行知识来源。它独立于 Qdrant、Embedding 和 RAG：即使未启用语义索引，资料仍可以创建、阅读、编辑和管理。
+## KnowledgeSource
 
-## 1. 响应与鉴权
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET / POST | `/sources` | 列出自己的资料 / 创建纯文本资料 |
+| GET / PUT / DELETE | `/sources/{sourceUuid}` | 详情 / 修改 / 软删除 |
+| POST | `/sources/files` | 导入 UTF-8 `.md` 或 `.txt` 文件，multipart 表单可带标题、目的地和 JSON 标签数组 |
+| POST | `/sources/{sourceUuid}/index` | 显式请求可选语义索引 |
 
-所有接口使用 `{ code, message, data }` envelope，并通过 `Authorization: Bearer <accessToken>` 做用户级隔离。
+资料的 CRUD 不依赖 Qdrant。修改资料会使旧索引失效；未开启 RAG 或向量服务不可用时，索引请求返回不可用，资料本身仍可管理。`parseStatus` 与 `indexStatus` 分别表达文本解析和可选索引状态。当前文件导入只支持 `.md`、`.txt`，不把 `URL` 来源类型误写成已支持 URL 抓取。
 
-## 2. Personal Knowledge Sources
+## 旧 Guide 兼容入口
 
-| Method | Path | 说明 |
-|--------|------|------|
-| `GET` | `/api/v1/knowledge/sources` | 查询当前用户的知识源列表 |
-| `GET` | `/api/v1/knowledge/sources/{sourceUuid}` | 查询知识源详情 |
-| `POST` | `/api/v1/knowledge/sources` | 创建纯文本知识源 |
-| `POST` | `/api/v1/knowledge/sources/files` | 导入 UTF-8 `.md` / `.txt` 文件 |
-| `PUT` | `/api/v1/knowledge/sources/{sourceUuid}` | 更新知识源并使旧索引失效 |
-| `DELETE` | `/api/v1/knowledge/sources/{sourceUuid}` | 软删除知识源并尽力清理本地原文件/向量 |
-| `POST` | `/api/v1/knowledge/sources/{sourceUuid}/index` | 显式请求语义索引 |
-
-`sourceType` 仅表示来源方式：`TEXT`、`URL`、`FILE`。文件格式由 `mimeType` 表示；本阶段实际可上传 `text/plain` 和 `text/markdown`。
-
-## 3. 状态语义
-
-| 字段 | 值 | 说明 |
-|------|----|------|
-| `parseStatus` | `PENDING` / `PARSING` / `READY` / `FAILED` | 原始资料能否转为可读文本 |
-| `indexStatus` | `NOT_INDEXED` / `PENDING` / `INDEXING` / `INDEXED` / `FAILED` | 可选语义索引能力状态 |
-
-创建 TEXT 或成功导入 `.md/.txt` 后，`parseStatus=READY`、`indexStatus=NOT_INDEXED`。只有调用 index 接口后才进入索引队列；关闭 `RAG_ENABLED` 时 CRUD 与文件导入仍可用，索引接口返回不可用。
-
-新 API 不返回 `like`、`liked`、`likeCount`、`viewCount`、`publish`、作者资料、收藏夹或旧 `status/aiStatus` 字段。
-
-## 4. Compatibility Window
-
-`/api/v1/knowledge/guides/*` 仍保留给现有 React 页面和 legacy `guides` 数据使用，但已不再是新的 Knowledge Domain contract。Java 继续承担 discover、like 和 collections；Phase 5 确认其下线后，才会清理旧表、Java bridge 与 `article_id` 兼容字段。
+当前代码仍注册 `/guides/mine`、`/guides/{guideUuid}` 的 GET，以及 `/guides` 创建、`/guides/{guideUuid}` 更新/删除、`/guides/{guideUuid}/index`。它们服务于现有旧数据或调用方，不是新 KnowledgeSource 的首选契约。不要沿用迁移期文档所述的“Java 仍承载 discover、like、collections”作为当前部署事实；公共社区能力不属于当前核心产品。
