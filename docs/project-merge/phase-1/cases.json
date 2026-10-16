@@ -1,0 +1,47 @@
+{
+  "fixture_kind": "synthetic_contract_only",
+  "cases": [
+    {
+      "id": "new_plan",
+      "target": {"kind": "new_plan", "plan_uuid": null},
+      "wkf_form": {
+        "chat_id": "synthetic-chat-new",
+        "user_id": "legacy-untrusted",
+        "origin": "示例出发地",
+        "cities": ["示例城甲", "示例城乙"],
+        "companions": [],
+        "start_date": "2026-11-03",
+        "end_date": "2026-11-04",
+        "budget_tier": "不限",
+        "budget_min": 500.0,
+        "budget_max": 900.0,
+        "purpose": "休闲"
+      },
+      "timezone": "Asia/Shanghai",
+      "expected": {"plan_status": 0, "day_dates": ["2026-11-03", "2026-11-04"], "formal_write_before_confirmation": false, "budget_range_kept_in_proposal": true}
+    },
+    {
+      "id": "edit_draft_plan",
+      "target": {"kind": "draft_plan", "owner": "merge_test_account", "status": 0, "converted_trip_uuid": null, "expected_updated_at": "2026-10-16T08:00:00Z"},
+      "wkf_form": {
+        "chat_id": "synthetic-chat-edit",
+        "user_id": "legacy-untrusted",
+        "origin": "示例出发地",
+        "cities": ["示例城甲"],
+        "companions": [{"name": "同行人甲", "type": "成人"}],
+        "start_date": "2026-11-06",
+        "end_date": "2026-11-06",
+        "budget_tier": "不限",
+        "budget_min": null,
+        "budget_max": 300.0,
+        "purpose": "休闲"
+      },
+      "expected": {"show_diff": true, "reject_if_target_changed": true, "formal_write_before_confirmation": false}
+    },
+    {
+      "id": "existing_trip",
+      "target": {"kind": "trip", "owner": "merge_test_account", "status": 2, "start_date": "2026-11-08", "end_date": "2026-11-09"},
+      "expected": {"use_as_read_only_context": true, "write_trip": false, "write_footprints": false, "reject_other_user": true}
+    }
+  ]
+}

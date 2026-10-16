@@ -35,12 +35,12 @@
 
 ## 可重现的规划样例
 
-[合成样例](phase-0-planning-sample.json)只包含虚构“示例城”和虚构地点，不含坐标、用户数据、密钥或真实 provider 结果。它对应 wkf 的 `ItinerarySnapshot` 与 `Constraint` 契约，供阶段 1/3 对照适配。三个确定性硬约束预期均为 `pass`；把晚餐结束时间改为 `20:30` 时，`day_end_before` 应为 `fail`。样例的 `example.invalid` 仅是占位来源，**不得**作为真实来源证据或进入正式确认流程。
+[合成样例](planning-sample.json)只包含虚构“示例城”和虚构地点，不含坐标、用户数据、密钥或真实 provider 结果。它对应 wkf 的 `ItinerarySnapshot` 与 `Constraint` 契约，供阶段 1/3 对照适配。三个确定性硬约束预期均为 `pass`；把晚餐结束时间改为 `20:30` 时，`day_end_before` 应为 `fail`。样例的 `example.invalid` 仅是占位来源，**不得**作为真实来源证据或进入正式确认流程。
 
 在 wkf 根目录执行以下只读校验，可重现样例结果：
 
 ```bash
-.venv/bin/python -c 'import json; from pathlib import Path; from app.core.type.itinerary_snapshot import ItinerarySnapshot; from app.core.type.violation import Constraint; from app.agents.orchestration.checks import check_constraints; p=json.loads(Path("../Vago/docs/project-merge/phase-0-planning-sample.json").read_text()); s=ItinerarySnapshot.model_validate(p["snapshot"]); c=[Constraint.model_validate(x) for x in p["constraints"]]; actual={x.rule:x.status for x in check_constraints(s,c)}; print(actual); assert actual==p["expected"]'
+.venv/bin/python -c 'import json; from pathlib import Path; from app.core.type.itinerary_snapshot import ItinerarySnapshot; from app.core.type.violation import Constraint; from app.agents.orchestration.checks import check_constraints; p=json.loads(Path("../Vago/docs/project-merge/phase-0/planning-sample.json").read_text()); s=ItinerarySnapshot.model_validate(p["snapshot"]); c=[Constraint.model_validate(x) for x in p["constraints"]]; actual={x.rule:x.status for x in check_constraints(s,c)}; print(actual); assert actual==p["expected"]'
 ```
 
 ## 阶段 0 剩余核验
