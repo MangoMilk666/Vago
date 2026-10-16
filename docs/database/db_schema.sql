@@ -409,5 +409,34 @@ CREATE TABLE agent_messages (
     INDEX idx_agent_messages_conversation_id (conversation_uuid, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Agent 对话消息回放记录';
 
+-- ------------------------------------------------------------
+-- 规划候选版本（plan_proposals）
+-- 与正式 plans/trips 分离；阶段 2 只持久化与回读，不代表约束已通过或用户已确认。
+-- ------------------------------------------------------------
+CREATE TABLE plan_proposals (
+    id                     INT             NOT NULL AUTO_INCREMENT COMMENT '内部排序主键',
+    uuid                   VARCHAR(32)     NOT NULL                COMMENT '服务端生成的候选 UUID',
+    user_uuid              VARCHAR(36)     NOT NULL                COMMENT '归属 users.uuid',
+    conversation_uuid      VARCHAR(32)     NOT NULL                COMMENT '所属 Agent 会话 UUID',
+    version                INT             NOT NULL                COMMENT '会话内从 1 开始的候选版本',
+    idempotency_key        VARCHAR(128)    NOT NULL                COMMENT '同一会话内的请求幂等键',
+    request_fingerprint    VARCHAR(64)     NOT NULL                COMMENT '请求内容 SHA-256，用于拒绝幂等键复用冲突',
+    target_kind            VARCHAR(16)     NOT NULL                COMMENT 'new_plan 或 draft_plan',
+    target_plan_uuid       VARCHAR(32)     DEFAULT NULL            COMMENT '编辑草稿时指向的正式 Plan UUID',
+    target_plan_updated_at DATETIME        DEFAULT NULL            COMMENT '候选创建时目标 Plan 的更新时间快照',
+    status                 VARCHAR(32)     NOT NULL                COMMENT '当前仅 PENDING_VALIDATION',
+    brief                  JSON            NOT NULL                COMMENT '规划目标及约束的原始结构化数据',
+    content                JSON            NOT NULL                COMMENT '地点、路线、警告等完整候选内容',
+    source_system          VARCHAR(32)     NOT NULL                COMMENT '来源系统；公开接口固定为 vago',
+    source_ref             JSON            DEFAULT NULL            COMMENT '后续历史导入使用的原始来源 ID 映射',
+    created_at             DATETIME        NOT NULL                COMMENT '创建时间（UTC）',
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plan_proposals_uuid (uuid),
+    UNIQUE KEY uk_plan_proposals_conversation_version (conversation_uuid, version),
+    UNIQUE KEY uk_plan_proposals_conversation_key (conversation_uuid, idempotency_key),
+    INDEX idx_plan_proposals_user_conversation (user_uuid, conversation_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话中未确认的旅行规划候选版本';
+
 
 SET FOREIGN_KEY_CHECKS = 1;

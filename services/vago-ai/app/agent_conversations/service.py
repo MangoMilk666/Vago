@@ -15,6 +15,7 @@ from app.agent_conversations.schemas import (
     ConversationUpdateRequest,
 )
 from app.core.exceptions import AppException
+from app.plan_proposals.models import PlanProposal
 from app.travel.models import utc_now_naive
 
 DEFAULT_TITLE = "新对话"
@@ -140,8 +141,14 @@ def record_assistant_message(
 
 
 def delete_conversation(db: Session, user_uuid: str, conversation_uuid: str) -> None:
-    """删除一整段用户对话及其消息，不影响任何旅行事实或知识资料。"""
+    """删除整段对话、消息和未确认候选，不影响正式旅行事实。"""
     conversation = get_owned_conversation(db, user_uuid, conversation_uuid)
+    db.execute(
+        delete(PlanProposal).where(
+            PlanProposal.conversation_uuid == conversation.uuid,
+            PlanProposal.user_uuid == user_uuid,
+        )
+    )
     db.execute(delete(AgentMessage).where(AgentMessage.conversation_uuid == conversation.uuid))
     db.delete(conversation)
     db.commit()

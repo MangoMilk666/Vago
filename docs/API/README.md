@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | 认证与用户 | [user-service.md](user-service.md) | `app/auth/router.py`、`app/users/router.py`、`app/preferences/router.py` |
 | Plan / Trip / Itinerary | [travel-service.md](travel-service.md) | `app/travel/router.py` |
+| Agent 规划候选版本 | [阶段 2 API 契约](../project-merge/phase-2/api-and-verification.md) | `app/plan_proposals/router.py` |
 | Personal Knowledge | [knowledge-service.md](knowledge-service.md) | `app/knowledge/router.py` |
 | Travel Footprints | [footprint-service.md](footprint-service.md) | `app/footprints/router.py` |
 

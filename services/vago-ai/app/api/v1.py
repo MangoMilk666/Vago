@@ -8,6 +8,7 @@ from app.footprints import router as footprints_router
 from app.knowledge import router as knowledge_router
 from app.memory import router as memory_router
 from app.personal_context import router as personal_context_router
+from app.plan_proposals import router as plan_proposals_router
 from app.preferences import router as preferences_router
 from app.routers import ai, chat
 from app.travel import router as travel_router
@@ -38,3 +39,4 @@ api_v1_router.include_router(footprints_router.router, prefix="/footprints", tag
 api_v1_router.include_router(memory_router.router, prefix="/memories", tags=["旅行回忆"])
 api_v1_router.include_router(personal_context_router.router, prefix="/agent", tags=["Agent 调试"])
 api_v1_router.include_router(agent_conversations_router.router, prefix="/agent", tags=["Agent 对话"])
+api_v1_router.include_router(plan_proposals_router.router, prefix="/agent", tags=["规划候选"])

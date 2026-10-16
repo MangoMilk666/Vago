@@ -11,6 +11,7 @@ from app.footprints import models as footprint_models  # noqa: F401
 from app.knowledge import models as knowledge_models  # noqa: F401
 from app.memory import models as memory_models  # noqa: F401
 from app.preferences import models as preference_models  # noqa: F401
+from app.plan_proposals import models as plan_proposal_models  # noqa: F401
 from app.travel import models as travel_models  # noqa: F401
 from app.users import models as user_models  # noqa: F401
 
