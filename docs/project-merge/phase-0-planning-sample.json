@@ -1,0 +1,35 @@
+{
+  "id": "synthetic-day-001",
+  "purpose": "阶段 0 的确定性规划校验样例；示例城及地点均为虚构，无用户位置或外部服务数据",
+  "snapshot": {
+    "party_size": 1,
+    "cities": ["示例城"],
+    "days": [
+      {
+        "day": 1,
+        "on_date": "2026-11-01",
+        "city": "示例城",
+        "items": [
+          {"id": "breakfast", "name": "示例早餐", "kind": "restaurant", "day": 1, "start_time": "08:00", "end_time": "08:40", "price": 30, "source_url": "https://example.invalid/breakfast"},
+          {"id": "stop-a", "name": "示例景点甲", "kind": "attraction", "day": 1, "start_time": "09:00", "end_time": "11:30", "price": 60, "source_url": "https://example.invalid/stop-a"},
+          {"id": "lunch", "name": "示例午餐", "kind": "restaurant", "day": 1, "start_time": "12:00", "end_time": "13:00", "price": 60, "source_url": "https://example.invalid/lunch"},
+          {"id": "stop-b", "name": "示例景点乙", "kind": "attraction", "day": 1, "start_time": "14:00", "end_time": "16:30", "price": 40, "source_url": "https://example.invalid/stop-b"},
+          {"id": "dinner", "name": "示例晚餐", "kind": "restaurant", "day": 1, "start_time": "18:00", "end_time": "19:20", "price": 80, "source_url": "https://example.invalid/dinner"}
+        ],
+        "legs": [
+          {"day": 1, "from_name": "示例景点甲", "to_name": "示例午餐", "mode": "transit", "minutes": 25}
+        ]
+      }
+    ]
+  },
+  "constraints": [
+    {"type": "days_count", "value": 1},
+    {"type": "day_end_before", "value": "20:00"},
+    {"type": "budget_total_max", "value": 300}
+  ],
+  "expected": {
+    "days_count:1": "pass",
+    "day_end_before:20:00": "pass",
+    "budget_total_max:300": "pass"
+  }
+}
