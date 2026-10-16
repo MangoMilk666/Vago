@@ -1,6 +1,6 @@
 # Vago 与 travel-assistance-wkf 合并评估及分阶段落地建议
 
-> 更新于 2026-10-15。基于本地 Vago `2f29117`、travel-assistance-wkf（下称 wkf）`35c4584` 及当前工作区代码；未执行两项目端到端运行。本文区分代码已有能力、评测结果与合并目标。本文始终是合并实施的直接指导文件；[决策填写表](merge-decisions.md)仅收集需要用户选择的信息，填写后将确定的结论回写本文。
+> 更新于 2026-10-16。基于本地 Vago `8f71665`、travel-assistance-wkf（下称 wkf）`35c4584` 及当前工作区代码；未执行两项目端到端运行。本文区分代码已有能力、评测结果与合并目标。本文始终是合并实施的直接指导文件；[决策填写表](merge-decisions.md)仅收集需要用户选择的信息，填写后将确定的结论回写本文。
 
 ## 1. 总体决策
 
@@ -20,8 +20,9 @@
 | wkf 对外 API | `app/api/routes/chat.py` 的 `user_id` 可由客户端提交且明确不是认证；缺省用户会进入共享记忆组。其他聊天/表单/结果入口也不具备 Vago 的账号归属边界。 | 不能原样暴露 wkf API；会话、候选、地图缓存和记忆访问都由 Vago JWT 派生 `user_uuid` 并校验对象归属。 |
 | wkf 行程结果 | PostgreSQL `itinerary_results` 以 `(chat_id, version)` 保存不可变版本；`SubmitItineraryPlanTool` 的 `dryRun=true` 只计算，非 dry-run 会保存结果并发布事件。 | 借用“候选版本 + 先写后通知 + 可回读”；在 Vago 改为 MySQL 用户归属候选，Agent 提交不得直接写正式 Plan。 |
 | wkf 校验 | `app/service/itinerary_timeline.py` 可计算路线、缓冲和时间冲突；`app/agents/orchestration/checks.py` 的常识/硬约束检查主要经 `evaluation.py` 的快照适配器用于评测。缺价格、标签或来源时可能返回 `unverifiable`。 | 先做数据适配和确定性校验服务，再接 Agent；不能把评测函数视作已有的生产保存关口。 |
-| wkf Agent | `AgentLoop` 有工具调用、澄清、取消/排队、域委派、白名单和会话压缩。 | 先接入单 Agent 流程需要的控制能力，再按真实任务评估域委派；不整体搬 Runtime。 |
-| wkf 评测 | `docs/travelplanner-eval/phase-t3-run1.md` 的同批 18 例里，single 最终通过 10/18、multi 4/18；multi 成本约为 single 两倍。报告也指出小样本和沙盒任务限制。 | 当前没有“多 Agent 更好”的证据；先建立单 Agent 基线，委派必须在目标任务上证明收益。 |
+| wkf Agent | `AgentLoop` 处理工具调用、澄清、取消与排队、域委派、白名单和会话压缩；`MessageBus` 负责进出站消息；`SubAgentManager` 管理子 Agent 的预算、超时与状态；`DomainAgent` 通过结构化输入输出执行域任务。`app/subagent/` 与 Agent Registry 支持用一个执行实现配合多个域配置扩展 Agent。 | 在阶段 5 确定 LangGraph Runtime 对应的控制能力、状态和 Agent 配置契约；阶段 11 再实现并评估域委派。复用能力与接口设计，不复制一套独立编排循环。 |
+| Vago Agent 技术方向 | 当前 `requirements.txt` 固定 `langchain==0.2.5`、`langchain-openai==0.1.8`；`rag_chain.py` 使用 `AgentExecutor`，`llm.py` 使用 `ChatOpenAI`。 | 保留 LangChain 的模型、工具和消息集成；规划 Agent 编排迁移至 LangGraph。现有 `AgentExecutor` 作为迁移前实现，不作为目标编排基础。 |
+| wkf Agent 评测 | `docs/travelplanner-eval/phase-t3-run1.md` 的同批 18 例里，single 最终通过 10/18、multi 4/18；multi 成本约为 single 两倍。报告也指出小样本和沙盒任务限制。 | 该结果不足以否定 Vago 的多 Agent 架构目标；它说明默认委派策略须在 Vago 任务上验证。阶段 5 建立单 Agent 基线，阶段 11 对照后按任务启用委派。 |
 | wkf 长期记忆 | Neo4j 图记忆有实体、关系、时间、冲突与检索实现；`docs/mem/v0.2/README.md` 报告测试完成，但真 LLM 质量回归只跑一次，Q1/Q6 仍 MISS。没有与 Vago 当前上下文或 Qdrant 的同任务对照。 | 允许保留 Neo4j 作隔离试验，不宣称已优于 Vago；生产化由质量、隔离、删除、时延和成本决定。 |
 | JSONL 与 MCP | wkf `SessionManager.save()` 使用 `open("w")` 重写整段 JSONL，并非追加日志；CLI `build_mcp_servers()` 在 `CLI_ENABLE_MCP` 未显式关闭时会配置 Playwright 与 Exa，并非默认空配置。 | MySQL 对话仍为生产真相源；可借鉴压缩/摘要。MCP 连接只可在显式开关、工具白名单、凭据和隐私审查后适配。 |
 
@@ -34,7 +35,7 @@
 | 两边后端类似，冲突以 Vago 优先 | 同意。Vago 的身份、领域模型、正式写入和客户端兼容性优先；wkf 的算法和控制流按接口改造，避免长期双后端。 |
 | PostgreSQL 数据可并入 MySQL | D02 已选择将 wkf 历史聊天、候选和记忆全量迁给一个 Vago 测试账号。先盘点、备份和试导入，再按目标契约迁移；原 wkf 身份与来源 ID 保留为溯源字段，不作为 Vago 授权依据。PostgreSQL 不作为第二套正式业务库长期保留。 |
 | Neo4j 先保留，未来讨论它与 Qdrant | 同意保留作实验性、可重建的个人记忆投影。Neo4j 侧重关系和时态事实；Qdrant 用于非结构化知识语义检索，两者不是等价替代。待同一任务对照后决定共存、收缩或弃用。 |
-| wkf Agent 机制可复用，先单 Agent | 同意，但拆出澄清、取消、预算、工具白名单、候选提交等能力按需接入；域委派需单独举证。 |
+| wkf 多 Agent 设计可复用，Vago 保留 LangChain 并采用 LangGraph | 采纳为合并方向。Vago 建立支持子 Agent 和域 Agent 的 LangGraph Runtime；在阶段 5 固定控制能力、Agent 注册和通信契约，阶段 11 完成实际委派并根据 Vago 任务评测决定启用范围。LangChain 保留模型、工具和消息集成，现有 `AgentExecutor` 逐步迁出编排职责。 |
 | 中国大陆与境外可用不同地图依赖 | 同意，规划数据通过 provider 适配层输出统一契约。高德可用于大陆候选；境外 provider 尚未选定，应按覆盖、授权、成本和质量决定。地图底图仍由 Web/iOS 现有组件承载。 |
 | 可复用 wkf 的 MCP 连接代码思路 | 可作为未来受控外部工具适配方案。先用直接 provider API 完成路线闭环；MCP 需要时再接，且默认关闭不需要的连接。 |
 | 不沿用三栏；聊天答复引用资源预览 | 采纳为目标交互。答复内引用有稳定 ID 的资源卡片，展开后可看详情/地图/候选版本；保持输入区宽度和消息可读性。 |
@@ -49,6 +50,7 @@
 4. **约束与决策**：对日期/时区、停留与换乘时间、地点顺序、显式禁忌和可计算预算进行确定性检查。结果分 `pass`、`fail`、`unverifiable`：D04 已决定明确硬约束的 `fail` 或 `unverifiable` 一律阻止正式写入，先补证据或修正候选并重新校验；软性未知以醒目警告展示。用户确认不能替代硬约束通过，Agent 文本也不能覆盖校验结果。
 5. **对话与事件**：沿用 Vago `AgentConversation`/`AgentMessage` 和公开 SSE 事件。事件携带会话/turn、trace、序号、阶段与关联资源 ID；工具执行、澄清、候选就绪、失败/取消、确认结果有明确状态。断线重连读取持久化会话、候选和确认状态，不依赖历史 SSE 重放。
 6. **工具与记忆**：Agent 使用有 schema、超时、权限和成本预算的内部 Domain Tools 或受控外部适配器，不直接访问通用 SQL。Vago 结构化事实/明确偏好优先；Neo4j 若接入，仅作为按 `user_uuid` 隔离的可选投影，保留来源、确认状态、纠错和删除路径，推断内容不能改写 GPS/打卡或用户确认偏好。
+7. **Agent 编排与多 Agent**：保留 LangChain 的模型、工具和消息集成，Agent 工作流使用 LangGraph；现有 `AgentExecutor` 作为迁移前实现。LangGraph Runtime 应支持 wkf AgentLoop 的澄清、恢复、取消、预算和工具白名单能力，并定义子 Agent / DomainAgent 的注册、结构化输入输出、工具范围、预算、超时、状态和报告契约。采用“一个执行实现配合多个受约束的 Agent 配置”的扩展方式。Agent 间任务状态与公开进度接入 Vago 现有 `AgentConversation` / `AgentMessage` 和 SSE 事件；消息总线只保留必要的进出站通信语义，不另设第二套编排和会话真相源。阶段 5 建立 Runtime 与契约，阶段 11 通过 Vago 任务对照启用域委派。
 
 ### 数据映射重点
 
@@ -59,7 +61,7 @@
 | `itinerary_results` 与 `submit_itinerary_plan` | MySQL `PlanProposal` 版本 | 历史结果全量迁入测试账号的候选区并保留原版本/来源；wkf “提交”改为候选提交，不直接创建 Vago Plan。 |
 | `placeRef`、`routeChoiceId` | 外部地点/路线引用 | 与 provider、坐标系、查询时间和来源绑定；过期时重新查询，不以模型编造 ID 代替。 |
 | Episode/Entity/Edge | 测试账号的隔离 Neo4j 记忆数据；生产仍为可选投影 | D02 的历史记忆须纳入全量迁移及数量核对，但只给测试账号使用；阶段 10 再验证是否接入产品上下文，不作为正式旅行事实的唯一来源。 |
-| 域 Agent 报告 | 结构化观察/资源引用 | 附完成状态、证据与未解决项；主 Agent 接收的摘要不能丢失关键候选和约束。 |
+| wkf Agent 配置与报告 | LangGraph Agent Registry / 受约束的 Agent 配置；结构化观察与资源引用 | 阶段 5 定义配置字段、可用工具和输入输出 schema；阶段 11 验证配置驱动的域 Agent。报告附完成状态、证据与未解决项，主 Agent 保留关键候选和约束。 |
 
 ## 5. 更细的分阶段落地顺序
 
@@ -75,13 +77,13 @@
 | **2A. 测试账号历史数据导入** | 在阶段 2 契约上试导入并正式导入 wkf 全部历史 JSONL 会话和 PostgreSQL 行程候选；Neo4j 的历史图记忆复制到隔离测试图并绑定同一测试账号。保留原始 ID、版本、来源、导入批次及备份；不兼容字段列差异清单。 | 把旧数据当作真实生产用户事实、导入 `.env`/密钥、让图记忆默认参与规划。 | 各来源导出数、成功数、未映射数和目标数可核对；重复运行幂等；抽样回读会话/候选/记忆及来源正确；生产账号不可读取，失败可回滚。阶段 10 再评价图记忆是否进入生产上下文。 | [已确认 D02](merge-decisions.md) |
 | **3. 时间线与约束校验** | 把 wkf `build_itinerary`/`dryRun` 的可复用逻辑及 `ItinerarySnapshot` 检查适配到 Vago 候选；定义适用规则、`fail`/`unverifiable`/警告及来源缺失处理；校验结果随版本保存。 | LLM 自行裁决硬约束、直接“提交即正式保存”。 | 多日、跨日时区、路线缺失、冲突、禁忌和预算缺证据反例通过；保存关口重新校验选中版本；D04 已确定硬约束 `fail` 或 `unverifiable` 阻止正式写入。 | [已确认 D04](merge-decisions.md) |
 | **4. 外部地点与路线 provider** | 按 Vago 认证和配额边界适配 wkf 高德搜索/路线候选/选路缓存；统一地点与路线输出，记录坐标系、来源、时间和失效策略；境外 provider 先保留接口与降级策略。 | 替换 MapKit/Leaflet、把路线写入足迹、同时接所有国家 provider。 | 大陆至少一条真实路线能查询、选定、经时间线计算并预览；WGS-84 与 provider 坐标转换在地图上核对；密钥只在服务端，失败/限额有可理解的结果。 | [填写 D05](merge-decisions.md) |
-| **5. 单 Agent 规划与交互** | 在 Vago Runtime 中按需接入 wkf 的工具循环、澄清/恢复、取消和预算控制；工具仅产出 Brief/Proposal 或读取领域事实；公开进度映射到现有 SSE。 | 默认启用域委派、MCP、wkf 未认证路由或文件会话库。 | 一次规划可多轮澄清并产出候选；取消后不产生正式写入；超时/服务失败有终态；工具与事件按用户隔离，断线能查持久化状态。 |  |
+| **5. LangGraph Runtime 与单 Agent 规划** | 在 Vago 中建立 LangGraph 编排基础，保留 LangChain 模型、工具和消息集成；接入 AgentLoop 的澄清、恢复、取消、预算与工具白名单能力。定义 Agent Registry / AgentSpec、子 Agent 与 DomainAgent 的结构化输入输出、工具范围、预算、超时、状态和报告契约；公开进度进入现有 `AgentConversation` / `AgentMessage` 与 SSE。规划主流程先以单 Agent 建立质量基线。 | 复制 wkf 的独立 OpenAI SDK 编排循环或完整 `MessageBus` / `SubAgentManager` 类；所有规划默认调用子 Agent；MCP、wkf 未认证路由或文件会话库。 | LangGraph 单 Agent 可多轮澄清并生成候选；运行可取消且有预算和终态；Agent 配置经过 schema 与工具白名单校验；公开事件按用户隔离并可回读；该 Runtime 能按既定契约挂接子图或子 Agent。 |  |
 | **6. Web 聊天内资源预览** | 在现有 Vago AI 页面展示引用式地点/路线/地图/候选卡片、版本切换、校验警告和来源；答复文字引用稳定资源 ID，展开预览不覆盖聊天输入。 | wkf 三栏前端、整站升级 React/Vite、正式确认写入。 | 流式与历史消息均能恢复同一卡片；用户看得清来源、估算、硬约束状态和版本；窄屏输入体验可用。 |  |
 | **7. 用户确认与正式 Plan 写入** | D03 已确定首版同时支持新建 Plan 和更新未转换的草稿 Plan/Itinerary。专用确认命令按认证用户、候选版本、目标 Plan 状态与版本重新校验，经 Vago Travel Service 原子写入；编辑时展示差异，保存候选到正式记录的关联并回读结果。进行中 Trip 修改仍属阶段 9。 | Agent 自动确认、修改进行中的 Trip。 | 用户拒绝/超时/目标已转换或被并发修改时正式数据不变；重复确认幂等；部分失败不留半成品；Web 可回读新建或更新的正式 Plan 和日程。此阶段才称首个端到端闭环。 | [已确认 D03、D04](merge-decisions.md) |
 | **8. iOS 适配** | 基于阶段 7 的同一 API，展示候选/已确认计划、警告和来源；按移动端需要决定是否加入确认按钮和澄清回复。 | 复制 Web 编辑器、在 iOS 执行 Agent Runtime。 | 同一用户跨端版本一致；若提供确认，遵循同一幂等/审批规则；旧 iOS 足迹、打卡和行程展示可用。 | [填写 D06](merge-decisions.md) |
 | **9. 进行中 Trip 重规划** | 生成“只改未来剩余日程”的候选差异，引用当前 Trip 与版本；校验时间/预算/已发生事实后展示变更，再经领域服务批准应用。 | 改写过去日程或 `TravelFootprint`、从建议直接静默写库。 | 拒绝后无变化；批准后差异可追溯并回读；并发修改触发冲突重算；足迹及已完成日程不受影响。 |  |
 | **10. Neo4j 记忆对照试验** | Neo4j 先保留在隔离环境；以可重建投影连接 Vago 已授权事实/对话，比较“Vago 结构化上下文 + 可选 Qdrant”与“再加图记忆”的同题表现。 | 全量 MySQL 迁移、将推断事实写回原始旅行数据。 | 预先固定跨旅程偏好、时态矛盾和纠错样例；记录质量、来源正确率、双用户隔离、删除传播、时延与成本。未达门槛维持实验状态；共存或替换 Qdrant 另做决策。 | [填写 D07](merge-decisions.md) |
-| **11. 域委派 / MCP 按证据启用** | 在单 Agent 基线之上，针对确需浏览器、长上下文或并行检索的任务分别试域委派；有明确 provider 需求时适配 wkf MCP 连接模式。 | 因“更先进”默认多 Agent 或默认连接 Playwright/Exa。 | 同题对照质量、证据保真、延迟、token/费用与失败率；用户隐私、工具授权、超时及关闭开关可验证；未获收益不进默认链路。 |  |
+| **11. Sub-Agent 域委派 / MCP 按证据启用** | 基于阶段 5 的 LangGraph Runtime 和 AgentSpec 契约，实现 wkf SubAgentManager / DomainAgent 的任务委派能力；按领域配置注册 Agent，通过 LangGraph supervisor、subgraph 或合适的 Domain Tool 边界执行。对确需浏览器、长上下文或并行检索的任务开展委派；有明确 provider 需求时适配 wkf MCP 连接模式。 | 另建一套 Agent 循环、会话存储或消息总线；未经任务验证就让所有规划默认多 Agent；默认连接 Playwright/Exa。 | 使用 Vago 代表性规划任务与阶段 5 单 Agent 基线对照，记录任务完成质量、来源与约束保留、用户隔离、延迟、token/费用及失败恢复；通过门槛的任务才启用委派。MCP 连接具有明确授权、凭据管理、超时和关闭开关。 |  |
 
 **建议的首个实现 PR**：只覆盖阶段 1 的可执行契约和阶段 2 的最小候选版本持久化/读取，使用固定样例与双用户隔离测试。时间线/约束校验作为下一 PR，随后才接地图、Agent 和界面。这样先固定“候选 ≠ 正式记录”的关键边界。
 
@@ -95,7 +97,7 @@
 
 ## 7. 已确认决策与后续待填写事项
 
-用户已在[决策填写表](merge-decisions.md)确认 D01–D04；下表是当前执行口径。D05–D07 尚未填写，可先推进不依赖其选择的工作，到对应阶段的决策门槛再确认。本文仍是直接指导文件。
+用户已在[决策填写表](merge-decisions.md)确认 D01–D04，并明确了 LangChain / LangGraph 与多 Agent 架构方向；下表是当前执行口径。D05–D07 尚未填写，可先推进不依赖其选择的工作，到对应阶段的决策门槛再确认。本文仍是直接指导文件。
 
 | 编号 | 状态 / 决策时点 | 当前执行口径 |
 | --- | --- | --- |
@@ -103,6 +105,7 @@
 | D02 历史 wkf 数据迁移 | 已确认 C | 全量迁移历史会话、候选和记忆，统一归属一个指定的 Vago 测试账号；分阶段盘点、导入、核数与回滚，不转成生产用户事实。 |
 | D03 首个正式写入范围 | 已确认 B | 首版既能新建 Plan，也能编辑尚未转换为 Trip 的草稿 Plan；进行中 Trip 重规划仍在阶段 9。 |
 | D04 硬约束无法验证 | 已确认 A | 明确硬约束为 `fail` 或 `unverifiable` 时阻止确认写入，先补证据或修正；不设置警告放行。 |
+| Agent 技术与架构方向 | 用户已明确 | 保留 LangChain 模型、工具和消息集成，使用 LangGraph 编排；建立支持 Sub-Agent / DomainAgent 的架构与配置契约，阶段 11 按 Vago 任务评测启用委派。 |
 | D05 境外规划首期范围 | 阶段 4 接 provider 前 | 先完成大陆高德闭环；境外路线 provider 单独评估，暂不承诺首期路线可用。 |
 | D06 iOS 首轮操作范围 | 阶段 8 前 | 先展示候选与已确认方案；确认和澄清入口依实际移动场景决定。 |
 | D07 Neo4j/Qdrant 长期组合 | 阶段 10 对照后 | Neo4j 保持隔离试验，Qdrant 维持现用途；不预先决定双库生产部署或替换。 |
