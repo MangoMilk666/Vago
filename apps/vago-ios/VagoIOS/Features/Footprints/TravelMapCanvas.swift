@@ -43,11 +43,13 @@ struct TravelMapCanvas: View {
                     if areFootprintSamplesVisible {
                         // MapProxy 投影后的屏幕坐标用于稀疏圆点；线路与用户手动打卡图标保持独立。
                         ForEach(segment.locations.filter { $0.kind == .automaticGPS && visibleSampleKeys.contains($0.stableKey) }) { location in
-                            Annotation("轨迹", coordinate: coordinate(for: location)) {
+                            // 自动 GPS 采样点仅显示圆点，不在地图上重复绘制文字标签。
+                            Annotation("", coordinate: coordinate(for: location)) {
                                 Circle()
                                     .fill(theme.route)
                                     .frame(width: footprintPointDiameter, height: footprintPointDiameter)
                                     .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1))
+                                    .accessibilityLabel("自动 GPS 采样点")
                             }
                         }
                     }
