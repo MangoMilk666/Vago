@@ -23,6 +23,15 @@ struct CurrentTripView: View {
             Group {
                 if isLoading && tripContext.trips.isEmpty {
                     ProgressView("正在读取行程")
+                } else if tripContext.trips.isEmpty && !errorMessage.isEmpty {
+                    ContentUnavailableView {
+                        Label("暂时无法读取行程", systemImage: "wifi.slash")
+                    } description: {
+                        Text(errorMessage)
+                    } actions: {
+                        Button("重新读取") { Task { await refresh() } }
+                            .buttonStyle(.borderedProminent)
+                    }
                 } else if tripContext.trips.isEmpty {
                     ContentUnavailableView("暂无正式行程", systemImage: "suitcase", description: Text("创建或转换一份计划后，行程会在这里出现。"))
                 } else {
@@ -57,11 +66,6 @@ struct CurrentTripView: View {
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
             }
-            .alert("暂时无法读取行程", isPresented: Binding(get: { !errorMessage.isEmpty }, set: { if !$0 { errorMessage = "" } })) {
-                Button("好的", role: .cancel) {}
-            } message: {
-                Text(errorMessage)
-            }
         }
     }
 
@@ -86,13 +90,15 @@ struct CurrentTripView: View {
         defer { isLoading = false }
         if let userUuid = session.profile?.uuid {
             tripContext.restoreCachedTrips(for: userUuid)
+            // 本地行程可直接显示，网络同步继续执行。
+            if !tripContext.trips.isEmpty { isLoading = false }
         }
         do {
-            let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session)
+            let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session, timeoutInterval: 5)
             guard let userUuid = session.profile?.uuid else { return }
             tripContext.replaceTrips(trips, for: userUuid)
         } catch {
-            errorMessage = error.localizedDescription
+            if tripContext.trips.isEmpty { errorMessage = error.localizedDescription }
         }
     }
 

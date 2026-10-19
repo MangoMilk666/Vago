@@ -36,6 +36,7 @@ struct RootView: View {
 }
 
 private struct MainTabView: View {
+    @EnvironmentObject private var session: SessionStore
     // 内部枚举避免用容易写错的字符串表示 Tab；Hashable 是 TabView(selection:) 的绑定值要求。
     private enum Tab: Hashable {
         case trip
@@ -64,6 +65,15 @@ private struct MainTabView: View {
             ProfileView()
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }
                 .tag(Tab.profile)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if session.isUsingCachedProfile {
+                Label("正在使用本地资料，联网后自动更新", systemImage: "wifi.slash")
+                    .font(.caption)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(.regularMaterial)
+            }
         }
         // TabView 显式扩展到安全区域内的最大尺寸，适配不同 iPhone 的屏幕高度。
         .frame(maxWidth: .infinity, maxHeight: .infinity)

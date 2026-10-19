@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import UIKit
 
@@ -14,6 +15,7 @@ final class SessionStore: ObservableObject {
     // @Published: 当 state 被修改时，对外发布“这个值变了”的通知，让正在观察 SessionStore 的 UI 有机会自动更新。
     @Published private(set) var state: State = .launching
     @Published private(set) var profile: UserProfile?
+    @Published private(set) var isUsingCachedProfile = false
     
     // token 不发布到 UI，避免令牌变化无意义地触发视图重绘。
     private(set) var tokens: TokenPair?
@@ -22,37 +24,44 @@ final class SessionStore: ObservableObject {
     // Task?: 可能保存着一个“未来会异步产生 String，也可能抛出 Error”的任务
     // 并发请求同时收到 401 时共用同一个 refresh Task，避免令牌轮换后互相覆盖。
     private var refreshTask: Task<String, Error>?
+    private var sessionRevision = 0
 
     func restoreSession() async {
-        // async 函数可在 await 处挂起，网络请求期间不会阻塞主线程和首屏动画。
+        guard state == .launching else { return }
+        let revision = sessionRevision
         do {
-            // 如果 KeychainStore.load() != nil -> 把它解包后赋值给 tokens; else return
             guard let tokens = try KeychainStore.load() else {
                 state = .signedOut
                 return
             }
             self.tokens = tokens
-            // 不仅信任本地 Keychain：启动时请求 profile，确认 token 仍被服务端接受。
-            profile = try await client.request(path: "users/profile", tokenProvider: self)
-            SessionProfileCache.save(profile)
+            // 已绑定当前会话的资料先用于首屏，服务端验证继续进行。
+            if let cachedProfile = SessionProfileCache.load(for: tokens) {
+                profile = cachedProfile
+                isUsingCachedProfile = true
+                state = .signedIn
+            }
+            let verifiedProfile: UserProfile = try await client.request(
+                path: "users/profile", tokenProvider: self, timeoutInterval: 5
+            )
+            guard revision == sessionRevision else { return }
+            profile = verifiedProfile
+            if let currentTokens = self.tokens {
+                SessionProfileCache.save(verifiedProfile, for: currentTokens)
+            }
+            isUsingCachedProfile = false
             state = .signedIn
         } catch {
-            // 分支条件：临时网络不可达时保留 Keychain 凭证，并用最近资料恢复只读离线界面；
-            // 服务端真正拒绝令牌时才清除登录态，不能把断网误判为退出。
-            // Self: 表示当前这个类型本身（current type）。因为isTemporaryNetworkError是static
-            // 所以调用可以用className.staticFunc()或者Self.staticFunc()
-            if Self.isTemporaryNetworkError(error) {
-                if let cachedProfile = SessionProfileCache.load() {
-                    profile = cachedProfile
-                    state = .signedIn
-                } else {
-                    // 首次离线启动、缺少展示资料时，只能停留登录页，但仍保留凭证，待网络恢复后继续验证。
-                    state = .signedOut
-                }
-            } else {
+            guard revision == sessionRevision else { return }
+            // 只有服务端明确拒绝会话时才清除凭证；断网和服务故障保留本地资料。
+            if Self.isRejectedSession(error) {
                 KeychainStore.clear()
                 tokens = nil
                 profile = nil
+                isUsingCachedProfile = false
+                SessionProfileCache.clear()
+                state = .signedOut
+            } else if profile == nil {
                 state = .signedOut
             }
         }
@@ -65,9 +74,11 @@ final class SessionStore: ObservableObject {
         let payload = PhoneLoginRequest(phone: phone, code: code, clientType: "ios", deviceId: deviceID)
         let response: LoginResponse = try await client.request(path: "auth/login/phone", method: "POST", body: payload)
         try KeychainStore.save(response.tokens)
+        sessionRevision += 1
         tokens = response.tokens
         profile = response.userInfo
-        SessionProfileCache.save(response.userInfo)
+        SessionProfileCache.save(response.userInfo, for: response.tokens)
+        isUsingCachedProfile = false
         state = .signedIn
     }
 
@@ -81,6 +92,7 @@ final class SessionStore: ObservableObject {
     }
 
     func logout() async {
+        sessionRevision += 1
         // 先复制 Optional token，避免 await 期间状态更新造成对属性的非预期读取。
         let currentTokens = tokens
         if let currentTokens {
@@ -94,6 +106,7 @@ final class SessionStore: ObservableObject {
         KeychainStore.clear()
         tokens = nil
         profile = nil
+        isUsingCachedProfile = false
         SessionProfileCache.clear()
         state = .signedOut
     }
@@ -106,7 +119,7 @@ final class SessionStore: ObservableObject {
     
     /// 安全地刷新 access token，并保证并发请求共用同一个刷新任务
     // fileprivate: 函数只能在当前 Swift 文件内部访问。
-    fileprivate func refreshAccessToken() async throws -> String {
+    fileprivate func refreshAccessToken(timeoutInterval: TimeInterval? = nil) async throws -> String {
         // 没 token → 直接 unauthorized
         guard let tokens else { throw APIError.unauthorized }
         
@@ -118,14 +131,20 @@ final class SessionStore: ObservableObject {
         // 没人在 refresh → 创建一个新的 Task,在 MainActor 上运行 → 请求新 token → 保存新 token → 返回新的 accessToken
         // 换取新 token 对，随后立即覆盖 Keychain 中的旧值。
         // in: 前面是闭包的“参数/类型声明”，后面开始是闭包 body。这个闭包没有参数，可能抛异常，最终返回 String。
+        let revision = sessionRevision
         let task = Task { @MainActor [client] () throws -> String in
             let refreshed: TokenPair = try await client.request(
                 path: "auth/token/refresh",
                 method: "POST",
-                body: RefreshRequest(refreshToken: tokens.refreshToken)
+                body: RefreshRequest(refreshToken: tokens.refreshToken),
+                timeoutInterval: timeoutInterval
             )
+            guard revision == self.sessionRevision else { throw APIError.unauthorized }
             try KeychainStore.save(refreshed)
             self.tokens = refreshed
+            if let cachedProfile = self.profile {
+                SessionProfileCache.save(cachedProfile, for: refreshed)
+            }
             return refreshed.accessToken
         }
         refreshTask = task
@@ -135,51 +154,44 @@ final class SessionStore: ObservableObject {
         return try await task.value
     }
 
-    private static func isTemporaryNetworkError(_ error: Error) -> Bool {
-        // as?: 尝试安全转换。如果 error 能转成 URLError，就把它赋值给 urlError；否则赋值为nil
-        // 类似java instanceof
-        guard let urlError = error as? URLError else { return false }
-        
-        // 这些错误表示当前无法验证服务端会话，不代表 JWT 已失效。
-        // urlError.code为enum，有若干caseName的枚举值
-        // 当编译器已经知道枚举类型时，可以省略枚举类型名，只写 .caseName
-        switch urlError.code {
-        case .notConnectedToInternet, .networkConnectionLost, .timedOut,
-                .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
-            return true
-        default:
-            return false
-        }
+    private static func isRejectedSession(_ error: Error) -> Bool {
+        if case APIError.unauthorized = error { return true }
+        if case let APIError.server(_, statusCode) = error { return statusCode == 401 || statusCode == 403 }
+        return false
     }
 }
 
-/// 仅缓存已登录账号的最小展示资料，支持断网时恢复本地待传足迹；不保存任何 token。
+/// 只缓存当前 Keychain 会话的展示资料，不保存原始令牌。
 private enum SessionProfileCache {
     private static let storageKey = "vago.session.cached-profile"
 
-    /// 用户资料存入UserDefaults
-    static func save(_ profile: UserProfile?) {
-        // 1.检查传进来的 profile 不是 nil，并把它解包成一个非 Optional 的局部变量 profile
-        // 完整写法为 guard let profile = profile -> 因为左右变量同名，Swift 允许简写。
-        // 2. try?：尝试执行一个可能抛异常的表达式；成功就返回结果，失败返回nil
-        // 3. guard let两个表达式，相当于&&/and条件判断
-        guard let profile, let data = try? JSONEncoder().encode(profile) else { return }
+    private struct Entry: Codable {
+        let sessionKey: String
+        let profile: UserProfile
+    }
+
+    static func save(_ profile: UserProfile, for tokens: TokenPair) {
+        let entry = Entry(sessionKey: sessionKey(for: tokens), profile: profile)
+        guard let data = try? JSONEncoder().encode(entry) else { return }
         UserDefaults.standard.set(data, forKey: storageKey)
     }
-    
-    /// 从UserDefaults取出用户profile信息
-    static func load() -> UserProfile? {
-        // kv对查找，得到json数据
+
+    static func load(for tokens: TokenPair) -> UserProfile? {
         guard let data = UserDefaults.standard.data(forKey: storageKey) else { return nil }
-        // 反序列化
-        // UserProfile.self: 表示 UserProfile 这个类型本身，作为一个值传进去。
-        // .self 的作用就是“把类型本身作为一个值引用出来”。相当于java className.class
-        return try? JSONDecoder().decode(UserProfile.self, from: data)
+        guard let entry = try? JSONDecoder().decode(Entry.self, from: data),
+              entry.sessionKey == sessionKey(for: tokens) else { return nil }
+        return entry.profile
     }
-    
-    /// 清除用户profile信息
+
     static func clear() {
         UserDefaults.standard.removeObject(forKey: storageKey)
+    }
+
+    private static func sessionKey(for tokens: TokenPair) -> String {
+        if let sessionId = tokens.sessionId, !sessionId.isEmpty { return "session:\(sessionId)" }
+        // 老会话没有 sessionId 时使用刷新令牌摘要绑定缓存，避免明文令牌进入 UserDefaults。
+        let digest = SHA256.hash(data: Data(tokens.refreshToken.utf8))
+        return "token:\(digest.map { String(format: "%02x", $0) }.joined())"
     }
 }
 
@@ -243,15 +255,15 @@ final class APIClient {
         return decoder
     }()
 
-    func request<Value: Decodable>(path: String, tokenProvider: SessionStore? = nil) async throws -> Value {
+    func request<Value: Decodable>(path: String, tokenProvider: SessionStore? = nil, timeoutInterval: TimeInterval? = nil) async throws -> Value {
         // Value 是泛型占位符；调用处声明 [Trip]、UserProfile 等类型即可推断 JSON data 的目标类型。
         let token = try await tokenProvider?.validAccessToken()
-        return try await perform(path: path, method: "GET", body: nil, accessToken: token, tokenProvider: tokenProvider)
+        return try await perform(path: path, method: "GET", body: nil, accessToken: token, tokenProvider: tokenProvider, timeoutInterval: timeoutInterval)
     }
 
-    func request<Value: Decodable, Body: Encodable>(path: String, method: String, body: Body) async throws -> Value {
+    func request<Value: Decodable, Body: Encodable>(path: String, method: String, body: Body, timeoutInterval: TimeInterval? = nil) async throws -> Value {
         // 此重载用于无需登录的请求，例如发送短信验证码。
-        try await perform(path: path, method: method, body: try encode(body), accessToken: nil, tokenProvider: nil)
+        try await perform(path: path, method: method, body: try encode(body), accessToken: nil, tokenProvider: nil, timeoutInterval: timeoutInterval)
     }
 
     func request<Value: Decodable, Body: Encodable>(path: String, method: String, body: Body, tokenProvider: SessionStore) async throws -> Value {
@@ -312,11 +324,13 @@ final class APIClient {
         body: Data?,
         accessToken: String?,
         tokenProvider: SessionStore?,
+        timeoutInterval: TimeInterval? = nil,
         // 默认参数让首次调用省略 retried；401 刷新后递归重放时传 true，限制最多一次重试。
         retried: Bool = false
     ) async throws -> Value {
         // URLRequest 类似 axios 的单次请求配置；body 已在上层编码为 JSON Data。
         var request = URLRequest(url: APIConfiguration.baseURL.appending(path: path))
+        if let timeoutInterval { request.timeoutInterval = timeoutInterval }
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let accessToken { request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization") }
@@ -331,8 +345,8 @@ final class APIClient {
         
         // 分支条件：access token 首次失效时刷新一次并重放原请求，防止循环刷新。
         if httpResponse.statusCode == 401, let tokenProvider, !retried {
-            let refreshedToken = try await tokenProvider.refreshAccessToken()
-            return try await perform(path: path, method: method, body: body, accessToken: refreshedToken, tokenProvider: tokenProvider, retried: true)
+            let refreshedToken = try await tokenProvider.refreshAccessToken(timeoutInterval: timeoutInterval)
+            return try await perform(path: path, method: method, body: body, accessToken: refreshedToken, tokenProvider: tokenProvider, timeoutInterval: timeoutInterval, retried: true)
         }
         
         // ~=: httpResponse.statusCode 是否匹配 200..<300 这个范围

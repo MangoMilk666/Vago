@@ -70,7 +70,7 @@ Web 将 access token、refresh token 和用户资料写入 `localStorage` 的 `v
 
 ### iOS
 
-iOS 由共享 `SessionStore` 管理 `launching`、`signedOut` 和 `signedIn` 状态。令牌对保存在 Keychain，访问令牌不暴露给视图层。应用启动时读取 Keychain 并请求当前用户资料验证会话；遇到临时网络错误时，可用 `UserDefaults` 中缓存的最小用户资料恢复登录界面状态，缓存中不保存令牌。
+iOS 由共享 `SessionStore` 管理 `launching`、`signedOut` 和 `signedIn` 状态。令牌对保存在 Keychain，访问令牌不暴露给视图层。应用启动时读取 Keychain；如果存在与当前会话绑定的本地资料，先进入主界面，再以 5 秒请求超时验证服务端资料。服务端明确拒绝会话时清理凭证；网络或服务暂时不可用时保留凭证和缓存，并标明当前使用本地资料。资料缓存只保存会话标识或刷新令牌摘要与最小展示资料，不保存原始令牌。首次使用新版缓存时，旧版未绑定会话的资料需成功联网验证后更新，不能直接用于离线首屏。
 
 iOS API 客户端使用 `Authorization: Bearer <token>`。受保护请求收到 401 后，会调用 refresh 接口、更新 Keychain 中的令牌对并重放原请求一次。并发请求共享同一个刷新任务，避免多个请求同时轮换 refresh token。退出登录时客户端向后端提交 access token 和 refresh token，清理服务端当前会话，然后删除 Keychain 令牌和本地资料缓存。
 

@@ -179,13 +179,13 @@ struct TrackingView: View {
             isTripStatusUnverified = true
             tracking.prepare(tripUuid: cachedTrip.uuid, userUuid: userUuid, session: session)
             footprintRepository.prepare(userUuid: userUuid, tripUuid: cachedTrip.uuid, tracking: tracking)
-            // 本地有完整地图缓存时先显示地图，网络校验在后台继续，不让离线冷启动卡在转圈页。
-            if showLoading, !footprintRepository.displayPoints.isEmpty {
+            // 选定行程已缓存时先显示地图；即使尚无足迹点也不等待网络。
+            if showLoading {
                 isLoading = false
             }
         }
         do {
-            let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session)
+            let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session, timeoutInterval: 5)
             // 分支条件：行程列表成功返回即说明网络已恢复，可清除上次保留的刷新失败状态。
             refreshError = nil
             guard let userUuid = session.profile?.uuid else { return }
@@ -200,7 +200,8 @@ struct TrackingView: View {
                 // 统一足迹流按时间返回自动 GPS 与手动打卡，地图不再拼接两个独立远端集合。
                 let remoteFootprints: [TravelFootprint] = try await client.request(
                     path: "footprints/trips/\(trip.uuid)/footprints",
-                    tokenProvider: session
+                    tokenProvider: session,
+                    timeoutInterval: 5
                 )
                 // 分支条件：异步请求回来前若用户已切换行程，不让旧结果覆盖新地图。
                 guard self.trip?.uuid == trip.uuid, session.profile?.uuid == userUuid else { return }
