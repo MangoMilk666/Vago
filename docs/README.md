@@ -9,6 +9,7 @@
 | [PRD](prd/PRD.md) | 当前产品目标，含未来能力 | 产品定位、领域需求及目标状态；具体完成度须核对代码 |
 | [架构说明](architecture.md) | 当前原则与目标设计 | 系统边界、数据流和 Agent 演进方向；阶段表不是实时进度 |
 | [Agent Runtime 设计](modules/agent/agent-runtime.md) | 当前实现与目标设计 | Agent 工具、事件、上下文和后续工作，文内区分已实现与目标 |
+| [登录与身份认证设计](modules/authentication/README.md) | 当前实现设计 | 手机号与 OAuth 登录、JWT 会话、客户端凭据保存和用户身份校验 |
 
 ## 开发参考
 

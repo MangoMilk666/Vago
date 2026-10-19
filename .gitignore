@@ -115,6 +115,7 @@ docs/assets/
 bug-records.md
 local-prompts/
 .agents/reviews/
+apps/vago-ios/.build-theme/
 
 # 启动fastAPI项目的命令脚本
 services/vago-ai/launch.sh

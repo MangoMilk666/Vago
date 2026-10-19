@@ -4,6 +4,8 @@ import SwiftUI
 struct CurrentTripView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var tripContext: TripContextStore
+    @Environment(\.appTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isLoading = true
     @State private var errorMessage = ""
     @State private var createError = ""
@@ -30,8 +32,11 @@ struct CurrentTripView: View {
                         tripSection("已结束", trips: endedTrips)
                     }
                     .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.background(for: colorScheme))
             .navigationTitle("行程")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -241,6 +246,7 @@ private struct TripDetailView: View {
                 }
             }
         }
+        .themedScrollBackground()
         .navigationTitle(trip.title)
         .toolbar {
             if canEdit {
@@ -344,6 +350,7 @@ private struct TripEditorSheet: View {
                     Text("结束日期不能早于开始日期").foregroundStyle(.red)
                 }
             }
+            .themedScrollBackground()
             .navigationTitle("编辑行程")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -383,6 +390,7 @@ private struct ItineraryDayView: View {
             }
             if let notes = day.notes, !notes.isEmpty { Section("备注") { Text(notes) } }
         }
+        .themedScrollBackground()
         .navigationTitle("第 \(day.dayIndex) 天")
     }
 }
@@ -420,6 +428,7 @@ private struct TripCreatorSheet: View {
                         .foregroundStyle(.red)
                 }
             }
+            .themedScrollBackground()
             .navigationTitle("新增行程")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

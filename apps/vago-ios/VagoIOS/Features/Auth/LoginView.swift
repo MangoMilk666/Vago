@@ -11,6 +11,8 @@ struct LoginView: View {
     // @State 是页面私有的可变状态；输入变化时 SwiftUI 自动更新对应控件。
     // @EnvironmentObject 读取 App 根节点注入的共享会话，不需要逐层作为参数传递。
     @EnvironmentObject private var session: SessionStore
+    @Environment(\.appTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
     @State private var phone = ""
     @State private var code = ""
     @State private var isSubmitting = false
@@ -27,7 +29,7 @@ struct LoginView: View {
                 Spacer()
                 Image(systemName: "location.circle.fill")
                     .font(.system(size: 58))
-                    .foregroundStyle(.indigo)
+                    .foregroundStyle(theme.accent)
                 Text("Vago")
                     .font(.largeTitle.bold())
                 Text("把每一段旅程，留在自己的坐标里。")
@@ -75,6 +77,8 @@ struct LoginView: View {
                 Spacer()
             }
             .padding(28)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.background(for: colorScheme))
             // 点击不属于输入控件的页面区域时，结束编辑并收起键盘。
             .contentShape(Rectangle())
             .onTapGesture { focusedField = nil }

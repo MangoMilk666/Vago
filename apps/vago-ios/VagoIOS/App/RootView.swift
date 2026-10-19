@@ -5,6 +5,8 @@ struct RootView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var tracking: LocationTrackingStore
     @EnvironmentObject private var tripContext: TripContextStore
+    @Environment(\.appTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Group {
@@ -19,7 +21,8 @@ struct RootView: View {
                 MainTabView()
             }
         }
-        .tint(.indigo)
+        .tint(theme.accent)
+        .background(theme.background(for: colorScheme).ignoresSafeArea())
         // 根容器始终占用 WindowGroup 提供的完整可用区域，避免首屏内容的固有尺寸压缩 TabView。
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: session.profile?.uuid) { _, userUuid in

@@ -4,6 +4,7 @@ import SwiftUI
 
 /// 地图画布只负责渲染个人空间数据；定位和网络请求仍由上层现有能力处理。
 struct TravelMapCanvas: View {
+    @Environment(\.appTheme) private var theme
     // 统一足迹流同时包含自动轨迹与手动打卡；当前定位不必已经保存成足迹。
     let locations: [FootprintDisplayPoint]
     let currentLocation: CurrentLocationFix?
@@ -35,16 +36,16 @@ struct TravelMapCanvas: View {
                 ForEach(routeSegments) { segment in
                     if segment.locations.count > 1 {
                         MapPolyline(coordinates: segment.smoothedCoordinates)
-                            .stroke(.indigo.opacity(0.22), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+                            .stroke(theme.route.opacity(0.22), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
                         MapPolyline(coordinates: segment.smoothedCoordinates)
-                            .stroke(.indigo, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                            .stroke(theme.route, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
                     }
                     if areFootprintSamplesVisible {
                         // MapProxy 投影后的屏幕坐标用于稀疏圆点；线路与用户手动打卡图标保持独立。
                         ForEach(segment.locations.filter { $0.kind == .automaticGPS && visibleSampleKeys.contains($0.stableKey) }) { location in
                             Annotation("轨迹", coordinate: coordinate(for: location)) {
                                 Circle()
-                                    .fill(.indigo)
+                                    .fill(theme.route)
                                     .frame(width: footprintPointDiameter, height: footprintPointDiameter)
                                     .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1))
                             }
@@ -59,8 +60,8 @@ struct TravelMapCanvas: View {
                         } label: {
                             Image(systemName: "mappin.circle.fill")
                                 .font(.title2)
-                                // 与 Web 地图统一使用玫瑰色强调主动打卡，自动采样仍使用 Indigo。
-                                .foregroundStyle(Color(red: 0.906, green: 0.357, blue: 0.482))
+                                // 打卡与轨迹保持不同颜色，主题切换时仍能区分两类位置。
+                                .foregroundStyle(theme.checkin)
                                 .shadow(radius: 2)
                         }
                         .buttonStyle(.plain)
@@ -71,7 +72,7 @@ struct TravelMapCanvas: View {
                     Annotation("当前位置", coordinate: currentLocation.coordinate) {
                         Image(systemName: "location.north.fill")
                             .font(.system(size: 24, weight: .bold))
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(theme.accent)
                             .rotationEffect(.degrees(currentLocation.headingDegrees ?? 0))
                             .padding(5)
                             .background(.white.opacity(0.92), in: Circle())

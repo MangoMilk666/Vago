@@ -4,6 +4,8 @@ import SwiftUI
 /// iOS Agent 入口：复用 Web 已使用的持久化会话与 SSE，不在客户端实现 Agent Runtime。
 struct AgentChatView: View {
     @EnvironmentObject private var session: SessionStore
+    @Environment(\.appTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var viewModel = AgentChatViewModel()
     @State private var input = ""
     @State private var isConversationListPresented = false
@@ -18,6 +20,7 @@ struct AgentChatView: View {
                         Divider()
                         messageList
                     }
+                    .background(theme.background(for: colorScheme))
                     .navigationTitle("Vago Agent")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
@@ -103,7 +106,7 @@ struct AgentChatView: View {
     private var conversationHeader: some View {
         HStack(spacing: 10) {
             Image(systemName: "sparkles")
-                .foregroundStyle(.indigo)
+                .foregroundStyle(theme.accent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(viewModel.activeConversation?.title ?? "新对话")
                     .font(.subheadline.weight(.semibold))
@@ -167,7 +170,7 @@ struct AgentChatView: View {
                 .focused($isInputFocused)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+                .background(theme.surface(for: colorScheme), in: RoundedRectangle(cornerRadius: 18))
                 .submitLabel(.send)
                 .onSubmit { send() }
             Button(action: send) {
@@ -175,7 +178,7 @@ struct AgentChatView: View {
                     .font(.headline)
                     .frame(width: 36, height: 36)
                     .foregroundStyle(.white)
-                    .background(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming ? Color.gray : Color.indigo, in: Circle())
+                    .background(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming ? Color.gray : theme.accent, in: Circle())
             }
             .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isStreaming)
             .accessibilityLabel("发送消息")
@@ -487,6 +490,8 @@ private struct EmptyAgentRequest: Encodable {}
 
 private struct AgentMessageBubble: View {
     let message: AgentDisplayMessage
+    @Environment(\.appTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 8) {
@@ -517,7 +522,7 @@ private struct AgentMessageBubble: View {
                 }
                 .padding(12)
                 .foregroundStyle(message.role == "user" ? Color.white : Color.primary)
-                .background(message.role == "user" ? Color.indigo : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                .background(message.role == "user" ? theme.accent : theme.surface(for: colorScheme), in: RoundedRectangle(cornerRadius: 16))
                 if message.role != "user" { Spacer(minLength: 24) }
             }
         }
@@ -527,6 +532,7 @@ private struct AgentMessageBubble: View {
 /// 将常用 Markdown 行结构转成 SwiftUI 视图，行内强调、链接等由 AttributedString 的 Markdown 解析完成。
 private struct MarkdownMessageText: View {
     let content: String
+    @Environment(\.appTheme) private var theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -554,7 +560,7 @@ private struct MarkdownMessageText: View {
             markdownText(String(line.dropFirst(2)))
                 .italic()
                 .padding(.leading, 8)
-                .overlay(alignment: .leading) { Rectangle().fill(.indigo.opacity(0.45)).frame(width: 3) }
+                .overlay(alignment: .leading) { Rectangle().fill(theme.accent.opacity(0.45)).frame(width: 3) }
         } else if !line.isEmpty {
             markdownText(line)
         } else {
@@ -571,6 +577,7 @@ private struct MarkdownMessageText: View {
 private struct AgentActivityTrace: View {
     let events: [AgentEvent]
     let isRunning: Bool
+    @Environment(\.appTheme) private var theme
     @State private var isExpanded = true
 
     var body: some View {
@@ -579,7 +586,7 @@ private struct AgentActivityTrace: View {
                 ForEach(Array(events.enumerated()), id: \.offset) { _, event in
                     HStack(alignment: .top, spacing: 7) {
                         Image(systemName: event.type.hasSuffix("failed") ? "exclamationmark.circle" : event.type.hasSuffix("completed") ? "checkmark.circle.fill" : "circle.dotted")
-                            .foregroundStyle(event.type.hasSuffix("failed") ? .orange : .indigo)
+                            .foregroundStyle(event.type.hasSuffix("failed") ? .orange : theme.accent)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(event.label ?? "正在处理旅行上下文")
                                 .font(.caption)
@@ -606,10 +613,10 @@ private struct AgentActivityTrace: View {
                 Text("\(events.count)").font(.caption2.monospacedDigit())
             }
             .font(.caption.weight(.medium))
-            .foregroundStyle(.indigo)
+            .foregroundStyle(theme.accent)
         }
         .padding(10)
-        .background(.indigo.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .background(theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
         .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: isRunning) { _, running in
             // 分支条件：生成中自动展开便于观察；完成后默认收起，用户仍可自行展开回看。
@@ -620,12 +627,14 @@ private struct AgentActivityTrace: View {
 
 private struct AgentEmptyState: View {
     let onSuggestion: (String) -> Void
+    @Environment(\.appTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: "sparkles")
                 .font(.system(size: 30))
-                .foregroundStyle(.indigo)
+                .foregroundStyle(theme.accent)
             Text("和 Vago Agent 一起协调旅行")
                 .font(.headline)
             Text("它会在你的授权范围内读取旅行事实与个人资料，不会自行修改行程。")
@@ -640,7 +649,7 @@ private struct AgentEmptyState: View {
                     .font(.subheadline)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
-                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                    .background(theme.surface(for: colorScheme), in: RoundedRectangle(cornerRadius: 12))
             }
         }
         .padding(28)
@@ -657,6 +666,7 @@ private struct ConversationSidebar: View {
     let onSelect: (AgentConversation) -> Void
     let onRename: (AgentConversation, String) -> Void
     let onDelete: (AgentConversation) -> Void
+    @Environment(\.appTheme) private var theme
     @State private var editingConversation: AgentConversation?
     @State private var titleDraft = ""
     @State private var deletingConversation: AgentConversation?
@@ -721,7 +731,7 @@ private struct ConversationSidebar: View {
                                 if conversation.uuid == activeConversationUuid {
                                     Image(systemName: "checkmark")
                                         .font(.caption.weight(.bold))
-                                        .foregroundStyle(.indigo)
+                                        .foregroundStyle(theme.accent)
                                 }
                                 Menu {
                                     Button { beginRename(conversation) } label: { Label("重命名", systemImage: "pencil") }
@@ -734,7 +744,7 @@ private struct ConversationSidebar: View {
                             }
                             .padding(.horizontal, 10)
                             .padding(.vertical, 9)
-                            .background(conversation.uuid == activeConversationUuid ? Color.indigo.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+                            .background(conversation.uuid == activeConversationUuid ? theme.accent.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                         }
                     }
                     .padding(.horizontal, 10)

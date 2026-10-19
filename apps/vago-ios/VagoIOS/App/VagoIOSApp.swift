@@ -9,12 +9,18 @@ struct VagoIOSApp: App {
     @StateObject private var tracking = LocationTrackingStore()
     // 行程上下文独立于页面实例，跨 Tab 共享用户明确选择的唯一足迹记录目标。
     @StateObject private var tripContext = TripContextStore()
+    // 与个人页共用同一持久化键，切换后整棵视图树立即收到新主题。
+    @AppStorage("vago.appearance.theme") private var selectedTheme: AppTheme = .indigo
+    // 外观模式独立于主题配色；默认保持原有的系统外观行为。
+    @AppStorage("vago.appearance.mode") private var selectedAppearance: AppAppearance = .system
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         // Scene 表示一个系统窗口场景；当前 iPhone 应用只创建一个 WindowGroup。
         WindowGroup {
             RootView()
+                .environment(\.appTheme, selectedTheme)
+                .preferredColorScheme(selectedAppearance.colorScheme)
                 // EnvironmentObject 类似在视图树中注入共享依赖，子页面可直接读取同一会话。
                 .environmentObject(session)
                 .environmentObject(tracking)
