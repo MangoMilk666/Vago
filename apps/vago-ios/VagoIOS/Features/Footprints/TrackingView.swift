@@ -26,6 +26,9 @@ struct TrackingView: View {
     @State private var message = ""
     // 刷新错误与短暂操作反馈分开保存，成功读取远端数据后可以准确收起。
     @State private var refreshError: String?
+    // NWPath 仅表示手机有网络；实际 API 是否可达由最近一次读取结果确认。
+    @State private var serverConnectionStatus: MapConnectionStatus = .connecting
+    @State private var isFetchingRemote = false
     @State private var loadError = ""
     @State private var checkinError = ""
     // 用户点“打卡”时冻结这一次的新位置，填写表单期间不会因共享位置过期而禁用提交。
@@ -81,6 +84,15 @@ struct TrackingView: View {
             // 成功上传后先由内存确认副本接住显示，再等待远端快照回传同一 clientUuid。
             footprintRepository.recordConfirmedSamples(tracking.lastConfirmedSamples, tracking: tracking)
         }
+        .onChange(of: tracking.isNetworkAvailable) { _, isAvailable in
+            // 手机恢复网络后重新读取服务端，状态在请求完成前显示“正在连接”。
+            if isAvailable {
+                serverConnectionStatus = .connecting
+            }
+            if isAvailable, loadedUserUuid != nil, !isFetchingRemote {
+                Task { await refreshMap() }
+            }
+        }
         .onDisappear { messageDismissTask?.cancel() }
         .sheet(isPresented: $isCheckinSheetPresented) {
             CheckinSheet(
@@ -121,7 +133,9 @@ struct TrackingView: View {
                 refreshError: refreshError,
                 syncError: tracking.syncError,
                 locationError: tracking.locationError,
-                offlineStatusMessage: isTripStatusUnverified ? "离线状态，行程待联网验证" : nil,
+                connectionStatus: connectionStatus,
+                isUsingCachedProfile: session.isUsingCachedProfile,
+                isTripStatusUnverified: isTripStatusUnverified,
                 onShowTrackingControls: { isTrackingSheetPresented = true },
                 onRefresh: { Task { await refreshMap() } },
                 areFootprintSamplesVisible: areFootprintSamplesVisible,
@@ -163,6 +177,9 @@ struct TrackingView: View {
     }
 
     private func load(showLoading: Bool) async {
+        guard !isFetchingRemote else { return }
+        isFetchingRemote = true
+        defer { isFetchingRemote = false }
         // 参数区分首屏加载与手动刷新，后者应保留用户正在看的地图而不闪回 ProgressView。
         if showLoading {
             isLoading = true
@@ -185,9 +202,9 @@ struct TrackingView: View {
             }
         }
         do {
-            let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session, timeoutInterval: 5)
-            // 分支条件：行程列表成功返回即说明网络已恢复，可清除上次保留的刷新失败状态。
+            serverConnectionStatus = .connecting
             refreshError = nil
+            let trips: [Trip] = try await client.request(path: "travel/trips", tokenProvider: session, timeoutInterval: 5)
             guard let userUuid = session.profile?.uuid else { return }
             tripContext.replaceTrips(trips, for: userUuid)
             trip = tripContext.recordingTrip
@@ -216,7 +233,10 @@ struct TrackingView: View {
                 let confirmed = await tracking.syncPendingFootprints()
                 footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
             }
+            refreshError = nil
+            serverConnectionStatus = .online
         } catch {
+            updateConnectionStatus(for: error)
             // 分支条件：首次加载无可展示地图时展示独立错误页；已有数据刷新失败则保留原地图。
             if trip == nil {
                 loadError = error.localizedDescription
@@ -258,6 +278,7 @@ struct TrackingView: View {
         tracking.prepare(tripUuid: recordingTrip.uuid, userUuid: userUuid, session: session)
         footprintRepository.prepare(userUuid: userUuid, tripUuid: recordingTrip.uuid, tracking: tracking)
         do {
+            serverConnectionStatus = .connecting
             let footprints: [TravelFootprint] = try await client.request(
                 path: "footprints/trips/\(recordingTrip.uuid)/footprints",
                 tokenProvider: session
@@ -268,7 +289,10 @@ struct TrackingView: View {
             tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: recordingTrip.uuid)
             let confirmed = await tracking.syncPendingFootprints()
             footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
+            refreshError = nil
+            serverConnectionStatus = .online
         } catch {
+            updateConnectionStatus(for: error)
             refreshError = error.localizedDescription
         }
     }
@@ -278,14 +302,36 @@ struct TrackingView: View {
         let confirmed = await tracking.syncPendingFootprints()
         footprintRepository.recordConfirmedSamples(confirmed, tracking: tracking)
         guard let trip else { return }
-        if let remoteFootprints: [TravelFootprint] = try? await client.request(
-            path: "footprints/trips/\(trip.uuid)/footprints",
-            tokenProvider: session
-        ) {
+        do {
+            serverConnectionStatus = .connecting
+            let remoteFootprints: [TravelFootprint] = try await client.request(
+                path: "footprints/trips/\(trip.uuid)/footprints",
+                tokenProvider: session
+            )
             footprintRepository.replaceRemoteFootprints(remoteFootprints)
             tracking.updateManualCheckinCoordinates(footprintRepository.manualCheckinCoordinates(), for: trip.uuid)
             // 分支条件：统一足迹流读取成功后，地图已恢复最新事实，旧刷新错误不应继续遮挡视图。
             refreshError = nil
+            serverConnectionStatus = .online
+        } catch {
+            updateConnectionStatus(for: error)
+            refreshError = error.localizedDescription
+        }
+    }
+
+    private var connectionStatus: MapConnectionStatus {
+        // 系统尚未给出网络路径结果时先显示“正在连接”，避免启动瞬间误报断网。
+        guard tracking.hasNetworkPathResult else { return .connecting }
+        guard tracking.isNetworkAvailable else { return .networkDisconnected }
+        return serverConnectionStatus
+    }
+
+    private func updateConnectionStatus(for error: Error) {
+        // URLSession 的连接或超时错误表示 API 未完成响应；业务响应错误仍说明服务端可达。
+        if let urlError = error as? URLError, urlError.code != .cancelled {
+            serverConnectionStatus = .serverUnavailable
+        } else {
+            serverConnectionStatus = .online
         }
     }
 

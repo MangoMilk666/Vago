@@ -23,6 +23,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
     @Published private(set) var locationError: String?
     @Published private(set) var isRequestingCurrentLocation = false
     @Published private(set) var isNetworkAvailable = false
+    @Published private(set) var hasNetworkPathResult = false
     @Published private(set) var isBackgroundLocationAuthorized = false
 
     // CLLocationManager 是系统定位服务入口；delegate 回调由它主动调用。
@@ -694,6 +695,7 @@ final class LocationTrackingStore: NSObject, ObservableObject, CLLocationManager
 
     private func handleNetworkAvailability(_ isAvailable: Bool) {
         let becameAvailable = isAvailable && !isNetworkAvailable
+        hasNetworkPathResult = true
         isNetworkAvailable = isAvailable
         // NWPath 只表示网络接口可用；API 的真实失败仍由同步请求捕获并保留待传数据。
         if becameAvailable, currentUserUuid != nil, session != nil {

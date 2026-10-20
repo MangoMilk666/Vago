@@ -197,6 +197,49 @@ struct TravelMapCanvas: View {
     }
 }
 
+/// 地图上的联网状态：区分设备断网与服务端无法连接。
+enum MapConnectionStatus: Equatable {
+    case connecting
+    case online
+    case networkDisconnected
+    case serverUnavailable
+
+    var title: String {
+        switch self {
+        case .connecting: "正在连接"
+        case .online: "网络正常"
+        case .networkDisconnected: "网络断开"
+        case .serverUnavailable: "离线模式"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .connecting: "arrow.triangle.2.circlepath"
+        case .online: "wifi"
+        case .networkDisconnected: "wifi.slash"
+        case .serverUnavailable: "exclamationmark.icloud"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .connecting: "正在确认服务端连接"
+        case .online: "已连接 Vago 服务端"
+        case .networkDisconnected: "手机当前没有网络，足迹保存在本机"
+        case .serverUnavailable: "手机已联网，暂时无法连接服务端"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .connecting: .secondary
+        case .online: .green
+        case .networkDisconnected, .serverUnavailable: .orange
+        }
+    }
+}
+
 /// 保持地图画布干净的浮层入口；复杂操作改由 sheet 承接。
 struct TravelMapControls: View {
     // 控制层只接收值和闭包，不直接持有 APIClient 或 Store，保持 UI 可复用、容易预览与测试。
@@ -208,7 +251,9 @@ struct TravelMapControls: View {
     let refreshError: String?
     let syncError: String?
     let locationError: String?
-    let offlineStatusMessage: String?
+    let connectionStatus: MapConnectionStatus
+    let isUsingCachedProfile: Bool
+    let isTripStatusUnverified: Bool
     // () -> Void 表示无参数、无返回值的回调；父视图将具体状态变更作为闭包传进来。
     let onShowTrackingControls: () -> Void
     let onRefresh: () -> Void
@@ -216,22 +261,45 @@ struct TravelMapControls: View {
     let onToggleFootprintSamples: () -> Void
     let onLocate: () -> Void
     let onCheckIn: () -> Void
+    @State private var isConnectionStatusExpanded = false
 
     var body: some View {
         // VStack + Spacer 将顶部信息和底部操作压到全屏地图的两端。
         VStack(spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(trip.title).font(.headline)
+                    Text(trip.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     Text(isTracking ? "正在记录位置" : "尚未开始记录")
                         .font(.caption)
                         .foregroundStyle(isTracking ? .green : .secondary)
                 }
                 .mapOverlaySurface()
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Spacer()
 
                 HStack(spacing: 8) {
+                    Button {
+                        isConnectionStatusExpanded.toggle()
+                    } label: {
+                        Image(systemName: connectionStatus.symbol)
+                            .foregroundStyle(connectionStatus.tint)
+                            .overlay(alignment: .topTrailing) {
+                                if refreshError != nil || syncError != nil {
+                                    Circle()
+                                        .fill(.red)
+                                        .frame(width: 6, height: 6)
+                                        .offset(x: 4, y: -3)
+                                }
+                            }
+                    }
+                    .mapOverlaySurface()
+                    .accessibilityLabel("联网状态：\(connectionStatus.title)")
+                    .accessibilityHint("点击查看联网与本地资料状态")
+
                     Button(action: onToggleFootprintSamples) {
                         Image(systemName: areFootprintSamplesVisible ? "eye" : "eye.slash")
                     }
@@ -252,6 +320,32 @@ struct TravelMapControls: View {
                 }
             }
 
+            if isConnectionStatusExpanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(connectionStatus.title, systemImage: connectionStatus.symbol)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(connectionStatus.tint)
+                    Text(connectionStatus.detail).font(.caption)
+                    if isTripStatusUnverified || (isUsingCachedProfile && connectionStatus != .online) {
+                        Text(isTripStatusUnverified ? "正在使用本地资料，行程待联网验证" : "正在使用本地资料，联网后自动更新")
+                            .font(.caption)
+                    }
+                    if let refreshError {
+                        Text("刷新失败：\(refreshError)")
+                            .font(.caption)
+                            .lineLimit(2)
+                    }
+                    if let syncError {
+                        Text("同步未完成：\(syncError)")
+                            .font(.caption)
+                            .lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: 240, alignment: .leading)
+                .mapOverlaySurface()
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+
             Spacer()
 
             VStack(spacing: 8) {
@@ -259,18 +353,9 @@ struct TravelMapControls: View {
                 if !message.isEmpty {
                     Text(message).mapStatusPill(tint: .secondary)
                 }
-                if let refreshError {
-                    Text("刷新失败：\(refreshError)").mapStatusPill(tint: .red)
-                }
-                if let syncError {
-                    Text("同步未完成：\(syncError)").mapStatusPill(tint: .red)
-                }
                 // 定位失败独立于网络同步失败，用户能直接判断下一步应检查权限还是网络。
                 if let locationError {
                     Text(locationError).mapStatusPill(tint: .red)
-                }
-                if let offlineStatusMessage {
-                    Text(offlineStatusMessage).mapStatusPill(tint: .orange)
                 }
                 HStack(spacing: 10) {
                     Button(action: onLocate) {
