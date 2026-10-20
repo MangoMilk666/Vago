@@ -172,7 +172,7 @@ final class FootprintGeometryTests: XCTestCase {
         XCTAssertEqual(repository.displayPoints.first?.source, .remote)
     }
 
-    func testPointDensityFollowsProjectedScreenSpacingAndKeepsTurnsAndEndpoints() {
+    func testStreetLevelPointsRespectSpacingAndOverviewHidesThem() {
         let points = [
             point("a", northMeters: 0, eastMeters: 0, minute: 0, segment: "s"),
             point("b", northMeters: 10, eastMeters: 0, minute: 1, segment: "s"),
@@ -184,16 +184,61 @@ final class FootprintGeometryTests: XCTestCase {
             point("end", northMeters: 30, eastMeters: 30, minute: 7, segment: "s"),
         ]
         let segment = FootprintSegment(id: "s", locations: points)
-        let street = FootprintPointSelector.visibleAutomaticKeys(in: [segment], project: { projected($0, scale: 2) })
-        let world = FootprintPointSelector.visibleAutomaticKeys(in: [segment], project: { projected($0, scale: 0.2) })
+        let street = FootprintPointSelector.visibleAutomaticKeys(
+            in: [segment], visibleWidthMeters: 1_000, project: { projected($0, scale: 2) }
+        )
+        let overview = FootprintPointSelector.visibleAutomaticKeys(
+            in: [segment], visibleWidthMeters: 5_000, project: { projected($0, scale: 0.2) }
+        )
 
-        XCTAssertGreaterThan(street.count, world.count)
+        XCTAssertGreaterThan(street.count, overview.count)
         XCTAssertTrue(street.contains("a"))
         XCTAssertTrue(street.contains("turn"))
         XCTAssertTrue(street.contains("end"))
         XCTAssertFalse(street.contains("checkin"))
-        XCTAssertTrue(world.contains("a"))
-        XCTAssertTrue(world.contains("end"))
+        XCTAssertTrue(overview.isEmpty)
+    }
+
+    func testAutomaticDotsAvoidOtherSegmentsAndManualCheckins() {
+        let first = FootprintSegment(id: "first", locations: [
+            point("first-start", northMeters: 0, minute: 0, segment: "first"),
+            point("first-end", northMeters: 60, minute: 1, segment: "first"),
+        ])
+        let second = FootprintSegment(id: "second", locations: [
+            point("second-start", northMeters: 3, minute: 2, segment: "second"),
+            point("second-end", northMeters: 90, minute: 3, segment: "second"),
+        ])
+        let checkin = point("checkin", northMeters: 60, minute: 4, segment: "second", kind: .manualCheckin)
+
+        let visible = FootprintPointSelector.visibleAutomaticKeys(
+            in: [first, second],
+            manualCheckins: [checkin],
+            visibleWidthMeters: 1_000,
+            project: { projected($0, scale: 1) },
+            visibleRect: CGRect(x: -10, y: -10, width: 200, height: 200)
+        )
+
+        XCTAssertTrue(visible.contains("first-start"))
+        XCTAssertFalse(visible.contains("second-start"))
+        XCTAssertFalse(visible.contains("first-end"))
+        XCTAssertTrue(visible.contains("second-end"))
+    }
+
+    func testLineSimplificationDoesNotRemovePointsUsedForContinuity() {
+        let points = [
+            point("start", northMeters: 0, minute: 0, segment: "same"),
+            point("checkin", northMeters: 1, minute: 1, segment: "same", kind: .manualCheckin),
+            point("nearby", northMeters: 2, minute: 70, segment: "same"),
+            point("last", northMeters: 20, minute: 140, segment: "same"),
+        ]
+
+        let segments = FootprintRouteBuilder.segments(from: points)
+
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].locations.map(\.stableKey), ["start", "checkin", "nearby", "last"])
+        let line = FootprintRouteBuilder.lineCoordinates(from: segments[0].locations)
+        XCTAssertEqual(line.count, 3)
+        XCTAssertEqual(line[1].latitude, points[1].latitude)
     }
 
     private func point(

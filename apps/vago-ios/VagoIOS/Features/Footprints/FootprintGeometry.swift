@@ -12,14 +12,14 @@ struct FootprintSegment: Identifiable {
     }
 
     var smoothedCoordinates: [CLLocationCoordinate2D] {
-        FootprintRouteBuilder.smooth(coordinates)
+        FootprintRouteBuilder.smooth(FootprintRouteBuilder.lineCoordinates(from: locations))
     }
 }
 
 /// 将服务端返回的离散 GPS 采样整理为可阅读的个人旅行路线。
 enum FootprintRouteBuilder {
-    // 15 米内的连续样本通常只是 GPS 抖动或短时间重复回调，渲染时只保留较新的一个。
-    static let minimumRenderDistanceMeters: CLLocationDistance = 15
+    // 线条显示可略去相近顶点；可信连接仍逐点检查完整足迹。
+    static let minimumLineVertexDistanceMeters: CLLocationDistance = 15
 
     // 两端使用相同阈值，避免弱信号长缺口、停止重启或城市跳跃被误画成连续路线。
     private static let maximumSparseGap: TimeInterval = 20 * 60
@@ -65,20 +65,37 @@ enum FootprintRouteBuilder {
                 || isUntrustworthyConnection(distance: distance, timeGap: timeGap, previous: previous, next: location) {
                 appendIfRenderable(currentSegment, to: &results)
                 currentSegment = [location]
-            } else if location.kind == .manualCheckin {
-                // 分支条件：手动打卡即使靠近自动点也必须保留，才能作为路线顶点与独立地图标记。
-                currentSegment.append(location)
-            } else if distance < minimumRenderDistanceMeters {
-                // 分支条件：新自动点紧邻手动打卡时保留打卡；两个自动点则以较新的点替换，减少抖动。
-                if previous.kind == .automaticGPS {
-                    currentSegment[currentSegment.count - 1] = location
-                }
             } else {
+                // 连续段保存每一个可信足迹点位，后续的显示筛选不能改变断线判断。
                 currentSegment.append(location)
             }
         }
         appendIfRenderable(currentSegment, to: &results)
         return results
+    }
+
+    /// 只简化线条的显示顶点；段首尾、手动打卡和明确转角仍沿用原始位置。
+    static func lineCoordinates(from locations: [FootprintDisplayPoint]) -> [CLLocationCoordinate2D] {
+        guard locations.count > 2 else { return locations.map(coordinate(for:)) }
+        var selected = [locations[0]]
+        for index in 1..<(locations.count - 1) {
+            let location = locations[index]
+            let previous = locations[index - 1]
+            let next = locations[index + 1]
+            let isTurn = turnAngle(
+                previous: coordinate(for: previous),
+                vertex: coordinate(for: location),
+                next: coordinate(for: next)
+            ) > maximumSmoothTurnDegrees
+            // 手动打卡是路线事实顶点；自动点只有足够远或形成转角时才需要画进线条。
+            if location.kind == .manualCheckin
+                || isTurn
+                || distance(from: selected[selected.count - 1], to: location) >= minimumLineVertexDistanceMeters {
+                selected.append(location)
+            }
+        }
+        selected.append(locations[locations.count - 1])
+        return selected.map(coordinate(for:))
     }
 
     /// 自动取景围住可信路线点与有效手动打卡；低质量 GPS 仍用于分段，但不拉远镜头。
@@ -156,6 +173,10 @@ enum FootprintRouteBuilder {
     private static func distance(from lhs: FootprintDisplayPoint, to rhs: FootprintDisplayPoint) -> CLLocationDistance {
         CLLocation(latitude: lhs.latitude, longitude: lhs.longitude)
             .distance(from: CLLocation(latitude: rhs.latitude, longitude: rhs.longitude))
+    }
+
+    private static func coordinate(for location: FootprintDisplayPoint) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
     }
 
     private static func hasExplicitSegmentBoundary(_ previous: FootprintDisplayPoint, _ next: FootprintDisplayPoint) -> Bool {
@@ -282,35 +303,88 @@ enum FootprintRouteBuilder {
 
 /// 仅筛选地图上的自动采样圆点；底层路线和打卡 Annotation 使用完整数据，不受缩放影响。
 enum FootprintPointSelector {
+    // 地图可见宽度超过街道级范围时只画路线；此值只影响自动点的显示。
+    static let maximumVisibleWidthMeters: CLLocationDistance = 2_500
+
+    private struct Candidate {
+        let key: String
+        let point: CGPoint
+        let priority: Int
+        let order: Int
+    }
+
+    private struct Cell: Hashable {
+        let x: Int
+        let y: Int
+    }
+
     static func visibleAutomaticKeys(
         in segments: [FootprintSegment],
+        manualCheckins: [FootprintDisplayPoint] = [],
+        visibleWidthMeters: CLLocationDistance,
         project: (CLLocationCoordinate2D) -> CGPoint?,
-        minimumSpacing: CGFloat = 22,
+        visibleRect: CGRect? = nil,
+        minimumSpacing: CGFloat = 30,
         turnThresholdDegrees: CGFloat = 35
     ) -> Set<String> {
-        var visibleKeys = Set<String>()
+        guard visibleWidthMeters <= maximumVisibleWidthMeters else { return [] }
+        var candidates: [Candidate] = []
+        var order = 0
         for segment in segments {
             let automaticIndexes = segment.locations.indices.filter { segment.locations[$0].kind == .automaticGPS }
-            var lastSelectedPoint: CGPoint?
             for (automaticOrder, index) in automaticIndexes.enumerated() {
                 let location = segment.locations[index]
-                guard let point = project(CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)) else { continue }
+                guard let point = project(coordinate(for: location)), point.x.isFinite, point.y.isFinite,
+                      visibleRect?.contains(point) ?? true else { continue }
                 let isEndpoint = automaticOrder == 0 || automaticOrder == automaticIndexes.count - 1
                 let hasNeighbors = index > 0 && index < segment.locations.count - 1
                 let isTurn = hasNeighbors && turnAngle(
                     project(coordinate(for: segment.locations[index - 1])),
-                    project(coordinate(for: location)),
+                    point,
                     project(coordinate(for: segment.locations[index + 1]))
                 ) >= turnThresholdDegrees
-                let isSpaced = lastSelectedPoint.map { hypot(point.x - $0.x, point.y - $0.y) >= minimumSpacing } ?? true
-                // 分支条件：段首尾、明显转折或距上次显示点足够远时保留 GPS 圆点。
-                if isEndpoint || isTurn || isSpaced {
-                    visibleKeys.insert(location.stableKey)
-                    lastSelectedPoint = point
-                }
+                candidates.append(Candidate(
+                    key: location.stableKey,
+                    point: point,
+                    priority: isEndpoint ? 2 : (isTurn ? 1 : 0),
+                    order: order
+                ))
+                order += 1
             }
         }
+
+        // 优先挑选段首尾和转角，但所有候选最终都须避开已经显示的圆点。
+        candidates.sort { $0.priority == $1.priority ? $0.order < $1.order : $0.priority > $1.priority }
+        var occupied: [Cell: [CGPoint]] = [:]
+        for checkin in manualCheckins {
+            if let point = project(coordinate(for: checkin)), point.x.isFinite, point.y.isFinite {
+                occupied[cell(for: point, spacing: minimumSpacing), default: []].append(point)
+            }
+        }
+        var visibleKeys = Set<String>()
+        for candidate in candidates {
+            let cell = cell(for: candidate.point, spacing: minimumSpacing)
+            var overlaps = false
+            for x in (cell.x - 1)...(cell.x + 1) {
+                for y in (cell.y - 1)...(cell.y + 1) {
+                    if occupied[Cell(x: x, y: y), default: []].contains(where: {
+                        hypot(candidate.point.x - $0.x, candidate.point.y - $0.y) < minimumSpacing
+                    }) {
+                        overlaps = true
+                        break
+                    }
+                }
+                if overlaps { break }
+            }
+            if overlaps { continue }
+            visibleKeys.insert(candidate.key)
+            occupied[cell, default: []].append(candidate.point)
+        }
         return visibleKeys
+    }
+
+    private static func cell(for point: CGPoint, spacing: CGFloat) -> Cell {
+        Cell(x: Int(floor(point.x / spacing)), y: Int(floor(point.y / spacing)))
     }
 
     private static func coordinate(for point: FootprintDisplayPoint) -> CLLocationCoordinate2D {

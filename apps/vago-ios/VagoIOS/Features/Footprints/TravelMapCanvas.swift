@@ -19,8 +19,9 @@ struct TravelMapCanvas: View {
     @State private var hasInitializedCamera = false
     @State private var routeSegments: [FootprintSegment] = []
     @State private var visibleSampleKeys = Set<String>()
-    // 20pt 是原生地图地点 glyph 的常用视觉尺寸；足迹点取其 90%，并保持固定屏幕大小。
-    private let footprintPointDiameter: CGFloat = 11
+    @State private var visibleWidthMeters: CLLocationDistance = .infinity
+    // 自动采样点是路线的辅助信息，固定的小圆点避免盖住主线与打卡标记。
+    private let footprintPointDiameter: CGFloat = 7
 
     private enum CameraMode {
         case automatic
@@ -30,6 +31,7 @@ struct TravelMapCanvas: View {
 
     var body: some View {
         MapReader { proxy in
+            GeometryReader { geometry in
             // Map 的闭包是 MapContentBuilder，内部声明的 Marker、Annotation、Polyline 会成为地图叠加物。
             Map(position: $cameraPosition) {
                 // 路线使用完整可信足迹段；自动点的显示筛选绝不改变线几何或段边界。
@@ -46,9 +48,9 @@ struct TravelMapCanvas: View {
                             // 自动 GPS 采样点仅显示圆点，不在地图上重复绘制文字标签。
                             Annotation("", coordinate: coordinate(for: location)) {
                                 Circle()
-                                    .fill(theme.route)
+                                    .fill(theme.route.opacity(0.72))
                                     .frame(width: footprintPointDiameter, height: footprintPointDiameter)
-                                    .overlay(Circle().stroke(.white.opacity(0.75), lineWidth: 1))
+                                    .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 0.75))
                                     .accessibilityLabel("自动 GPS 采样点")
                             }
                         }
@@ -88,12 +90,14 @@ struct TravelMapCanvas: View {
                 MapScaleView()
             }
             // 镜头停稳后再按投影距离筛点，避免每帧地图手势都扫描大量历史点。
-            .onMapCameraChange(frequency: .onEnd) { _ in
-                refreshVisibleSampleKeys(using: proxy)
+            .onMapCameraChange(frequency: .onEnd) { context in
+                visibleWidthMeters = context.rect.size.width
+                    * MKMetersPerMapPointAtLatitude(context.region.center.latitude)
+                refreshVisibleSampleKeys(using: proxy, mapSize: geometry.size)
             }
             .onAppear {
                 rebuildRoutes()
-                refreshVisibleSampleKeys(using: proxy)
+                refreshVisibleSampleKeys(using: proxy, mapSize: geometry.size)
                 if locateRequestID > 0 {
                     cameraMode = .following
                     moveCameraToCurrentLocation()
@@ -102,11 +106,11 @@ struct TravelMapCanvas: View {
             }
             .onChange(of: contentSignature) { _, _ in
                 rebuildRoutes()
-                refreshVisibleSampleKeys(using: proxy)
+                refreshVisibleSampleKeys(using: proxy, mapSize: geometry.size)
                 initializeCameraIfNeeded()
             }
             .onChange(of: areFootprintSamplesVisible) { _, _ in
-                refreshVisibleSampleKeys(using: proxy)
+                refreshVisibleSampleKeys(using: proxy, mapSize: geometry.size)
             }
             .onChange(of: locateRequestID) { _, _ in
                 cameraMode = .following
@@ -122,6 +126,7 @@ struct TravelMapCanvas: View {
                     cameraMode = .freeBrowsing
                 }
             }
+            }
         }
     }
 
@@ -130,9 +135,19 @@ struct TravelMapCanvas: View {
         CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
     }
 
-    private var contentSignature: String {
-        // 仅以服务端内容的稳定标识触发首屏初始化，不因每次 SwiftUI body 重算而重置镜头。
-        locations.map(\.stableKey).joined(separator: ",")
+    private var contentSignature: Int {
+        // 同一事件从本地交给服务端后，若权威坐标或段标识变化，也要重建显示路线。
+        var hasher = Hasher()
+        for location in locations {
+            hasher.combine(location.stableKey)
+            hasher.combine(location.latitude)
+            hasher.combine(location.longitude)
+            hasher.combine(location.recordedAt)
+            hasher.combine(location.trackingSegmentUuid)
+            hasher.combine(location.accuracyM)
+            hasher.combine(location.speedMps)
+        }
+        return hasher.finalize()
     }
 
     private func rebuildRoutes() {
@@ -140,14 +155,18 @@ struct TravelMapCanvas: View {
         routeSegments = FootprintRouteBuilder.segments(from: locations)
     }
 
-    private func refreshVisibleSampleKeys(using proxy: MapProxy) {
+    private func refreshVisibleSampleKeys(using proxy: MapProxy, mapSize: CGSize) {
         guard areFootprintSamplesVisible else {
             visibleSampleKeys = []
             return
         }
-        visibleSampleKeys = FootprintPointSelector.visibleAutomaticKeys(in: routeSegments) { coordinate in
-            proxy.convert(coordinate, to: .local)
-        }
+        visibleSampleKeys = FootprintPointSelector.visibleAutomaticKeys(
+            in: routeSegments,
+            manualCheckins: locations.filter { $0.kind == .manualCheckin },
+            visibleWidthMeters: visibleWidthMeters,
+            project: { proxy.convert($0, to: .local) },
+            visibleRect: CGRect(origin: .zero, size: mapSize).insetBy(dx: -20, dy: -20)
+        )
     }
 
     private func initializeCameraIfNeeded() {
