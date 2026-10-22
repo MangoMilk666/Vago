@@ -1,88 +1,145 @@
 # 登录与身份认证设计
 
-> 状态：根据当前代码整理，2026-10-17。本文说明 Vago 当前认证架构；接口行为以 FastAPI schema、依赖和服务实现为准。
+> **文档要求：本文件始终与最新代码功能对应。** 本次修改是唯一例外：本文按已确定的改造后双端认证设计编写，先于对应代码更新，并作为 Web 认证改造的指导；认证改造完成后，应核对全文并使其与最新代码保持一致。
 
-## 设计边界
+## 设计目标
 
-Vago 使用后端认证的用户身份作为个人数据访问依据。客户端负责收集登录凭据、保存登录会话并在请求中携带访问令牌；FastAPI 验证令牌后，从其中取得 `userUuid`，再将该身份传给用户、行程、知识、足迹和 Agent 等领域服务。客户端提交的用户标识不作为授权依据。
+Vago 为 Web 与 iOS 提供一致的用户身份、账号状态检查和数据归属校验。Web 使用服务端 Redis Session，通过 `HttpOnly` Cookie 传递随机会话标识；iOS 使用 Keychain 保存 JWT，通过 `Authorization: Bearer` 请求头访问 API。两端采用各自的凭证传递方式，最终都由 FastAPI 建立经过验证的 `userUuid`，并将其传给领域服务。客户端提交的用户标识不作为授权依据。
 
-认证主体保存在 MySQL `users` 表。`uuid` 是对外使用的用户标识；自增 `id` 用于数据库内部关联。手机号、邮箱和第三方账号绑定分别用于登录身份查找，账号状态由用户服务统一检查。
+认证主体保存在 MySQL `users` 表。`uuid` 是对外使用的用户标识；自增 `id` 用于数据库内部关联。手机号、邮箱和第三方账号绑定用于登录身份查找，用户服务统一检查账号状态。用户资料、个人偏好、旅行记录、足迹、知识、回忆、会话和规划候选均按经过认证的 `user_uuid` 查询和校验资源归属。
 
 ## 登录方式
 
 ### 手机号与短信验证码
 
-Web 与 iOS 均提供手机号验证码登录。后端生成六位验证码，将验证码和发送频率限制写入 Redis。验证码有效期为 300 秒，同一手机号的发送间隔为 60 秒；登录校验成功后立即删除验证码，防止重复使用。
+Web 与 iOS 均支持手机号验证码登录。后端生成六位验证码，将验证码和发送频率限制写入 Redis。验证码有效期为 300 秒，同一手机号的发送间隔为 60 秒；登录校验成功后立即删除验证码，避免验证码重复使用。
 
-手机号首次登录会自动创建用户和默认设置。另有显式手机号注册接口，可在验证码校验后创建用户并设置昵称。当前代码没有密码登录流程，真实短信服务商尚未接入；验证码发送实现会将手机号和验证码写入应用日志，属于当前实现状态，不能视作生产短信交付方案。
+手机号首次登录会创建用户和默认设置。显式手机号注册接口可在验证码校验后创建用户并设置昵称。当前代码没有密码登录流程，短信服务商尚未接入；验证码发送实现会将手机号和验证码写入应用日志，生产环境接入短信服务前必须移除敏感信息日志。
 
 ### GitHub OAuth
 
-Web 支持 GitHub OAuth。浏览器先生成随机 `state` 并保存在 `sessionStorage`，回调时核对 `state`，随后把授权码和回调地址发送至 Vago 后端。后端使用服务端 GitHub 凭据换取第三方访问令牌，再读取 GitHub 用户资料。后端按 provider 与 GitHub 用户标识查找绑定；已有绑定时登录对应用户，未绑定时尝试按邮箱关联现有用户，否则创建新用户。
+Web 支持 GitHub OAuth。浏览器生成随机 `state` 并保存在 `sessionStorage`，回调时核对 `state`，再把授权码和回调地址发送至 Vago 后端。后端使用服务端 GitHub 凭据换取第三方访问令牌并读取用户资料。后端按 provider 与 GitHub 用户标识查找绑定；已有绑定时登录对应用户，未绑定时尝试按邮箱关联现有用户，否则创建新用户。
 
-当前后端仅允许 `github` provider。iOS 登录界面当前使用手机号验证码流程。
+OAuth 登录请求明确标记客户端类型，以便后端按 Web 或 iOS 的认证方式完成登录。后端仅允许配置过的 provider。iOS 当前登录界面使用手机号验证码流程。
 
-## 令牌与服务端会话
+## Web 认证设计
 
-登录成功后，后端签发一对 HS256 JWT：
+### 会话凭证
 
-- **Access token**：有效期默认 7,200 秒，用于访问受保护 API。
-- **Refresh token**：有效期默认 2,592,000 秒，用于换取新的令牌对。
-- **会话标识 `sid`**：按设备会话区分刷新凭据。iOS 发送稳定设备标识；没有设备标识的登录请求由服务端生成会话标识。
+Web 登录成功后，后端生成高熵、不可预测的随机 Session ID，在 Redis 中建立 Session 记录，并通过 `Set-Cookie` 返回 Session ID。浏览器 Cookie 使用以下属性：
 
-令牌包含 `userUuid`、内部 `userId`、令牌类型 `typ`、签发时间 `iat` 和过期时间 `exp`；存在会话标识时还包含 `sid`。JWT 密钥通过 `JWT_SECRET_KEY` 配置，服务端使用同一密钥验证签名。
+- 名称使用 `__Host-vago_session`。
+- 设置 `Secure`、`HttpOnly` 和明确的 `SameSite=Lax`。
+- 设置 `Path=/`，不设置 `Domain`。
+- 设置与服务端 Session 一致的过期时间。
 
-Redis 保存每个用户和会话对应的当前 refresh token。刷新时，后端验证签名、有效期、`typ=refresh`、用户状态以及 Redis 中保存的令牌值，然后签发新的令牌对并替换该会话的 refresh token。旧 refresh token 因与 Redis 当前值不符而不能再次使用。不同设备的 refresh token 使用不同会话键保存。
+Web 登录响应只返回必要的用户资料与登录结果，不向 JavaScript 返回 access token 或 refresh token。Web 不在 `localStorage`、`sessionStorage`、IndexedDB 或其他可由页面脚本读取的位置保存认证凭证。用户展示资料可保存在前端内存中；页面重载后通过会话查询接口恢复登录状态。
 
-退出登录时，后端将当前 access token 的摘要加入 Redis 黑名单，保留时间不超过该令牌剩余有效期；若请求同时携带 refresh token，则删除对应设备会话的 Redis refresh token。access token 黑名单用于令牌有效期内即时撤销访问。
+Session ID 只用于定位服务端会话。Redis Session 记录至少关联 `userUuid`、会话创建时间、最后活动时间、绝对过期时间和 CSRF Token。Session ID 不承载用户资料或授权声明。认证成功时生成全新的 Session ID，不接受客户端指定的 Session ID，避免会话固定。
 
-## 受保护请求与用户归属
+Redis 使用共享部署，供所有 FastAPI 实例读取同一份 Web Session。服务端执行空闲超时和绝对超时；Cookie 过期时间不能替代服务端过期校验。Redis 不可用或 Session 记录缺失时，Web 受保护请求失败关闭并返回未认证结果。
 
-FastAPI 的 `get_current_user_uuid` 依赖从配置的认证请求头读取令牌，并兼容 `Bearer` 前缀。依赖验证 HS256 签名与过期时间，检查 access token 黑名单，并从 JWT 的 `userUuid` 提取当前用户身份。各领域路由将该身份注入服务层；服务层按 `user_uuid` 查询和校验资源归属。用户资料、个人偏好、旅行记录、足迹、知识、回忆、会话和规划候选均采用此模式。
+### 登录、恢复、续期与退出
 
-账号状态包括正常、封禁和注销中。登录与令牌刷新时会检查账号状态；用户资料等领域操作也会通过用户服务检查状态。账号禁用和软删除由 MySQL 用户记录表达。
+Web 手机号登录、注册和 OAuth 登录成功后，后端创建 Redis Session、轮换 Session ID、设置安全 Cookie，并返回用户资料。前端通过会话查询接口读取当前用户与 CSRF Token，根据返回结果更新内存中的登录状态。
+
+页面启动或刷新时，前端调用会话查询接口。后端从 Cookie 取得 Session ID，在 Redis 中验证 Session 状态、账号状态及过期时间；有效时返回用户资料和 CSRF Token，无效时返回未认证结果。前端不依据本地存储中的 token 判断登录状态。
+
+Web API 请求由浏览器自动携带同源 Cookie。受保护请求的服务端认证依赖读取 Cookie、验证 Redis Session，并由 Session 关联的 `userUuid` 建立当前用户身份。响应为 401 时，前端清除内存登录状态并转到登录页；Web Session 不通过 JWT refresh 接口续期。
+
+Web 退出登录时，前端提交 CSRF Token。后端删除 Redis 中的当前 Session 并清除 Cookie，Cookie 清除时使用与创建时一致的名称、Path 和安全属性。删除 Redis Session 后，已复制的 Session ID 立即失效。
+
+用户封禁、注销或其他禁止登录的状态变化必须阻止已有 Web Session 继续访问受保护 API。认证方式变更、账号安全处置等需要撤销会话的操作，应删除该用户受影响的 Redis Session。
+
+### CSRF 与来源校验
+
+浏览器会自动附带 Cookie，因此所有使用 Web Session 的状态变更请求都必须验证 CSRF Token。后端在 Session 中保存 CSRF Token；会话查询接口将其返回给前端，前端仅保存在内存中，并通过专用请求头（例如 `X-CSRF-Token`）提交。服务端对写请求、登出和其他会改变认证状态的请求检查该值。
+
+对于 Web 认证相关请求和使用 Cookie 认证的 API，后端还应校验 `Origin`，必要时按明确规则校验 `Referer`。`SameSite=Lax` 和 CORS 来源限制作为额外防护，不替代 CSRF Token 校验。登录、注册和 OAuth 回调相关请求也应防止跨站请求造成错误绑定或登录混淆；OAuth 回调继续验证 `state`。
+
+Web 与 API 通过同源路径 `/api/...` 部署时，浏览器按同源规则发送 Cookie。若部署为跨来源调用，前端请求必须启用凭证传递；后端仅允许明确列出的 Web 来源，并启用凭证 CORS，禁止将凭证请求的允许来源设为通配符。跨站 Cookie 需要 `SameSite=None; Secure`，同时仍须保留 CSRF Token 和来源校验。
+
+## iOS 认证设计
+
+iOS 使用共享 `SessionStore` 管理 `launching`、`signedOut` 和 `signedIn` 状态。登录成功后，后端签发 HS256 access token 与 refresh token；iOS 将令牌对保存在 Keychain，令牌不暴露给视图层。JWT 包含 `userUuid`、内部 `userId`、令牌类型 `typ`、签发时间 `iat`、过期时间 `exp` 和会话标识 `sid`。
+
+- **Access token**：默认有效期为 7,200 秒，用于访问受保护 API。
+- **Refresh token**：默认有效期为 2,592,000 秒，用于换取新的令牌对。
+- **会话标识 `sid`**：区分设备登录会话。iOS 提交稳定设备标识；服务端据此建立独立会话。
+
+Redis 按用户和 `sid` 保存当前 refresh token。刷新时，后端验证 JWT 签名、有效期、`typ=refresh`、用户状态以及 Redis 中保存的令牌值，然后签发新的令牌对并替换旧值。旧 refresh token 不可重复使用。
+
+iOS API 客户端使用 `Authorization: Bearer <accessToken>`。受保护请求收到 401 后，调用 refresh 接口、更新 Keychain 中的令牌对，并重放原请求一次。并发请求共享同一个刷新任务，避免同时轮换 refresh token。退出登录时，iOS 向后端提交 access token 和 refresh token；后端将 access token 加入 Redis 黑名单并删除当前会话的 refresh token，随后客户端删除 Keychain 令牌和本地资料缓存。
+
+应用启动时，iOS 读取 Keychain。若存在与当前会话绑定的本地资料，先显示主界面，再以 5 秒请求超时验证服务端资料。服务端明确拒绝会话时清理凭证；网络或服务暂时不可用时保留凭证和缓存，并标明当前使用本地资料。资料缓存只保存会话标识或刷新令牌摘要与最小展示资料，不保存原始令牌。首次使用新版缓存时，旧版未绑定会话的资料需成功联网验证后更新，不能直接用于离线首屏。
+
+## FastAPI 认证与授权边界
+
+FastAPI 为 Web Session 与 iOS JWT 提供明确的认证入口：
+
+- Web 请求使用 `__Host-vago_session` Cookie 查询 Redis Session。
+- iOS 请求使用 `Authorization: Bearer <JWT>` 验证令牌签名、有效期、令牌类型和撤销状态。
+- 请求明确使用某种凭证时，凭证无效即拒绝请求；不得在一种凭证无效时静默改用另一种凭证。
+- 两种认证方式都只建立服务端可信的 `userUuid`。领域路由将该身份注入服务层，服务层负责业务规则、ownership 校验和持久化。
+- Agent Runtime 通过有明确输入输出的内部 Domain Tools 使用领域能力，不绕过领域服务直接操作数据库。
+
+账号状态至少包括正常、封禁和注销中。登录、Session 验证及 JWT 刷新都检查账号状态。用户禁用或软删除由 MySQL 用户记录表达；Web Redis Session 与 iOS refresh token 按各自会话规则撤销。
 
 ```mermaid
 flowchart LR
-    client[Web / iOS 登录凭据] --> authApi[FastAPI 登录接口]
-    authApi --> verify[校验短信码或 GitHub 身份]
-    verify --> user[(MySQL 用户与 OAuth 绑定)]
-    verify --> tokens[签发 Access / Refresh JWT]
-    tokens --> redis[(Redis 会话 Refresh Token)]
-    tokens --> storage[客户端会话存储]
-    storage --> request[受保护 API 请求]
-    request --> authDependency[JWT 签名、有效期与黑名单检查]
-    authDependency --> identity[从 JWT 提取 userUuid]
-    identity --> domain[领域路由与服务校验资源归属]
-    domain --> data[(用户隔离的数据)]
-    storage --> refresh[令牌刷新]
-    refresh --> redis
-    refresh --> tokens
+    subgraph Web[Web 浏览器]
+        webLogin[手机号或 GitHub 登录]
+        webCookie[HttpOnly Session Cookie]
+        webRequest[同源 API 请求]
+        webCsrf[CSRF Token 请求头]
+    end
+
+    subgraph IOS[iOS 应用]
+        iosLogin[手机号登录]
+        keychain[Keychain 中的 JWT]
+        iosRequest[Bearer API 请求]
+        iosRefresh[Refresh Token 续期]
+    end
+
+    subgraph Backend[FastAPI]
+        login[认证接口]
+        webAuth[Redis Session 验证与 CSRF 校验]
+        iosAuth[JWT 签名、类型、有效期与撤销校验]
+        identity[建立可信 userUuid]
+        domain[领域路由与服务检查资源归属]
+    end
+
+    redis[(Redis：Web Session、iOS Refresh Token 与撤销状态)]
+    users[(MySQL：用户与 OAuth 绑定)]
+    data[(按 userUuid 隔离的旅行数据)]
+
+    webLogin --> login
+    iosLogin --> login
+    login --> users
+    login --> webCookie
+    login --> keychain
+    webCookie --> webRequest
+    webRequest --> webAuth
+    webCsrf --> webAuth
+    webAuth <--> redis
+    keychain --> iosRequest
+    iosRequest --> iosAuth
+    iosAuth <--> redis
+    keychain --> iosRefresh
+    iosRefresh --> login
+    webAuth --> identity
+    iosAuth --> identity
+    identity --> domain
+    domain --> data
 ```
 
-## Web 与 iOS 会话
+## 会话撤销与故障处理
 
-### Web
-
-Web 将 access token、refresh token 和用户资料写入 `localStorage` 的 `vago_auth` 项；登录页也分别写入 `accessToken` 和 `refreshToken` 两个键，API 客户端从这些键或 `vago_auth` 读取 access token，并放入 `authorization` 请求头。后端兼容无 `Bearer` 前缀的令牌。
-
-受保护路由根据本地是否存在 access token 控制页面跳转。服务端仍对 API 独立验证令牌。当前 Web API 客户端收到 401 后会清理本地令牌并跳转登录页，没有调用后端 refresh 接口自动续期。Web 注销请求只发送 access token，后端因此拉黑 access token；Web 随后清除本地保存的 refresh token。
-
-### iOS
-
-iOS 由共享 `SessionStore` 管理 `launching`、`signedOut` 和 `signedIn` 状态。令牌对保存在 Keychain，访问令牌不暴露给视图层。应用启动时读取 Keychain；如果存在与当前会话绑定的本地资料，先进入主界面，再以 5 秒请求超时验证服务端资料。服务端明确拒绝会话时清理凭证；网络或服务暂时不可用时保留凭证和缓存，并标明当前使用本地资料。资料缓存只保存会话标识或刷新令牌摘要与最小展示资料，不保存原始令牌。首次使用新版缓存时，旧版未绑定会话的资料需成功联网验证后更新，不能直接用于离线首屏。
-
-iOS API 客户端使用 `Authorization: Bearer <token>`。受保护请求收到 401 后，会调用 refresh 接口、更新 Keychain 中的令牌对并重放原请求一次。并发请求共享同一个刷新任务，避免多个请求同时轮换 refresh token。退出登录时客户端向后端提交 access token 和 refresh token，清理服务端当前会话，然后删除 Keychain 令牌和本地资料缓存。
-
-## 当前实现边界
-
-- JWT 验证依赖当前检查签名、过期时间、黑名单和 `userUuid`，没有检查受保护请求令牌的 `typ` 是否为 `access`。
-- Redis 黑名单查询发生异常时，当前认证依赖记录警告并继续放行请求；Redis 中的 refresh token 校验和登录短信码存取则需要 Redis 正常工作。
-- Web 与 iOS 的续期及注销行为并不一致：iOS 自动续期并向服务端撤销 refresh token；Web 401 时直接清理登录态，注销请求没有提交 refresh token。
-- 短信验证码仍由后端临时生成和缓存，短信服务商集成尚未实现；当前发送函数记录明文手机号与验证码。
-- Web OAuth 回调使用 `state` 校验；GitHub OAuth 授权码由后端持有服务端密钥完成换码。OAuth 绑定表当前保存第三方 access token 与过期时间。
-
-这些是当前代码行为的记录，用于区分现有实现与完整的认证安全目标。
+- Web Session 的过期、登出和安全撤销由 Redis 中的 Session 记录控制。清除浏览器 Cookie 只负责删除客户端副本，不能代替服务端撤销。
+- iOS refresh token 由 Redis 按用户和设备会话保存；iOS 登出时删除对应记录。access token 黑名单有效期不超过该令牌剩余有效期。
+- Web Redis Session 验证失败或 Redis 不可用时，拒绝 Web 受保护请求，不允许跳过会话校验。
+- JWT 验证失败、令牌类型不符、令牌过期或撤销状态不通过时，拒绝 iOS 受保护请求。
+- 认证日志不得记录短信验证码、Cookie 值、完整 JWT、refresh token 或原始 GPS 坐标。日志仅记录排查所需的请求标识、用户标识（按日志规范处理）和认证结果。
 
 ## 主要代码入口
 
@@ -93,5 +150,5 @@ iOS API 客户端使用 `Authorization: Bearer <token>`。受保护请求收到 
 | GitHub OAuth 换码与用户资料读取 | `services/vago-ai/app/auth/oauth.py` |
 | JWT 请求验证与当前用户身份 | `services/vago-ai/app/dependencies/auth.py` |
 | 用户状态、资料与 OAuth 绑定 | `services/vago-ai/app/users/service.py`、`services/vago-ai/app/users/models.py` |
-| Web 会话与登录 | `apps/vago-web/src/stores/auth.js`、`apps/vago-web/src/pages/LoginPage.jsx`、`apps/vago-web/src/api/user.js` |
+| Web 登录状态与认证请求 | `apps/vago-web/src/stores/auth.js`、`apps/vago-web/src/pages/LoginPage.jsx`、`apps/vago-web/src/api/` |
 | iOS 会话、令牌续期与请求 | `apps/vago-ios/VagoIOS/Core/APIClient.swift`、`apps/vago-ios/VagoIOS/Core/KeychainStore.swift` |
