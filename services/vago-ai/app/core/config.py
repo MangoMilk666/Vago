@@ -8,7 +8,7 @@
 
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings
 from sqlalchemy.engine import URL
 
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(
         default_factory=lambda: [
             "http://localhost:5173",
-            "http://localhost:8080",
+            "http://127.0.0.1:5173",
         ]
     )
 
@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     # ttl: 720 hours = 30 days
     jwt_refresh_token_ttl_seconds: int = 2592000
 
+    # Web Session 由 Redis 负责实际过期；Cookie 只承载随机会话标识。
+    web_session_idle_seconds: int = 604800
+    web_session_absolute_seconds: int = 2592000
+    web_cookie_secure: bool | None = None
+
     # 短信验证码参数，先对齐 Java 侧 5 分钟验证码 + 60 秒发送间隔。
     sms_code_ttl_seconds: int = 300
     sms_limit_ttl_seconds: int = 60
@@ -114,9 +119,20 @@ class Settings(BaseSettings):
         "extra": "ignore",
     }
 
+    @model_validator(mode="after")
+    def validate_web_cookie_security(self) -> "Settings":
+        """非本地环境不能关闭 Web Cookie 的 Secure 属性。"""
+        if self.environment != "local" and self.web_cookie_secure is False:
+            raise ValueError("非本地环境必须启用 WEB_COOKIE_SECURE")
+        return self
+
     def get_embed_api_key(self) -> str:
         """返回最终生效的 Embedding API Key。"""
         return self.embed_api_key or self.openai_api_key or self.llm_api_key
+
+    def use_secure_web_cookie(self) -> bool:
+        """本地 HTTP 使用开发 Cookie；其他环境默认要求 HTTPS。"""
+        return self.web_cookie_secure if self.web_cookie_secure is not None else self.environment != "local"
 
     def get_embed_base_url(self) -> str | None:
         """返回最终生效的 Embedding base_url；为空时交给 SDK 使用默认端点。"""

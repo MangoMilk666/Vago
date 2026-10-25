@@ -75,7 +75,7 @@ export default function ProfilePage() {
     try {
       const res         = await updateProfile(payload)
       const updatedUser = res.data
-      saveAuth({ accessToken: auth.accessToken, refreshToken: auth.refreshToken, user: updatedUser })
+      saveAuth({ user: updatedUser, csrfToken: auth.csrfToken })
       setForm((f) => ({
         ...f,
         nickname:  updatedUser.nickname  ?? f.nickname,

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage    from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
@@ -10,7 +10,7 @@ import AiPlanPage     from './pages/AiPlanPage'
 import ProfilePage    from './pages/ProfilePage'
 import FuturePage     from './pages/FuturePage'
 import FootprintPage  from './pages/FootprintPage'
-import { isLoggedIn } from './stores/auth'
+import { isLoggedIn, restoreAuth } from './stores/auth'
 
 // 受保护路由：未登录跳转到 /login
 function ProtectedRoute({ children }) {
@@ -18,6 +18,19 @@ function ProtectedRoute({ children }) {
 }
 
 export default function App() {
+  const [sessionState, setSessionState] = useState('loading')
+
+  useEffect(() => {
+    restoreAuth()
+      .then(() => setSessionState('ready'))
+      .catch(() => setSessionState('error'))
+  }, [])
+
+  if (sessionState === 'loading') return <div role="status">正在验证登录状态…</div>
+  if (sessionState === 'error') return (
+    <div role="alert">暂时无法验证登录状态。<button onClick={() => window.location.reload()}>重试</button></div>
+  )
+
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />

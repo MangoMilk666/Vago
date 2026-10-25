@@ -175,7 +175,7 @@ def test_legacy_register_api_accepts_sms_code_and_nickname(
 
     response = client.post(
         "/api/v1/user/register",
-        json={"phone": "13700101000", "smsCode": "123456", "nickname": "注册用户"},
+        json={"phone": "13700101000", "smsCode": "123456", "nickname": "注册用户", "clientType": "ios"},
     )
 
     assert response.status_code == 200
@@ -219,6 +219,7 @@ def test_legacy_oauth_api_returns_login_vo_shape(
             "provider": "github",
             "authCode": "oauth-code",
             "redirectUri": "http://localhost:5173/login",
+            "clientType": "ios",
         },
     )
 

@@ -10,7 +10,7 @@ import jwt
 from sqlalchemy.orm import Session
 
 from app.auth.oauth import OAuthUserProfile, fetch_oauth_user_profile, normalize_provider
-from app.auth.schemas import LoginResponse, SmsSendResponse, TokenPair
+from app.auth.schemas import LoginResponse, SmsSendResponse, TokenPair, WebLoginResponse
 from app.core.config import settings
 from app.core.exceptions import AppException
 from app.core.redis import get_redis_client
@@ -103,7 +103,9 @@ async def send_sms_code(phone: str) -> SmsSendResponse:
     code = f"{secrets.randbelow(1_000_000):06d}"
     await redis.setex(f"{SMS_CODE_PREFIX}{phone}", settings.sms_code_ttl_seconds, code)
     await redis.setex(limit_key, settings.sms_limit_ttl_seconds, "1")
-    logger.info("开发环境短信验证码 phone=%s code=%s", phone, code)
+    # 如果是本地开发，临时通过终端查看验证码；非本地环境不得记录验证码。
+    if settings.environment == "local":
+        logger.info("开发环境短信验证码 phone=%s code=%s", phone, code)
     return SmsSendResponse(expireSeconds=settings.sms_code_ttl_seconds)
 
 
@@ -190,7 +192,8 @@ async def login_by_oauth(
     provider: str,
     auth_code: str,
     redirect_uri: str,
-) -> LoginResponse:
+    client_type: str = "web",
+) -> LoginResponse | WebLoginResponse:
     """第三方 OAuth 登录；当前迁移 GitHub provider。"""
     normalized_provider = normalize_provider(provider)
     profile = await fetch_oauth_user_profile(normalized_provider, auth_code, redirect_uri)
@@ -225,10 +228,15 @@ async def login_by_oauth(
             _sync_user_profile_from_oauth(db, user, profile)
         _bind_oauth_account(db, user, profile)
 
-    token_pair = create_token_pair(user)
-    await store_refresh_token(user.uuid, token_pair.session_id or uuid4().hex, token_pair.refresh_token)
+    # 如果来自 iOS，保留原有 JWT 与设备刷新令牌链路。
+    token_pair = None
+    if client_type == "ios":
+        token_pair = create_token_pair(user)
+        await store_refresh_token(user.uuid, token_pair.session_id or uuid4().hex, token_pair.refresh_token)
     db.commit()
     db.refresh(user)
+    if token_pair is None:
+        return WebLoginResponse(isNewUser=is_new_user, userInfo=build_profile(db, user))
     return LoginResponse(
         **token_pair.model_dump(by_alias=True),
         isNewUser=is_new_user,
@@ -242,7 +250,7 @@ async def login_by_phone(
     code: str,
     client_type: str = "web",
     device_id: str | None = None,
-) -> LoginResponse:
+) -> LoginResponse | WebLoginResponse:
     """手机号验证码登录；不存在的手机号会自动注册。"""
     await validate_sms_code(phone, code)
     user = get_user_by_phone(db, phone)
@@ -251,12 +259,16 @@ async def login_by_phone(
     if user is None:
         user = _create_user_from_phone(db, phone)
     ensure_user_can_login(user)
-    # 原生端以稳定设备标识复用会话；Web 未提供设备标识时每次登录生成独立会话。
-    session_id = device_id or uuid4().hex
-    token_pair = create_token_pair(user, session_id)
-    await store_refresh_token(user.uuid, token_pair.session_id or session_id, token_pair.refresh_token)
+    # 如果来自 iOS，按设备标识签发并保存刷新令牌；Web 不签发 JWT。
+    token_pair = None
+    if client_type == "ios":
+        session_id = device_id or uuid4().hex
+        token_pair = create_token_pair(user, session_id)
+        await store_refresh_token(user.uuid, token_pair.session_id or session_id, token_pair.refresh_token)
     db.commit()
     db.refresh(user)
+    if token_pair is None:
+        return WebLoginResponse(isNewUser=is_new_user, userInfo=build_profile(db, user))
     return LoginResponse(
         **token_pair.model_dump(by_alias=True),
         isNewUser=is_new_user,
@@ -269,7 +281,9 @@ async def register_by_phone(
     phone: str,
     code: str,
     nickname: str | None = None,
-) -> LoginResponse:
+    client_type: str = "web",
+    device_id: str | None = None,
+) -> LoginResponse | WebLoginResponse:
     """手机号注册；已存在账号时返回明确冲突。"""
     await validate_sms_code(phone, code)
     # 分支条件：手机号已存在时，注册接口返回冲突。
@@ -280,10 +294,14 @@ async def register_by_phone(
     # 分支条件：注册请求传入昵称时，用用户输入覆盖默认昵称。
     if nickname:
         user.nickname = nickname
-    token_pair = create_token_pair(user)
-    await store_refresh_token(user.uuid, token_pair.session_id or uuid4().hex, token_pair.refresh_token)
+    token_pair = None
+    if client_type == "ios":
+        token_pair = create_token_pair(user, device_id)
+        await store_refresh_token(user.uuid, token_pair.session_id or uuid4().hex, token_pair.refresh_token)
     db.commit()
     db.refresh(user)
+    if token_pair is None:
+        return WebLoginResponse(isNewUser=True, userInfo=build_profile(db, user))
     return LoginResponse(
         **token_pair.model_dump(by_alias=True),
         isNewUser=True,

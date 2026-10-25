@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { configureHttp } from './http'
 
 // ─── Axios 实例 ───────────────────────────────────────────────────────────────
 const http = axios.create({
@@ -7,29 +8,7 @@ const http = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// 请求拦截器：自动注入 Access Token
-http.interceptors.request.use((config) => {
-  const token = localStorage.getItem('accessToken')
-  if (token) {
-    config.headers['authorization'] = token
-  }
-  return config
-})
-
-// 响应拦截器：统一处理错误 & 401 自动跳转
-http.interceptors.response.use(
-  (response) => response.data,
-  (error) => {
-    const res = error.response?.data
-    const msg = res?.message || '网络请求失败，请稍后重试'
-    if (error.response?.status === 401) {
-      localStorage.removeItem('accessToken')
-      localStorage.removeItem('refreshToken')
-      window.location.href = '/login'
-    }
-    return Promise.reject(new Error(msg))
-  }
-)
+configureHttp(http)
 
 // ─── API 方法 ─────────────────────────────────────────────────────────────────
 
@@ -40,17 +19,17 @@ export function sendSmsCode(phone) {
 
 /** 手机号+验证码 登录 */
 export function loginByPhone(phone, code) {
-  return http.post('/login/phone', { phone, smsCode: code })
+  return http.post('/login/phone', { phone, smsCode: code, clientType: 'web' })
 }
 
 /** OAuth 登录 */
 export function loginByOAuth(provider, authCode, redirectUri, deviceId) {
-  return http.post('/login/oauth', { provider, authCode, redirectUri, deviceId })
+  return http.post('/login/oauth', { provider, authCode, redirectUri, deviceId, clientType: 'web' })
 }
 
 /** 手机号+验证码 注册（需要昵称）*/
 export function register(phone, code, nickname) {
-  return http.post('/register', { phone, smsCode: code, nickname })
+  return http.post('/register', { phone, smsCode: code, nickname, clientType: 'web' })
 }
 
 /** 获取当前用户信息 */
@@ -68,8 +47,5 @@ export function updateProfile(data) {
 
 /** 退出登录 */
 export function logout() {
-  const token = localStorage.getItem('accessToken')
-  return http.post('/logout', null, {
-    headers: token ? { authorization: token } : {},
-  })
+  return http.post('/logout')
 }

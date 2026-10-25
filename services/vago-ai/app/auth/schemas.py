@@ -1,5 +1,7 @@
 """认证领域请求/响应 schema。"""
 
+from typing import Literal
+
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.users.schemas import UserProfile
@@ -33,7 +35,7 @@ class PhoneLoginRequest(BaseModel):
         validation_alias=AliasChoices("code", "smsCode"),
     )
     # 客户端类型，用于区分 Web 与原生端的登录会话。
-    client_type: str = Field(default="web", alias="clientType", max_length=32)
+    client_type: Literal["web", "ios"] = Field(default="web", alias="clientType")
     # 设备安装标识；原生端传入后可维持独立登录状态。
     device_id: str | None = Field(default=None, alias="deviceId", max_length=128)
 
@@ -58,6 +60,7 @@ class OAuthLoginRequest(BaseModel):
     redirect_uri: str = Field(alias="redirectUri", min_length=1)
     # 客户端设备标识，预留给多设备登录管理。
     device_id: str | None = Field(default=None, alias="deviceId")
+    client_type: Literal["web", "ios"] = Field(default="web", alias="clientType")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -94,3 +97,19 @@ class LoginResponse(TokenPair):
     is_new_user: bool = Field(alias="isNewUser")
     # 登录成功后返回的用户资料快照。
     user_info: UserProfile = Field(alias="userInfo")
+
+
+class WebLoginResponse(BaseModel):
+    """Web 登录结果不包含可由 JavaScript 读取的认证凭证。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+    is_new_user: bool = Field(alias="isNewUser")
+    user_info: UserProfile = Field(alias="userInfo")
+
+
+class WebSessionResponse(BaseModel):
+    """页面刷新时恢复用户资料和内存中的 CSRF Token。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+    user_info: UserProfile = Field(alias="userInfo")
+    csrf_token: str = Field(alias="csrfToken")

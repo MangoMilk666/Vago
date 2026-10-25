@@ -26,9 +26,13 @@ export default function Navbar() {
   }, [])
 
   const handleLogout = async () => {
-    try { await logout() } catch (_) {}
-    clearAuth()
-    navigate('/login')
+    try {
+      await logout()
+      clearAuth()
+      navigate('/login')
+    } catch (error) {
+      window.alert(error.message || '退出失败，请稍后重试')
+    }
   }
 
   return (

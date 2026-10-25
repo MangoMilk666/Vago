@@ -58,10 +58,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS 保持兼容：允许 Vite 前端和旧 Java 后端在迁移期继续调用。
+    # 仅允许已配置 Web 来源携带 Cookie；iOS Bearer 请求不依赖浏览器 CORS。
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )

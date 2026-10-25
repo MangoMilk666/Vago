@@ -1,5 +1,6 @@
 import axios from 'axios'
-import { getAuth } from '../stores/auth'
+import { getCsrfToken } from '../stores/auth'
+import { configureHttp, handleUnauthorized } from './http'
 
 // ─── Axios 实例（非流式接口） ──────────────────────────────────────────────────
 const http = axios.create({
@@ -8,26 +9,7 @@ const http = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-http.interceptors.request.use((config) => {
-  const token = getAuth()?.accessToken
-  if (token) config.headers['authorization'] = token
-  return config
-})
-
-http.interceptors.response.use(
-  (response) => {
-    const data = response.data
-    if (data.code !== 200) return Promise.reject(new Error(data.message || '请求失败'))
-    return data
-  },
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('accessToken')
-      window.location.href = '/login'
-    }
-    return Promise.reject(new Error(error.response?.data?.message || '网络请求失败，请稍后重试'))
-  }
-)
+configureHttp(http)
 
 // ─── AI API ─────────────────────────────────────────────────────────────────
 
@@ -57,14 +39,14 @@ export const aiApi = {
    * 返回内容不含 GPS 经纬度或模型内部 Prompt，仅用于用户核对授权范围。
    */
   contextPreview: async (usePersonalContext = true, useRag = true) => {
-    const token = getAuth()?.accessToken
     const params = new URLSearchParams({
       usePersonalContext: String(usePersonalContext),
       useRag: String(useRag),
     })
     const response = await fetch(`/api/v1/agent/context-preview?${params}`, {
-      headers: token ? { authorization: token } : {},
+      credentials: 'same-origin',
     })
+    if (response.status === 401) handleUnauthorized()
     const body = await response.json()
     if (!response.ok || body.code !== 200) {
       throw new Error(body.message || '读取旅行上下文失败')
@@ -96,15 +78,18 @@ export const aiApi = {
     usePersonalContext = false,
     conversationUuid = null,
   ) => {
-    const token = getAuth()?.accessToken
     return fetch('/api/v1/ai/chat/stream', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { authorization: token } : {}),
+        'X-CSRF-Token': getCsrfToken() ?? '',
       },
+      credentials: 'same-origin',
       body: JSON.stringify({ messages, useRag, usePersonalContext, conversationUuid }),
       ...(signal ? { signal } : {}),
+    }).then((response) => {
+      if (response.status === 401) handleUnauthorized()
+      return response
     })
   },
 

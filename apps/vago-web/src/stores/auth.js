@@ -1,32 +1,49 @@
-// 轻量级 Auth 状态管理（无需 Redux，使用原生 localStorage + 自定义事件）
+// Web 只在内存保存展示资料和 CSRF Token；认证凭证由 HttpOnly Cookie 承载。
+let auth = null
+let restorePromise = null
 
-const AUTH_KEY = 'vago_auth'
-
-export function saveAuth({ accessToken, refreshToken, user }) {
-  localStorage.setItem(
-    AUTH_KEY,
-    JSON.stringify({ accessToken, refreshToken, user })
-  )
-  // 同一 tab 内通知其他组件
+export function saveAuth({ user, csrfToken }) {
+  auth = { user, csrfToken }
+  localStorage.removeItem('vago_auth')
+  localStorage.removeItem('accessToken')
+  localStorage.removeItem('refreshToken')
   window.dispatchEvent(new Event('vago:auth-changed'))
 }
 
 export function clearAuth() {
-  localStorage.removeItem(AUTH_KEY)
+  auth = null
+  localStorage.removeItem('vago_auth')
   localStorage.removeItem('accessToken')
   localStorage.removeItem('refreshToken')
   window.dispatchEvent(new Event('vago:auth-changed'))
 }
 
 export function getAuth() {
-  try {
-    return JSON.parse(localStorage.getItem(AUTH_KEY)) || null
-  } catch {
-    return null
-  }
+  return auth
+}
+
+export function getCsrfToken() {
+  return auth?.csrfToken ?? null
 }
 
 export function isLoggedIn() {
-  const auth = getAuth()
-  return !!auth?.accessToken
+  return Boolean(auth?.user)
+}
+
+export function restoreAuth(force = false) {
+  if (restorePromise && !force) return restorePromise
+  // 页面重载后必须询问服务端，不能用旧浏览器存储判断是否已登录。
+  restorePromise = fetch('/api/v1/auth/session', { credentials: 'same-origin' })
+    .then(async (response) => {
+      if (response.status === 401) {
+        clearAuth()
+        return null
+      }
+      if (!response.ok) throw new Error('暂时无法验证登录状态')
+      const body = await response.json()
+      saveAuth({ user: body.data.userInfo, csrfToken: body.data.csrfToken })
+      return auth
+    })
+    .finally(() => { restorePromise = null })
+  return restorePromise
 }

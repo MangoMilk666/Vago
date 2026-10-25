@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { sendSmsCode, loginByPhone, loginByOAuth } from '../api/user'
-import { saveAuth } from '../stores/auth'
+import { restoreAuth } from '../stores/auth'
 
 // ─── 图标 SVG ─────────────────────────────────────────────────────────────────
 const IconPhone = () => (
@@ -98,12 +98,9 @@ export default function LoginPage() {
   const isValidPhone = /^1[3-9]\d{9}$/.test(phone)
   const githubEnabled = Boolean(GITHUB_CLIENT_ID)
 
-  const handleLoginSuccess = (res) => {
+  const handleLoginSuccess = async (res) => {
     if (res.code !== 200) return
-    const { accessToken, refreshToken, userInfo } = res.data
-    saveAuth({ accessToken, refreshToken, user: userInfo })
-    localStorage.setItem('accessToken', accessToken)
-    localStorage.setItem('refreshToken', refreshToken)
+    await restoreAuth(true)
     navigate('/')
   }
 
@@ -141,7 +138,7 @@ export default function LoginPage() {
       setLoading(true)
       try {
         const res = await loginByOAuth('github', githubCode, getGithubRedirectUri())
-        handleLoginSuccess(res)
+        await handleLoginSuccess(res)
       } catch (err) {
         setError(err.message)
       } finally {
@@ -174,7 +171,7 @@ export default function LoginPage() {
     setError(''); setLoading(true)
     try {
       const res = await loginByPhone(phone, code)
-      handleLoginSuccess(res)
+      await handleLoginSuccess(res)
     } catch (err) {
       setError(err.message)
     } finally {

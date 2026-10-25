@@ -191,7 +191,7 @@ async def test_phone_logins_keep_refresh_tokens_for_separate_devices(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """测试：同一账号的 Web 与 iOS 登录应保留各自独立的刷新会话。"""
+    """测试：iOS 保留设备刷新令牌，Web 登录不签发 JWT。"""
     fake_redis = FakeRedis()
     monkeypatch.setattr(auth_service.settings, "jwt_secret_key", "test-secret")
 
@@ -213,12 +213,10 @@ async def test_phone_logins_keep_refresh_tokens_for_separate_devices(
     )
 
     assert ios_response.session_id == "ios-installation-id"
-    assert web_response.session_id == "web-browser-id"
-    assert {key.rsplit(":", maxsplit=1)[-1] for key in fake_redis.values} == {
-        "ios-installation-id",
-        "web-browser-id",
-    }
-    assert len(fake_redis.values) == 2
+    assert web_response.user_info.uuid == ios_response.user_info.uuid
+    assert not hasattr(web_response, "access_token")
+    assert {key.rsplit(":", maxsplit=1)[-1] for key in fake_redis.values} == {"ios-installation-id"}
+    assert len(fake_redis.values) == 1
 
 
 @pytest.mark.anyio
