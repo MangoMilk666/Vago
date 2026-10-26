@@ -29,3 +29,30 @@ def test_plan_proposal_migration_up_and_down():
         }
         migration.downgrade()
         assert "plan_proposals" not in inspect(connection).get_table_names()
+
+
+def test_validation_columns_migration_up_and_down():
+    """测试：阶段 3 校验字段可升级与降级，不改动候选主表。"""
+    root = Path(__file__).resolve().parents[1] / "migrations/versions"
+    modules = []
+    for name in ("20261016_01_create_plan_proposals.py", "20261026_02_add_proposal_validation.py"):
+        spec = importlib.util.spec_from_file_location(name.removesuffix(".py"), root / name)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        modules.append(module)
+    base, validation = modules
+    assert validation.down_revision == "20261026_01"
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        operations = Operations(MigrationContext.configure(connection))
+        base.op = operations
+        validation.op = operations
+        base.upgrade()
+        validation.upgrade()
+        columns = {column["name"] for column in inspect(connection).get_columns("plan_proposals")}
+        assert {"validation_result", "validated_at"} <= columns
+        validation.downgrade()
+        columns = {column["name"] for column in inspect(connection).get_columns("plan_proposals")}
+        assert "validation_result" not in columns
+        assert "plan_proposals" in inspect(connection).get_table_names()

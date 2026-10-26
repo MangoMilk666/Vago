@@ -37,4 +37,7 @@ class PlanProposal(Base):
     # 为阶段 2A 的来源映射留位；当前公开创建接口固定为 vago，不接受旧身份决定归属。
     source_system: Mapped[str] = mapped_column(String(32), default="vago", nullable=False)
     source_ref: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    # 校验报告来自确定性规则；版本正文不因重新校验而改变。
+    validation_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)

@@ -72,7 +72,8 @@ def test_proposal_round_trip_version_and_idempotency(client_and_db):
     assert first.status_code == 200
     created = first.json()["data"]
     assert created["version"] == 1
-    assert created["status"] == "PENDING_VALIDATION"
+    assert created["status"] == "BLOCKED"
+    assert created["validation"]["outcome"] == "fail"
     assert created["content"]["points"][0]["placeRef"] == "example.invalid/stop"
     assert created["brief"]["cities"] == ["示例城甲", "示例城乙"]
     assert client.post(url, json=_payload()).json()["data"]["uuid"] == created["uuid"]
@@ -82,7 +83,10 @@ def test_proposal_round_trip_version_and_idempotency(client_and_db):
     assert second["version"] == 2
     assert [item["version"] for item in client.get(url).json()["data"]] == [2, 1]
     assert client.get(f"{url}/versions/1").json()["data"]["content"] == created["content"]
-    assert client.get(f"{url}/versions/1/status").json()["data"]["status"] == "PENDING_VALIDATION"
+    assert client.get(f"{url}/versions/1/status").json()["data"]["status"] == "BLOCKED"
+    rechecked = client.post(f"{url}/versions/1/validate")
+    assert rechecked.status_code == 200
+    assert rechecked.json()["data"]["validation"] == created["validation"]
     assert client.get(f"{url}/versions/99").status_code == 404
     assert client.post(url, json={**_payload(), "content": {"points": []}}).status_code == 409
     # 候选保存只是规划资源持久化，不得隐式创建正式计划。
@@ -101,6 +105,7 @@ def test_proposal_endpoints_are_isolated_and_conversation_delete_cleans_up(clien
     assert client.get(url).status_code == 404
     assert client.get(f"{url}/versions/1").status_code == 404
     assert client.get(f"{url}/versions/1/status").status_code == 404
+    assert client.post(f"{url}/versions/1/validate").status_code == 404
     assert client.post(url, json={**_payload("request-key-007"), "userUuid": "user-a"}).status_code == 422
     assert db.scalar(select(func.count()).select_from(PlanProposal)) == 1
 

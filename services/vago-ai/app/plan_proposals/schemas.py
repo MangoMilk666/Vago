@@ -8,7 +8,7 @@ from pydantic_core import PydanticCustomError
 
 
 class ProposalCreateRequest(BaseModel):
-    """完整保留 brief/候选 JSON；阶段 3 再增加确定性时间线校验。"""
+    """完整保留 brief 和候选 JSON；创建时另存确定性校验报告。"""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -50,6 +50,7 @@ class ProposalDetail(ProposalSummary):
     target_plan_updated_at: datetime | None = Field(alias="targetPlanUpdatedAt")
     brief: dict[str, Any]
     content: dict[str, Any]
+    validation: dict[str, Any] | None = None
 
 
 class ProposalStatus(BaseModel):
@@ -58,3 +59,4 @@ class ProposalStatus(BaseModel):
     uuid: str
     version: int
     status: str
+    validation: dict[str, Any] | None = None

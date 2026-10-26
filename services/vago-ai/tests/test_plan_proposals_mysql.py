@@ -66,12 +66,46 @@ def test_mysql_proposal_round_trip_for_merge_account():
 
         with SessionLocal() as db:
             assert proposals.get_proposal(db, user_uuid, conversation.uuid, 1).brief["cities"] == ["示例城甲", "示例城乙"]
-            assert proposals.get_status(db, user_uuid, conversation.uuid, 1).status == "PENDING_VALIDATION"
+            assert proposals.get_status(db, user_uuid, conversation.uuid, 1).status == "BLOCKED"
             assert [item.version for item in proposals.list_proposals(db, user_uuid, conversation.uuid)] == [3, 2, 1]
             with pytest.raises(AppException) as exc:
                 proposals.get_proposal(db, "unrelated-user", conversation.uuid, 1)
             assert exc.value.status_code == 404
     finally:
         # 如果校验中途失败，仍只删除本次创建的会话及其候选，不动账号其他数据。
+        with SessionLocal() as db:
+            conversations.delete_conversation(db, user_uuid, conversation.uuid)
+
+
+@pytest.mark.skipif(os.getenv("VAGO_MERGE_MYSQL_TEST") != "1", reason="需显式开启本机 MySQL 写入验收")
+def test_mysql_validation_report_survives_session_reload():
+    """测试：校验结论和逐项依据在真实 MySQL 中跨 Session 保存且可重新计算。"""
+    user_uuid = "5519a1d427b249ed90e5fd9851224125"
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.uuid == user_uuid, User.nickname == "wkf-merge-test"))
+        assert user is not None
+        conversation = conversations.create_conversation(db, user_uuid, ConversationCreateRequest())
+    try:
+        request = ProposalCreateRequest(
+            idempotencyKey="mysql-phase3-validation-001", targetKind="new_plan",
+            brief={"startDate": "2026-11-01", "endDate": "2026-11-01",
+                   "timezone": "Asia/Singapore", "hardConstraints": [
+                       {"type": "day_end_before", "value": "20:00"}
+                   ]},
+            content={"days": [{"day": 1, "date": "2026-11-01", "city": "Singapore",
+                               "items": [{"id": "site-1", "name": "已选地点", "kind": "attraction",
+                                          "startTime": "09:00", "endTime": "10:00"}]}]},
+        )
+        with SessionLocal() as db:
+            created = proposals.create_proposal(db, user_uuid, conversation.uuid, request)
+            assert created.status == "VALIDATED"
+        with SessionLocal() as db:
+            detail = proposals.get_proposal(db, user_uuid, conversation.uuid, created.version)
+            assert detail.validation["hardChecksPassed"] is True
+            assert proposals.revalidate_proposal(db, user_uuid, conversation.uuid, created.version).validation == detail.validation
+            with pytest.raises(AppException) as exc:
+                proposals.get_proposal(db, "unrelated-user", conversation.uuid, created.version)
+            assert exc.value.status_code == 404
+    finally:
         with SessionLocal() as db:
             conversations.delete_conversation(db, user_uuid, conversation.uuid)

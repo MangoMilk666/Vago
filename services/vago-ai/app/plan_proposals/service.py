@@ -12,9 +12,13 @@ from app.agent_conversations.models import AgentConversation
 from app.core.exceptions import AppException
 from app.plan_proposals.models import PlanProposal
 from app.plan_proposals.schemas import ProposalCreateRequest, ProposalDetail, ProposalStatus, ProposalSummary
+from app.plan_proposals.validation import validate_proposal
 from app.travel.models import Plan
+from app.travel.models import utc_now_naive
 
 PENDING_VALIDATION = "PENDING_VALIDATION"
+VALIDATED = "VALIDATED"
+BLOCKED = "BLOCKED"
 MAX_CONTENT_BYTES = 256 * 1024
 
 
@@ -40,6 +44,7 @@ def create_proposal(
     # 同一个 key、相同 fingerprint：说明是同一份候选的重复提交，返回之前创建的版本，不再新增。
     # 同一个 key、不同 fingerprint：说明拿旧 key 提交了另一份内容，返回 409，避免误把新方案当作旧请求的重试。
     fingerprint = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    validation = validate_proposal(payload.brief, payload.content)
 
     for attempt in range(3):
         try:
@@ -95,10 +100,12 @@ def create_proposal(
                 target_kind=payload.target_kind,
                 target_plan_uuid=payload.target_plan_uuid,
                 target_plan_updated_at=target_updated_at,
-                status=PENDING_VALIDATION,
+                status=VALIDATED if validation["hardChecksPassed"] else BLOCKED,
                 brief=payload.brief,
                 content=payload.content,
                 source_system="vago",
+                validation_result=validation,
+                validated_at=utc_now_naive(),
             )
             db.add(proposal)
             db.commit()
@@ -143,9 +150,29 @@ def get_proposal(db: Session, user_uuid: str, conversation_uuid: str, version: i
 
 
 def get_status(db: Session, user_uuid: str, conversation_uuid: str, version: int) -> ProposalStatus:
-    """读取可回放的候选状态；阶段 2 不提供确认或状态变更入口。"""
+    """读取可回放的候选状态及确定性校验结果。"""
     item = _require_proposal(db, user_uuid, conversation_uuid, version)
-    return ProposalStatus(uuid=item.uuid, version=item.version, status=item.status)
+    return ProposalStatus(uuid=item.uuid, version=item.version, status=item.status,
+                          validation=item.validation_result)
+
+
+def revalidate_proposal(db: Session, user_uuid: str, conversation_uuid: str, version: int) -> ProposalDetail:
+    """重新检查选中版本；只更新校验报告，不改变候选正文。"""
+    _require_conversation(db, user_uuid, conversation_uuid)
+    item = db.scalar(select(PlanProposal).where(
+        PlanProposal.user_uuid == user_uuid,
+        PlanProposal.conversation_uuid == conversation_uuid,
+        PlanProposal.version == version,
+    ).with_for_update())
+    if item is None:
+        raise AppException("候选版本不存在", status_code=404, code="PLAN_PROPOSAL_NOT_FOUND")
+    validation = validate_proposal(item.brief, item.content)
+    item.validation_result = validation
+    item.validated_at = utc_now_naive()
+    item.status = VALIDATED if validation["hardChecksPassed"] else BLOCKED
+    db.commit()
+    db.refresh(item)
+    return _detail(item)
 
 
 def _require_conversation(db: Session, user_uuid: str, conversation_uuid: str) -> None:
@@ -196,4 +223,5 @@ def _detail(item: PlanProposal) -> ProposalDetail:
         targetPlanUpdatedAt=item.target_plan_updated_at,
         brief=item.brief,
         content=item.content,
+        validation=item.validation_result,
     )

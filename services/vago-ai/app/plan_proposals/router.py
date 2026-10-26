@@ -56,3 +56,17 @@ def get_proposal_status(
 ) -> ApiResponse[ProposalStatus]:
     """断线后独立查询候选持久化状态。"""
     return success(service.get_status(db, user_uuid, conversation_uuid, version))
+
+
+@router.post(
+    "/conversations/{conversation_uuid}/proposals/versions/{version}/validate",
+    response_model=ApiResponse[ProposalDetail],
+)
+def revalidate_proposal(
+    conversation_uuid: str,
+    version: int = Path(ge=1),
+    db: Session = Depends(get_db),
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[ProposalDetail]:
+    """按当前确定性规则重新校验已归属候选。"""
+    return success(service.revalidate_proposal(db, user_uuid, conversation_uuid, version), "校验已更新")
