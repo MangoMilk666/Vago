@@ -438,5 +438,22 @@ CREATE TABLE plan_proposals (
     INDEX idx_plan_proposals_user_conversation (user_uuid, conversation_uuid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话中未确认的旅行规划候选版本';
 
+-- wkf 历史导入的逐条来源和目标映射；仅用于专用测试账号审计与撤回。
+CREATE TABLE wkf_import_records (
+    id             BIGINT       NOT NULL AUTO_INCREMENT,
+    user_uuid      VARCHAR(36)  NOT NULL,
+    source_key     VARCHAR(255) NOT NULL,
+    source_hash    VARCHAR(64)  NOT NULL,
+    source_kind    VARCHAR(32)  NOT NULL,
+    source_payload JSON         NOT NULL,
+    target_kind    VARCHAR(32)  DEFAULT NULL,
+    target_uuid    VARCHAR(32)  DEFAULT NULL,
+    batch_id       VARCHAR(64)  NOT NULL,
+    created_at     DATETIME     NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_wkf_import_user_source (user_uuid, source_key),
+    INDEX idx_wkf_import_user_batch (user_uuid, batch_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='wkf 历史导入溯源记录';
+
 
 SET FOREIGN_KEY_CHECKS = 1;
