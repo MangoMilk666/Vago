@@ -1,4 +1,4 @@
-import { clearAuth, getCsrfToken } from '../stores/auth'
+import { announceAuthChange, clearAuth, getCsrfToken } from '../stores/auth'
 
 const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete'])
 
@@ -25,5 +25,6 @@ export function configureHttp(http, fallbackMessage = '网络请求失败，请�
 export function handleUnauthorized() {
   if (window.location.pathname.startsWith('/login')) return
   clearAuth()
+  announceAuthChange()
   window.location.href = '/login'
 }

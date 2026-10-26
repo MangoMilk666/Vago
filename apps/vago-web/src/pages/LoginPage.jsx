@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { sendSmsCode, loginByPhone, loginByOAuth } from '../api/user'
-import { restoreAuth } from '../stores/auth'
+import { announceAuthChange, restoreAuth } from '../stores/auth'
 
 // ─── 图标 SVG ─────────────────────────────────────────────────────────────────
 const IconPhone = () => (
@@ -100,7 +100,8 @@ export default function LoginPage() {
 
   const handleLoginSuccess = async (res) => {
     if (res.code !== 200) return
-    await restoreAuth(true)
+    await restoreAuth()
+    announceAuthChange()
     navigate('/')
   }
 

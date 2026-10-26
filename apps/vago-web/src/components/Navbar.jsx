@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { logout } from '../api/user'
-import { clearAuth, getAuth } from '../stores/auth'
+import { announceAuthChange, clearAuth, getAuth } from '../stores/auth'
 
 const NAV_LINKS = [
   { to: '/', label: '首页' },
@@ -29,6 +29,7 @@ export default function Navbar() {
     try {
       await logout()
       clearAuth()
+      announceAuthChange()
       navigate('/login')
     } catch (error) {
       window.alert(error.message || '退出失败，请稍后重试')

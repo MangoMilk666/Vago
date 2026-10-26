@@ -61,13 +61,13 @@ Redis 使用共享部署，供所有 FastAPI 实例读取同一份 Web Session�
 
 Web 手机号登录、注册和 OAuth 登录成功后，后端创建 Redis Session、轮换 Session ID、设置安全 Cookie，并返回用户资料。前端通过会话查询接口读取当前用户与 CSRF Token，根据返回结果更新内存中的登录状态。
 
-页面启动或刷新时，前端调用会话查询接口。后端从 Cookie 取得 Session ID，在 Redis 中验证 Session 状态、账号状态及过期时间；有效时返回用户资料和 CSRF Token，无效时返回未认证结果。前端不依据本地存储中的 token 判断登录状态。
+页面启动或刷新时，前端调用会话查询接口。后端从 Cookie 取得 Session ID，在 Redis 中验证 Session 状态、账号状态及过期时间；有效时返回用户资料和 CSRF Token，无效时返回未认证结果。前端不依据本地存储中的 token 判断登录状态。同一浏览器的其他标签页登录或退出，以及页面重新获得焦点时，前端会重新校验 Session；用户身份改变时重新载入页面，清除旧账号的页面数据。
 
 Web API 请求由浏览器自动携带同源 Cookie。受保护请求的服务端认证依赖读取 Cookie、验证 Redis Session，并由 Session 关联的 `userUuid` 建立当前用户身份。响应为 401 时，前端清除内存登录状态并转到登录页；Web Session 不通过 JWT refresh 接口续期。
 
 Web 退出登录时，前端提交 CSRF Token。后端删除 Redis 中的当前 Session 并清除 Cookie，Cookie 清除时使用与创建时一致的名称、Path 和安全属性。删除 Redis Session 后，已复制的 Session ID 立即失效。
 
-用户封禁、注销或其他禁止登录的状态变化必须阻止已有 Web Session 继续访问受保护 API。认证方式变更、账号安全处置等需要撤销会话的操作，应删除该用户受影响的 Redis Session。
+用户封禁、注销或其他禁止登录的状态变化会阻止已有 Web Session 继续访问受保护 API。查询会话时发现账号状态异常，后端删除当前 Redis Session 并返回具体状态；Web 清除内存认证状态，显示账号提示与返回登录页入口。认证方式变更、账号安全处置等需要撤销会话的操作，应删除该用户受影响的 Redis Session。
 
 ### CSRF 与来源校验
 

@@ -17,6 +17,7 @@ from app.auth.web_session import COOKIE_NAME, SESSION_PREFIX
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.exceptions import register_exception_handlers
+from app.users.models import User
 
 
 @pytest.mark.skipif(os.getenv("VAGO_AUTH_REDIS_TEST") != "1", reason="需要显式启用本机 Redis 集成测试")
@@ -119,6 +120,30 @@ def test_web_login_session_csrf_and_logout(monkeypatch: pytest.MonkeyPatch):
             assert logout.status_code == 200
             assert not redis.exists(session_key)
             assert client.get("/api/v1/auth/session").status_code == 401
+
+            for account_status, expected_code in ((2, "ACCOUNT_BANNED"), (3, "ACCOUNT_CANCELLING")):
+                # 测试：账号状态变化后，当前 Web Session 立即失效并返回明确原因。
+                with session_factory() as db:
+                    user = db.query(User).filter(User.uuid == ios_user_uuid).one()
+                    user.status = 1
+                    db.commit()
+                redis.setex(code_key, 300, "123456")
+                assert client.post(
+                    "/api/v1/auth/login/phone",
+                    json={"phone": phone, "code": "123456", "clientType": "web"},
+                    headers={"Origin": origin},
+                ).status_code == 200
+                cookie = client.cookies.get(COOKIE_NAME)
+                session_key = f"{SESSION_PREFIX}{hashlib.sha256(cookie.encode()).hexdigest()}"
+                with session_factory() as db:
+                    user = db.query(User).filter(User.uuid == ios_user_uuid).one()
+                    user.status = account_status
+                    db.commit()
+                rejected_session = client.get("/api/v1/auth/session")
+                assert rejected_session.status_code == 403
+                assert rejected_session.json()["code"] == expected_code
+                assert not redis.exists(session_key)
+                assert client.get("/api/v1/auth/session").status_code == 401
     finally:
         redis.delete(code_key, limit_key)
         if ios_refresh_key:
