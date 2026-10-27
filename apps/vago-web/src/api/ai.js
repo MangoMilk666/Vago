@@ -120,4 +120,32 @@ export const aiApi = {
     `/agent/conversations/${conversationUuid}`,
     { baseURL: '/api/v1' },
   ),
+
+  /** 在中国大陆查询规划地点；密钥由 FastAPI 保存并调用高德。 */
+  searchPlanningPlaces: (city, query) => http.post(
+    '/agent/planning/places/search',
+    { countryCode: 'CN', city, query },
+    { baseURL: '/api/v1' },
+  ),
+
+  /** 使用已选地点的高德坐标查询可选路线。 */
+  searchPlanningRoutes: (city, mode, origin, destination) => http.post(
+    '/agent/planning/routes/search',
+    {
+      countryCode: 'CN', city, mode,
+      fromItemId: origin.id, toItemId: destination.id,
+      originLatitude: origin.latitude, originLongitude: origin.longitude,
+      destinationLatitude: destination.latitude, destinationLongitude: destination.longitude,
+      coordinateSystem: 'GCJ-02',
+      ...(origin.cityCode ? { cityCode: origin.cityCode } : {}),
+    },
+    { baseURL: '/api/v1' },
+  ),
+
+  /** 高德静态地图由服务端代取，不向浏览器暴露 Web 服务 Key。 */
+  planningRoutePreview: (routeChoiceId) => http.post(
+    '/agent/planning/routes/preview',
+    { routeChoiceId },
+    { baseURL: '/api/v1', responseType: 'blob' },
+  ),
 }

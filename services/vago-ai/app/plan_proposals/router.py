@@ -1,6 +1,7 @@
 """会话内规划候选的创建、列表、回读与状态查询。"""
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -8,11 +9,16 @@ from app.dependencies.auth import get_current_user_uuid
 from app.plan_proposals import service
 from app.plan_proposals.schemas import ProposalCreateRequest, ProposalDetail, ProposalStatus, ProposalSummary
 from app.plan_proposals.providers import (
-    PlaceSearchRequest, RouteSearchRequest, enforce_provider_quota, search_places, search_routes,
+    PlaceSearchRequest, RouteSearchRequest, enforce_provider_quota, route_preview_image,
+    search_places, search_routes,
 )
 from app.shared.responses import ApiResponse, success
 
 router = APIRouter()
+
+
+class RoutePreviewRequest(BaseModel):
+    route_choice_id: str = Field(alias="routeChoiceId", min_length=32)
 
 
 @router.post("/planning/places/search", response_model=ApiResponse[list[dict]])
@@ -33,6 +39,17 @@ async def search_planning_routes(
     """查询路线并签发仅属于当前用户的短期路线引用。"""
     await enforce_provider_quota(user_uuid)
     return success(await search_routes(payload, user_uuid))
+
+
+@router.post("/planning/routes/preview")
+async def preview_planning_route(
+    payload: RoutePreviewRequest,
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> Response:
+    """返回高德静态地图图片，服务端不会将地图 Key 交给浏览器。"""
+    await enforce_provider_quota(user_uuid)
+    content, media_type = await route_preview_image(payload.route_choice_id, user_uuid)
+    return Response(content=content, media_type=media_type, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/conversations/{conversation_uuid}/proposals", response_model=ApiResponse[ProposalDetail])

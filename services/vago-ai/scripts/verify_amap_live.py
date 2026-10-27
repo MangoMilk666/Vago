@@ -1,8 +1,12 @@
 import asyncio
 from datetime import datetime
+from pathlib import Path
 
+from app.core.exceptions import AppException
+from app.core.redis import close_redis_pool
 from app.plan_proposals.providers import (
-    PlaceSearchRequest, RouteSearchRequest, search_places, search_routes, verify_route_token,
+    PlaceSearchRequest, RouteSearchRequest, route_preview_image,
+    search_places, search_routes, verify_route_token,
 )
 
 
@@ -34,6 +38,20 @@ async def main() -> None:
         )
         if not verified:
             raise RuntimeError(f"{mode} 路线来源签名校验失败")
+        if first["previewAvailable"]:
+            image, content_type = await route_preview_image(first["routeChoiceId"], "phase-4-live-check")
+            print(f"{mode} 地图预览：{content_type}，{len(image)} 字节")
+            if mode == "walking":
+                preview_path = Path(__file__).resolve().parents[3] / "docs/assets/phase4-route-preview.png"
+                preview_path.write_bytes(image)
+            try:
+                await route_preview_image(first["routeChoiceId"], "another-user")
+            except AppException as exc:
+                if exc.status_code != 403:
+                    raise
+            else:
+                raise RuntimeError("另一个用户不应取得路线地图预览")
+    await close_redis_pool()
 
 
 if __name__ == "__main__":

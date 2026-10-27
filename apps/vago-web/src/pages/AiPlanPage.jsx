@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import Navbar from '../components/Navbar'
+import PlanningRoutePanel from '../components/PlanningRoutePanel'
 import { aiApi } from '../api/ai'
 
 // ── 工具：格式化日期 ──────────────────────────────────────────────────────────
@@ -950,11 +951,14 @@ function ChatPanel() {
   const [contextPreview, setContextPreview] = useState(null)
   const [contextPreviewError, setContextPreviewError] = useState('')
   const [loadingContextPreview, setLoadingContextPreview] = useState(false)
+  const [showPlanningRoutes, setShowPlanningRoutes] = useState(false)
+  const [showAgentSettings, setShowAgentSettings] = useState(false)
   const bottomRef  = useRef(null)
   const inputRef   = useRef(null)
   const abortRef   = useRef(null)   // AbortController 引用，用于超时取消
   const activityQueueRef = useRef([])
   const activityTimerRef = useRef(null)
+  const routePreviewTargetRef = useRef(null)
 
   const flushActivityQueue = useCallback(() => {
     const next = activityQueueRef.current.shift()
@@ -1346,7 +1350,7 @@ function ChatPanel() {
   }
 
   return (
-    <section className="flex h-full min-w-0 bg-white">
+    <section className="relative flex h-full min-w-0 bg-white">
       <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-slate-50/70 p-3">
         <button type="button" onClick={startNewConversation} disabled={streaming}
           className="flex h-10 items-center justify-center gap-2.5 rounded-lg bg-violet-600 px-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-45">
@@ -1398,10 +1402,35 @@ function ChatPanel() {
           ))}
           {conversations.length === 0 && <p className="px-2 pt-3 text-xs leading-relaxed text-slate-400">首次发送后，新的对话会保存在这里。</p>}
         </div>
-        <p className="px-2 pt-3 text-[11px] leading-relaxed text-slate-400">重要旅行操作仍由你确认。</p>
+        <div className="relative border-t border-slate-200 pt-3">
+          {showAgentSettings && (
+            <div className="absolute bottom-12 left-0 right-0 z-30 space-y-3 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+              <p className="text-xs font-semibold text-slate-800">本轮 Agent 设置</p>
+              <label className="flex cursor-pointer items-center justify-between gap-2 text-xs text-slate-600">
+                使用旅行上下文
+                <input type="checkbox" checked={usePersonalContext} onChange={updateAuthorization(setUsePersonalContext)} disabled={streaming} className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+              </label>
+              <label className="flex cursor-pointer items-center justify-between gap-2 text-xs text-slate-600">
+                使用个人资料
+                <input type="checkbox" checked={useRag} onChange={updateAuthorization(setUseRag)} disabled={streaming} className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+              </label>
+              <button type="button" onClick={previewPersonalContext} disabled={streaming || loadingContextPreview}
+                className="w-full rounded-lg border border-violet-200 px-2 py-2 text-xs font-medium text-violet-700 hover:bg-violet-50 disabled:opacity-40">
+                {loadingContextPreview ? '读取中…' : '预览可用上下文'}
+              </button>
+              <p className="text-[11px] leading-relaxed text-slate-400">重要旅行操作仍由你确认。</p>
+            </div>
+          )}
+          <button type="button" onClick={() => setShowAgentSettings((current) => !current)} aria-expanded={showAgentSettings}
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs font-medium text-slate-600 hover:bg-white hover:text-violet-700">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M12 3.5v2m0 13v2m8.5-8.5h-2m-13 0h-2m14.5-6.5-1.4 1.4M7.4 16.6 6 18m12 0-1.4-1.4M7.4 7.4 6 6m6 3.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Z" /></svg>
+            Agent 设置
+            <span className="ml-auto text-slate-400">{showAgentSettings ? '收起' : '展开'}</span>
+          </button>
+        </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div ref={routePreviewTargetRef} className="relative flex min-w-0 flex-1 flex-col">
       {/* 标题栏 */}
       <div className="flex min-h-[76px] items-center justify-between gap-5 border-b border-slate-100 px-6 py-3 shrink-0">
         <div>
@@ -1414,28 +1443,10 @@ function ChatPanel() {
           <p className="text-xs text-slate-400 mt-1">协调旅行信息与约束，不会自行修改你的行程</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={previewPersonalContext}
-            disabled={streaming || loadingContextPreview}
-            className="text-xs font-medium text-violet-600 hover:text-violet-800 disabled:opacity-40"
-          >
-            {loadingContextPreview ? '读取中…' : '预览上下文'}
+          <button type="button" onClick={() => setShowPlanningRoutes(true)}
+            className="rounded-lg border border-violet-200 px-3 py-2 text-xs font-medium text-violet-700 transition hover:bg-violet-50">
+            地点与路线
           </button>
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
-            <input
-              type="checkbox"
-              checked={usePersonalContext}
-              onChange={updateAuthorization(setUsePersonalContext)}
-              disabled={streaming}
-              className="h-3.5 w-3.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
-            />
-            使用旅行上下文
-          </label>
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
-            <input type="checkbox" checked={useRag} onChange={updateAuthorization(setUseRag)} disabled={streaming} className="h-3.5 w-3.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
-            使用个人资料
-          </label>
         </div>
       </div>
 
@@ -1559,6 +1570,7 @@ function ChatPanel() {
       </div>
 
       </div>
+      {showPlanningRoutes && <PlanningRoutePanel onClose={() => setShowPlanningRoutes(false)} previewTarget={routePreviewTargetRef.current} />}
     </section>
   )
 }

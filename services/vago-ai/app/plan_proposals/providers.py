@@ -1,5 +1,7 @@
 import math
 import time
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -143,7 +145,7 @@ async def search_places(payload: PlaceSearchRequest) -> list[dict[str, Any]]:
 
 
 def _route_token(user_uuid: str, payload: RouteSearchRequest, provider: str,
-                 duration_minutes: int, queried_at: str) -> str:
+                 duration_minutes: int, queried_at: str, route_index: int) -> str:
     if not settings.jwt_secret_key:
         raise AppException("路线引用签名密钥尚未配置", status_code=503, code="ROUTE_SIGNING_NOT_CONFIGURED")
     # 如果候选在十分钟后才提交，路线时效已无法保证，必须重新查询。
@@ -151,6 +153,7 @@ def _route_token(user_uuid: str, payload: RouteSearchRequest, provider: str,
         "typ": "planning_route", "sub": user_uuid, "provider": provider,
         "from": payload.from_item_id, "to": payload.to_item_id,
         "minutes": duration_minutes, "queriedAt": queried_at,
+        "routeIndex": route_index,
         "mode": payload.mode, "coordinateSystem": payload.coordinate_system,
         "origin": [payload.origin_latitude, payload.origin_longitude],
         "destination": [payload.destination_latitude, payload.destination_longitude],
@@ -216,7 +219,7 @@ async def search_routes(payload: RouteSearchRequest, user_uuid: str) -> list[dic
                 raise AppException("无法确定公交路线的城市编码", status_code=422,
                                    code="MAP_CITY_CODE_REQUIRED")
             params.update({"city1": city_code, "city2": city_code,
-                           "show_fields": "cost"})
+                           "show_fields": "cost,polyline"})
         data = await _request(provider, path, params)
         route = data.get("route") or {}
         options = route.get("transits") if payload.mode == "transit" else route.get("paths")
@@ -248,14 +251,88 @@ async def search_routes(payload: RouteSearchRequest, user_uuid: str) -> list[dic
             raise AppException("地图服务返回了无效路线耗时", status_code=503,
                                code="MAP_PROVIDER_INVALID_RESPONSE")
         minutes = math.ceil(duration_seconds / 60)
+        route_choice_id = _route_token(user_uuid, payload, provider, minutes, queried_at, index)
+        geometry = ""
+        # 如果是高德路线，将真实路线几何短期绑定到签名引用，供同一用户预览。
+        if provider == "amap":
+            geometry = _amap_route_geometry(option, payload.mode)
+            if geometry:
+                redis = await get_redis_client()
+                await redis.setex(
+                    _route_preview_key(route_choice_id), 600,
+                    json.dumps({"geometry": geometry,
+                                "origin": [payload.origin_longitude, payload.origin_latitude],
+                                "destination": [payload.destination_longitude, payload.destination_latitude]}),
+                )
         results.append({
-            "routeChoiceId": _route_token(user_uuid, payload, provider, minutes, queried_at),
+            "routeChoiceId": route_choice_id,
             "provider": provider, "mode": payload.mode, "coordinateSystem": expected_crs,
             "fromItemId": payload.from_item_id, "toItemId": payload.to_item_id,
             "routeDurationMinutes": minutes, "distanceMeters": option.get("distanceMeters", option.get("distance")),
             "queriedAt": queried_at, "expiresInSeconds": 600,
             "summary": option.get("name") or f"路线 {index + 1}",
+            "previewAvailable": provider == "amap" and bool(geometry),
         })
     if not results:
         raise AppException("该地区和出行方式暂未查询到路线", status_code=404, code="MAP_ROUTE_NOT_FOUND")
     return results
+
+
+def _route_preview_key(route_choice_id: str) -> str:
+    return f"vago:planning-route-preview:{hashlib.sha256(route_choice_id.encode()).hexdigest()}"
+
+
+def _amap_route_geometry(option: dict[str, Any], mode: str) -> str:
+    """提取高德返回的实际路段折线；缺少路段时不绘制误导性的直线。"""
+    if mode != "transit":
+        steps = option.get("steps") or []
+        parts = [step.get("polyline") for step in steps]
+        return ";".join(parts) if parts and all(parts) else ""
+    parts = []
+    for segment in option.get("segments") or []:
+        walking = (segment.get("walking") or {}).get("steps") or []
+        buslines = (segment.get("bus") or {}).get("buslines") or []
+        parts.extend((step.get("polyline") or {}).get("polyline") for step in walking)
+        parts.extend((line.get("polyline") or {}).get("polyline") for line in buslines)
+        if segment.get("railway") or not (walking or buslines):
+            return ""
+    return ";".join(parts) if parts and all(parts) else ""
+
+
+async def route_preview_image(route_choice_id: str, user_uuid: str) -> tuple[bytes, str]:
+    """仅允许路线归属用户读取由高德静态地图生成的预览。"""
+    try:
+        claims = jwt.decode(route_choice_id, settings.jwt_secret_key, algorithms=["HS256"])
+    except jwt.InvalidTokenError as exc:
+        raise AppException("路线引用已失效，请重新查询", status_code=422,
+                           code="MAP_ROUTE_EXPIRED") from exc
+    if claims.get("typ") != "planning_route" or claims.get("sub") != user_uuid or claims.get("provider") != "amap":
+        raise AppException("无权预览该路线", status_code=403, code="MAP_ROUTE_FORBIDDEN")
+    redis = await get_redis_client()
+    cached = await redis.get(_route_preview_key(route_choice_id))
+    if cached is None:
+        raise AppException("路线预览已过期，请重新查询", status_code=410, code="MAP_ROUTE_EXPIRED")
+    data = json.loads(cached)
+    geometry = data["geometry"]
+    if len(geometry) > 12000:
+        raise AppException("路线过长，暂无法生成静态预览", status_code=422,
+                           code="MAP_PREVIEW_TOO_LONG")
+    origin = data["origin"]
+    destination = data["destination"]
+    params = {
+        "key": settings.amap_web_key, "size": "760*440",
+        "markers": (f"mid,0x7c3aed,A:{origin[0]:.6f},{origin[1]:.6f}"
+                    f"|mid,0x0f766e,B:{destination[0]:.6f},{destination[1]:.6f}"),
+        "paths": f"6,0x7c3aed,0.9,,:{geometry}",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.get("https://restapi.amap.com/v3/staticmap", params=params)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise AppException("高德地图预览暂不可用", status_code=503,
+                           code="MAP_PREVIEW_UNAVAILABLE") from exc
+    content_type = response.headers.get("content-type", "")
+    if not content_type.startswith("image/png") or not response.content.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise AppException("地图预览暂不可用", status_code=503, code="MAP_PREVIEW_UNAVAILABLE")
+    return response.content, content_type
