@@ -13,6 +13,7 @@ from app.core.exceptions import AppException
 from app.plan_proposals.models import PlanProposal
 from app.plan_proposals.schemas import ProposalCreateRequest, ProposalDetail, ProposalStatus, ProposalSummary
 from app.plan_proposals.validation import validate_proposal
+from app.plan_proposals.providers import verify_route_token
 from app.travel.models import Plan
 from app.travel.models import utc_now_naive
 
@@ -44,7 +45,7 @@ def create_proposal(
     # 同一个 key、相同 fingerprint：说明是同一份候选的重复提交，返回之前创建的版本，不再新增。
     # 同一个 key、不同 fingerprint：说明拿旧 key 提交了另一份内容，返回 409，避免误把新方案当作旧请求的重试。
     fingerprint = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-    validation = validate_proposal(payload.brief, payload.content)
+    validation = _validate_for_user(payload.brief, payload.content, user_uuid)
 
     for attempt in range(3):
         try:
@@ -166,13 +167,31 @@ def revalidate_proposal(db: Session, user_uuid: str, conversation_uuid: str, ver
     ).with_for_update())
     if item is None:
         raise AppException("候选版本不存在", status_code=404, code="PLAN_PROPOSAL_NOT_FOUND")
-    validation = validate_proposal(item.brief, item.content)
+    validation = _validate_for_user(item.brief, item.content, user_uuid)
     item.validation_result = validation
     item.validated_at = utc_now_naive()
     item.status = VALIDATED if validation["hardChecksPassed"] else BLOCKED
     db.commit()
     db.refresh(item)
     return _detail(item)
+
+
+def _validate_for_user(brief: dict, content: dict, user_uuid: str) -> dict:
+    """用当前认证用户核对短期路线引用，再运行候选确定性规则。"""
+    def verify(leg, origin, destination) -> bool:
+        if not (leg.route_choice_id and leg.route_duration_minutes is not None
+                and leg.provider and leg.queried_at and leg.mode
+                and origin.latitude is not None and origin.longitude is not None
+                and destination.latitude is not None and destination.longitude is not None
+                and origin.coordinate_system == destination.coordinate_system):
+            return False
+        return verify_route_token(leg.route_choice_id, user_uuid, origin.id, destination.id,
+                                  leg.route_duration_minutes, leg.provider, leg.queried_at,
+                                  leg.mode, origin.coordinate_system,
+                                  [origin.latitude, origin.longitude],
+                                  [destination.latitude, destination.longitude])
+
+    return validate_proposal(brief, content, route_verifier=verify)
 
 
 def _require_conversation(db: Session, user_uuid: str, conversation_uuid: str) -> None:

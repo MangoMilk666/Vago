@@ -1,6 +1,6 @@
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
@@ -35,6 +35,9 @@ class PlanningItem(BaseModel):
     name: str = Field(min_length=1)
     kind: str = Field(default="custom", validation_alias=AliasChoices("kind", "type"))
     city: str = ""
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    coordinate_system: str | None = Field(default=None, validation_alias="coordinateSystem")
     start_time: str | None = Field(default=None, validation_alias=AliasChoices("startTime", "start_time"))
     end_time: str | None = Field(default=None, validation_alias=AliasChoices("endTime", "end_time"))
     end_date: date | None = Field(default=None, validation_alias=AliasChoices("endDate", "end_date"))
@@ -56,6 +59,7 @@ class PlanningLeg(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=0, validation_alias=AliasChoices("durationMinutes", "minutes"))
     buffer_minutes: int = Field(default=0, ge=0, validation_alias="bufferMinutes")
     provider: str | None = None
+    mode: str | None = None
     queried_at: datetime | None = Field(default=None, validation_alias="queriedAt")
     route_choice_id: str | None = Field(default=None, validation_alias="routeChoiceId")
 
@@ -415,7 +419,10 @@ def _constraint(constraint: PlanningConstraint, days: list[PlanningDay], brief: 
     return _check(rule, "unverifiable", f"尚无 {kind} 的确定性判定规则")
 
 
-def validate_proposal(brief_data: dict[str, Any], content_data: dict[str, Any]) -> dict[str, Any]:
+def validate_proposal(
+    brief_data: dict[str, Any], content_data: dict[str, Any],
+    route_verifier: Callable[[PlanningLeg, PlanningItem, PlanningItem], bool] | None = None,
+) -> dict[str, Any]:
     """依据候选原文生成确定性报告；不访问模型、地图服务或正式旅行表。"""
     try:
         brief = PlanningBrief.model_validate(brief_data)
@@ -461,8 +468,15 @@ def validate_proposal(brief_data: dict[str, Any], content_data: dict[str, Any]) 
     if any(not item.source_url for day in days for item in day.items):
         checks.append(_check("sources", "unverifiable", "部分地点没有来源", blocking=False))
     if any(day.legs for day in days):
-        # 如果路线只由客户端提交，当前阶段无法核实它是否真实来自所写的 provider。
-        checks.append(_check("route_provenance", "unverifiable", "路线尚未经过服务端来源核验"))
+        # 如果每段路线都有属于当前用户的有效服务端签名，才承认其来源。
+        items_by_id = {item.id: item for day in days for item in day.items}
+        verified = route_verifier is not None and all(
+            leg.from_item_id in items_by_id and leg.to_item_id in items_by_id
+            and route_verifier(leg, items_by_id[leg.from_item_id], items_by_id[leg.to_item_id])
+            for day in days for leg in day.legs
+        )
+        checks.append(_check("route_provenance", "pass" if verified else "unverifiable",
+                             "路线来源已由服务端核验" if verified else "路线尚未经过服务端来源核验"))
     for constraint in brief.hard_constraints:
         checks.append(_constraint(constraint, days, brief, endings, content))
     blocking = [item for item in checks if item["severity"] == "blocking" and item["status"] != "pass"]

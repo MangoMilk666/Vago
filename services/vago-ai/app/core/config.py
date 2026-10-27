@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     github_oauth_user_url: str = "https://api.github.com/user"
     github_oauth_emails_url: str = "https://api.github.com/user/emails"
 
+    # 规划阶段的外部地点与路线服务密钥仅保存在服务端。
+    amap_web_key: str = ""
+    apple_maps_team_id: str = ""
+    apple_maps_key_id: str = ""
+    apple_maps_private_key: str = ""
+
     # Redis 配置，用于 JWT 黑名单、限流等短期状态。
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379

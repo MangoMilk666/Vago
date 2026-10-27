@@ -7,9 +7,32 @@ from app.core.database import get_db
 from app.dependencies.auth import get_current_user_uuid
 from app.plan_proposals import service
 from app.plan_proposals.schemas import ProposalCreateRequest, ProposalDetail, ProposalStatus, ProposalSummary
+from app.plan_proposals.providers import (
+    PlaceSearchRequest, RouteSearchRequest, enforce_provider_quota, search_places, search_routes,
+)
 from app.shared.responses import ApiResponse, success
 
 router = APIRouter()
+
+
+@router.post("/planning/places/search", response_model=ApiResponse[list[dict]])
+async def search_planning_places(
+    payload: PlaceSearchRequest,
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[list[dict]]:
+    """由服务端按地区查询规划地点，认证身份只用于授权入口。"""
+    await enforce_provider_quota(user_uuid)
+    return success(await search_places(payload))
+
+
+@router.post("/planning/routes/search", response_model=ApiResponse[list[dict]])
+async def search_planning_routes(
+    payload: RouteSearchRequest,
+    user_uuid: str = Depends(get_current_user_uuid),
+) -> ApiResponse[list[dict]]:
+    """查询路线并签发仅属于当前用户的短期路线引用。"""
+    await enforce_provider_quota(user_uuid)
+    return success(await search_routes(payload, user_uuid))
 
 
 @router.post("/conversations/{conversation_uuid}/proposals", response_model=ApiResponse[ProposalDetail])
