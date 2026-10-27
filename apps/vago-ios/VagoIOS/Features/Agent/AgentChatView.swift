@@ -9,6 +9,7 @@ struct AgentChatView: View {
     @StateObject private var viewModel = AgentChatViewModel()
     @State private var input = ""
     @State private var isConversationListPresented = false
+    @State private var isRoutePlanningPresented = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -31,6 +32,12 @@ struct AgentChatView: View {
                             .accessibilityLabel("打开对话侧栏")
                         }
                         ToolbarItem(placement: .topBarTrailing) {
+                            Button { isRoutePlanningPresented = true } label: {
+                                Image(systemName: "map")
+                            }
+                            .accessibilityLabel("查询地点与路线")
+                        }
+                        ToolbarItem(placement: .topBarTrailing) {
                             Button { viewModel.startNewConversation() } label: {
                                 Image(systemName: "square.and.pencil")
                             }
@@ -48,6 +55,14 @@ struct AgentChatView: View {
                         }
                     }
                     .safeAreaInset(edge: .bottom) { composer }
+                    .sheet(isPresented: $isRoutePlanningPresented) {
+                        RoutePlanningView { routeSummary in
+                            // 路线只作为用户提供的上下文进入输入框，服务端仍自行判断能否核验约束。
+                            input = routeSummary
+                            isRoutePlanningPresented = false
+                            isInputFocused = true
+                        }
+                    }
                     .task(id: session.profile?.uuid) {
                         await viewModel.loadConversations(session: session)
                     }
