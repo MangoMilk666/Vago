@@ -16,6 +16,15 @@ final class RoutePlanningLiveTests: XCTestCase {
         XCTAssertFalse(sportsCenter.isEmpty)
     }
 
+    func testHangzhouChinesePlaceNamesAreSearchable() async throws {
+        // 测试：中文城市和中文地点名称能返回杭州附近的真实 MapKit 地点。
+        try requireLiveMapService()
+        let university = try await MapKitPlaceSearch.search(city: "杭州市", query: "浙江大学")
+        XCTAssertFalse(university.isEmpty, "中文地点查询不应被地址展示语言过滤掉")
+        let fudan = try await MapKitPlaceSearch.search(city: "上海市", query: "复旦大学")
+        XCTAssertFalse(fudan.isEmpty, "上海的中文地点查询应返回附近结果")
+    }
+
     func testOverseasWalkingRouteFromAppleMaps() async throws {
         try requireLiveMapService()
         try await verifyRoute(city: "新加坡", from: "Marina Bay Sands", to: "Merlion Park")
@@ -59,6 +68,9 @@ final class RoutePlanningLiveTests: XCTestCase {
         let response = try await MKDirections(request: request).calculate()
         XCTAssertFalse(response.routes.isEmpty)
         XCTAssertGreaterThan(response.routes.first?.polyline.pointCount ?? 0, 1)
+        if let route = response.routes.first {
+            XCTAssertTrue(MapKitRouteCheck.isDisplayable(route))
+        }
     }
 
     private func search(city: String, query: String) async throws -> MKMapItem {

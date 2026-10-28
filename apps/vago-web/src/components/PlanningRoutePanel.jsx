@@ -24,7 +24,9 @@ function PlaceField({ title, city, value, onChange, selected, onSelect }) {
     setLoading(true)
     try {
       const response = await aiApi.searchPlanningPlaces(city.trim(), value.trim())
-      setResults(response.data ?? [])
+      const places = response.data ?? []
+      setResults(places)
+      if (places.length === 0) setError('未找到地点，请尝试更具体的名称')
     } catch (requestError) {
       setError(requestError.message)
     } finally {
@@ -66,7 +68,7 @@ function PlaceField({ title, city, value, onChange, selected, onSelect }) {
   )
 }
 
-export default function PlanningRoutePanel({ onClose, previewTarget }) {
+export default function PlanningRoutePanel({ onClose, previewTarget, conversationUuid, onSaveProposal }) {
   const [city, setCity] = useState('')
   const [originQuery, setOriginQuery] = useState('')
   const [destinationQuery, setDestinationQuery] = useState('')
@@ -81,8 +83,43 @@ export default function PlanningRoutePanel({ onClose, previewTarget }) {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
   const [showPreview, setShowPreview] = useState(false)
+  const [travelDate, setTravelDate] = useState('')
+  const [originStart, setOriginStart] = useState('')
+  const [originEnd, setOriginEnd] = useState('')
+  const [destinationStart, setDestinationStart] = useState('')
+  const [destinationEnd, setDestinationEnd] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [savedProposal, setSavedProposal] = useState(null)
+  const [proposalVersions, setProposalVersions] = useState([])
   const previewUrlRef = useRef('')
   const previewRequestRef = useRef(0)
+  const saveKeyRef = useRef(null)
+  const proposalConversationRef = useRef(conversationUuid)
+
+  useEffect(() => {
+    if (proposalConversationRef.current && proposalConversationRef.current !== conversationUuid) {
+      setProposalVersions([])
+      setSavedProposal(null)
+    }
+    proposalConversationRef.current = conversationUuid
+    if (!conversationUuid) {
+      setProposalVersions([])
+      return
+    }
+    let active = true
+    aiApi.planningProposals(conversationUuid).then((response) => {
+      if (active) setProposalVersions((current) => {
+        // 如果保存请求先于列表请求完成，保留刚写入的版本。
+        const loaded = response.data ?? []
+        return [...current.filter((item) => !loaded.some((entry) => entry.version === item.version)), ...loaded]
+          .sort((left, right) => right.version - left.version)
+      })
+    }).catch((requestError) => {
+      if (active) setSaveError(requestError.message)
+    })
+    return () => { active = false }
+  }, [conversationUuid])
 
   useEffect(() => () => {
     previewRequestRef.current += 1
@@ -104,6 +141,70 @@ export default function PlanningRoutePanel({ onClose, previewTarget }) {
     setRoutes([])
     setSelectedRoute(null)
     setError('')
+    setSavedProposal(null)
+    setSaveError('')
+    saveKeyRef.current = null
+  }
+
+  const saveProposal = async () => {
+    if (!selectedRoute || !origin || !destination) return
+    setSaveError('')
+    const times = [originStart, originEnd, destinationStart, destinationEnd]
+    if (!travelDate || times.some((value) => !/^\d{2}:\d{2}$/.test(value))) {
+      setSaveError('请填写日期及起点、终点的停留时间')
+      return
+    }
+    const minutes = (value) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3))
+    if (origin.id === destination.id || minutes(originStart) >= minutes(originEnd)
+      || minutes(destinationStart) >= minutes(destinationEnd)
+      || minutes(originEnd) + selectedRoute.routeDurationMinutes > minutes(destinationStart)) {
+      setSaveError('请确认两个地点不同，且停留与交通时间均在当天顺序合理')
+      return
+    }
+    // 如果网络响应丢失，重试同一份内容时继续使用原幂等键，避免生成重复版本。
+    if (!saveKeyRef.current) saveKeyRef.current = crypto.randomUUID()
+    const payload = {
+      idempotencyKey: saveKeyRef.current,
+      targetKind: 'new_plan',
+      brief: { startDate: travelDate, endDate: travelDate, timezone: 'Asia/Shanghai', hardConstraints: [] },
+      content: { days: [{
+        day: 1, date: travelDate, city: city.trim(), timezone: 'Asia/Shanghai',
+        items: [
+          { id: origin.id, name: origin.name, kind: 'custom', city: city.trim(), latitude: origin.latitude,
+            longitude: origin.longitude, coordinateSystem: 'GCJ-02', startTime: originStart, endTime: originEnd,
+            provider: 'amap' },
+          { id: destination.id, name: destination.name, kind: 'custom', city: city.trim(), latitude: destination.latitude,
+            longitude: destination.longitude, coordinateSystem: 'GCJ-02', startTime: destinationStart, endTime: destinationEnd,
+            provider: 'amap' },
+        ],
+        legs: [{ fromItemId: origin.id, toItemId: destination.id,
+          routeDurationMinutes: selectedRoute.routeDurationMinutes, bufferMinutes: 0,
+          provider: selectedRoute.provider, mode: selectedRoute.mode,
+          queriedAt: selectedRoute.queriedAt, routeChoiceId: selectedRoute.routeChoiceId }],
+      }] },
+    }
+    setSaving(true)
+    try {
+      const proposal = await onSaveProposal(payload)
+      setSavedProposal(proposal)
+      setProposalVersions((previous) => [proposal, ...previous.filter((item) => item.version !== proposal.version)])
+      saveKeyRef.current = null
+    } catch (requestError) {
+      setSaveError(requestError.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const openProposal = async (version) => {
+    if (!conversationUuid) return
+    setSaveError('')
+    try {
+      const response = await aiApi.planningProposal(conversationUuid, version)
+      setSavedProposal(response.data)
+    } catch (requestError) {
+      setSaveError(requestError.message)
+    }
   }
 
   const searchRoutes = async () => {
@@ -122,6 +223,9 @@ export default function PlanningRoutePanel({ onClose, previewTarget }) {
 
   const selectRoute = async (route) => {
     clearPreview()
+    setSavedProposal(null)
+    setSaveError('')
+    saveKeyRef.current = null
     setSelectedRoute(route)
     setShowPreview(true)
     if (!route.previewAvailable) {
@@ -210,6 +314,51 @@ export default function PlanningRoutePanel({ onClose, previewTarget }) {
                 <span className="mt-1 block text-[11px] text-slate-400">高德地图 · {route.distanceMeters ? `${Math.round(Number(route.distanceMeters))} 米 · ` : ''}查询结果十分钟内有效</span>
               </button>
             ))}
+          </section>
+        )}
+        {selectedRoute && (
+          <section className="space-y-3 rounded-xl border border-violet-100 bg-white p-3" aria-label="保存路线候选">
+            <div>
+              <h4 className="text-xs font-semibold text-slate-800">保存为会话候选</h4>
+              <p className="mt-1 text-[11px] text-slate-500">填写当天的两个停留时段。此操作保存候选版本，不创建正式计划。</p>
+            </div>
+            <label className="block text-xs text-slate-700">日期
+              <input type="date" value={travelDate} onChange={(event) => { setTravelDate(event.target.value); setSavedProposal(null); saveKeyRef.current = null }} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5" />
+            </label>
+            <div className="grid grid-cols-2 gap-2 text-xs text-slate-700">
+              {[
+                ['起点开始', originStart, setOriginStart], ['起点结束', originEnd, setOriginEnd],
+                ['终点开始', destinationStart, setDestinationStart], ['终点结束', destinationEnd, setDestinationEnd],
+              ].map(([label, value, update]) => (
+                <label key={label}>{label}
+                  <input type="time" value={value} onChange={(event) => { update(event.target.value); setSavedProposal(null); saveKeyRef.current = null }} className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5" />
+                </label>
+              ))}
+            </div>
+            <button type="button" onClick={saveProposal} disabled={saving} className="w-full rounded-lg border border-violet-200 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-50 disabled:opacity-50">
+              {saving ? '正在保存…' : '保存候选并检查时间线'}
+            </button>
+          </section>
+        )}
+        {saveError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-xs text-red-600">{saveError}</p>}
+        {proposalVersions.length > 0 && (
+          <section className="space-y-2" aria-label="已保存候选版本">
+            <h4 className="text-xs font-semibold text-slate-700">当前会话的候选版本</h4>
+            {proposalVersions.map((proposal) => (
+              <button key={proposal.uuid} type="button" onClick={() => openProposal(proposal.version)} className="w-full rounded-lg border border-slate-200 bg-white p-2 text-left text-xs text-slate-700 hover:border-violet-300">
+                版本 {proposal.version} · {proposal.status === 'VALIDATED' ? '检查通过' : '需补充或调整'}
+              </button>
+            ))}
+          </section>
+        )}
+        {savedProposal && (
+          <section className="space-y-1 rounded-xl bg-violet-50 p-3 text-xs text-slate-700" aria-label="候选校验结果">
+            <p className="font-semibold text-violet-800">候选版本 {savedProposal.version} · {savedProposal.status === 'VALIDATED' ? '检查通过' : '需补充或调整'}</p>
+            <p>{savedProposal.content?.days?.[0]?.date} · {savedProposal.content?.days?.[0]?.items?.map((item) => item.name).join(' → ')}</p>
+            {(savedProposal.validation?.checks ?? []).map((check, index) => (
+              <p key={`${check.code}-${index}`}>{check.status === 'pass' ? '✓' : '·'} {check.message}</p>
+            ))}
+            <p className="pt-1 text-slate-500">地图路线引用短期有效；重新校验时可能需要再次查询。</p>
           </section>
         )}
       </div>

@@ -148,4 +148,15 @@ export const aiApi = {
     { routeChoiceId },
     { baseURL: '/api/v1', responseType: 'blob' },
   ),
+
+  /** 将已选路线和用户填写的时间保存为当前 Agent 会话的候选版本。 */
+  createPlanningProposal: (conversationUuid, payload) => http.post(
+    `/agent/conversations/${conversationUuid}/proposals`, payload, { baseURL: '/api/v1' },
+  ),
+  planningProposals: (conversationUuid) => http.get(
+    `/agent/conversations/${conversationUuid}/proposals`, { baseURL: '/api/v1' },
+  ),
+  planningProposal: (conversationUuid, version) => http.get(
+    `/agent/conversations/${conversationUuid}/proposals/versions/${version}`, { baseURL: '/api/v1' },
+  ),
 }

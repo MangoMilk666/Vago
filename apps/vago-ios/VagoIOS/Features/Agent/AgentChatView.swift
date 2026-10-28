@@ -56,7 +56,9 @@ struct AgentChatView: View {
                     }
                     .safeAreaInset(edge: .bottom) { composer }
                     .sheet(isPresented: $isRoutePlanningPresented) {
-                        RoutePlanningView { routeSummary in
+                        RoutePlanningView(conversationUuid: viewModel.activeConversation?.uuid, onSaveProposal: { request in
+                            try await viewModel.savePlanningProposal(request, session: session)
+                        }) { routeSummary in
                             // 路线只作为用户提供的上下文进入输入框，服务端仍自行判断能否核验约束。
                             input = routeSummary
                             isRoutePlanningPresented = false
@@ -397,6 +399,17 @@ private final class AgentChatViewModel: ObservableObject {
         activeConversation = conversation
         conversations.insert(conversation, at: 0)
         return conversation
+    }
+
+    func savePlanningProposal(
+        _ request: PlanningProposalCreateRequest, session: SessionStore
+    ) async throws -> PlanningProposalDetail {
+        let conversation = try await ensureConversation(session: session)
+        let detail: PlanningProposalDetail = try await client.request(
+            path: "agent/conversations/\(conversation.uuid)/proposals",
+            method: "POST", body: request, tokenProvider: session
+        )
+        return detail
     }
 
     private func consume(_ event: AgentEvent, for messageID: String) {

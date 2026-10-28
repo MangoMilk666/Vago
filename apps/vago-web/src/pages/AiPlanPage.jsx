@@ -1570,7 +1570,16 @@ function ChatPanel() {
       </div>
 
       </div>
-      {showPlanningRoutes && <PlanningRoutePanel onClose={() => setShowPlanningRoutes(false)} previewTarget={routePreviewTargetRef.current} />}
+      {showPlanningRoutes && <PlanningRoutePanel
+        onClose={() => setShowPlanningRoutes(false)}
+        previewTarget={routePreviewTargetRef.current}
+        conversationUuid={activeConversation?.uuid}
+        onSaveProposal={async (payload) => {
+          const conversation = await ensureConversation()
+          const response = await aiApi.createPlanningProposal(conversation.uuid, payload)
+          return response.data
+        }}
+      />}
     </section>
   )
 }
