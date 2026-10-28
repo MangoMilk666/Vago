@@ -64,7 +64,7 @@ Personal Travel Context 是按任务组合的状态视图。结构化旅行事�
 - 当前与目标架构：[docs/architecture.md](docs/architecture.md)
 - 模块设计：[docs/modules/](docs/modules/)
 - 历史迁移盘点：[docs/evolution/remould-migration-inventory.md](docs/evolution/remould-migration-inventory.md)
-- 长期产品与 Agent 架构决策：[vago-project-skill](.agents/skills/remould-skill/SKILL.md)
+- 长期产品与 Agent 架构决策：[产品需求](docs/prd/PRD.md)、[系统架构](docs/architecture.md)及相关模块设计
 - 实际修改代码时遵循的编码规范：[vago-coding-skill](.agents/skills/coding-skill/SKILL.md)
 
 只阅读本次任务需要的材料。以上文档可能落后于代码，涉及当前行为时以实际代码和验证结果为准；涉及产品取舍时结合用户要求与产品文档判断。

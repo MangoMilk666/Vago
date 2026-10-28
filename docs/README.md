@@ -28,4 +28,4 @@
 | [迁移盘点](evolution/remould-migration-inventory.md) | 历史记录 | 早期 Java 至 FastAPI 迁移过程；不作为当前架构说明 |
 | [归档索引](archive/README.md) | 历史记录 | 旧数据库草案、迁移期 API 与足迹文档完整快照 |
 
-根目录 [AGENTS.md](../AGENTS.md) 是仓库默认工作边界。具体产品和 Agent 架构决策另参考 [vago-project-skill](../.agents/skills/remould-skill/SKILL.md)。未纳入索引的工作草案应先确认状态，再决定是否成为正式文档。
+根目录 [AGENTS.md](../AGENTS.md) 是仓库默认工作边界。产品目标以[产品需求文档](prd/PRD.md)为准，系统边界以[架构说明](architecture.md)为准，具体 Agent 行为参阅[Agent Runtime 设计](modules/agent/agent-runtime.md)。未纳入索引的工作草案应先确认状态，再决定是否成为正式文档。
