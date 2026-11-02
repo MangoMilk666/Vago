@@ -256,6 +256,7 @@ def _build_executor(
     results_store: list[SourceCitation],
     retrieval_events: list[dict[str, str]],
     use_rag: bool,
+    max_iterations: int = 3,
 ) -> AgentExecutor:
     """
     组装完整的 AgentExecutor（LLM + Tool + Prompt + Agent）。
@@ -281,7 +282,7 @@ def _build_executor(
         tools=tools,
         verbose=False,
         return_intermediate_steps=False,  # 通过 results_store 传递来源，无需中间步骤
-        max_iterations=3,
+        max_iterations=max_iterations,
         handle_parsing_errors=True,
     )
 
@@ -378,9 +379,10 @@ async def stream_agent_chat(
     use_rag: bool = True,
     personal_context: str | None = None,
     context_labels: list[str] | None = None,
+    max_iterations: int = 3,
 ) -> AsyncIterator[str]:
     """
-    以 SSE（Server-Sent Events）格式流式输出 Agent 回答。
+    调用模型，以 SSE（Server-Sent Events）格式流式输出 Agent 回答。
 
     使用 LangChain astream_events(version="v2") 捕获 token 级事件，
     实时将文本块推送给前端，同时在流结束时发送引用来源和结束标记。
@@ -401,7 +403,7 @@ async def stream_agent_chat(
     """
     results_store: list[SourceCitation] = []
     retrieval_events: list[dict[str, str]] = []
-    executor = _build_executor(user_uuid, results_store, retrieval_events, use_rag)
+    executor = _build_executor(user_uuid, results_store, retrieval_events, use_rag, max_iterations)
 
     history = _to_lc_history(messages[:-1])
     current_input = messages[-1].content

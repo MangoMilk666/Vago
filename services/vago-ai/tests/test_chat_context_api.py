@@ -1,12 +1,15 @@
 """验证 AI 对话将个人资料检索开关传递给上下文层。"""
 
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.v1 import api_v1_router
 from app.core.exceptions import register_exception_handlers
 from app.dependencies.auth import get_current_user_uuid
-from app.agent_runtime.runtime import AgentRuntimePreparation, AgentRuntimeProgress
+from app.agent_runtime.runtime import AgentRuntimePreparation
+from app.models.schemas import ChatMessage, ChatRequest
 from app.routers import chat
 
 
@@ -123,33 +126,19 @@ def test_chat_keeps_rag_available_for_structured_context_question(monkeypatch) -
     assert captured["use_rag"] is True
 
 
-def test_stream_emits_runtime_events_before_agent_text(monkeypatch) -> None:
-    """测试：Web 可先收到公开执行轨迹，再消费既有的逐字回答流。"""
-    async def fake_stream_agent_chat(**_kwargs):
-        yield 'data: {"type": "text", "content": "旅行建议"}\n\n'
-        yield "data: [DONE]\n\n"
-
-    app = FastAPI()
-    register_exception_handlers(app)
-    app.include_router(api_v1_router, prefix="/api/v1")
-
-    async def override_current_user_uuid() -> str:
-        return "context-test-user"
-
-    app.dependency_overrides[get_current_user_uuid] = override_current_user_uuid
-
-    async def fake_stream_runtime(*_args):
-        yield AgentRuntimeProgress({"type": "agent.started", "label": "开始整理本轮旅行上下文"})
-        yield AgentRuntimePreparation(trace_id="test", personal_context=None, context_labels=[], events=[])
-
-    monkeypatch.setattr(chat, "_stream_agent_runtime", fake_stream_runtime)
-    monkeypatch.setattr(chat, "stream_agent_chat", fake_stream_agent_chat)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/ai/chat/stream",
-            json={"messages": [{"role": "user", "content": "推荐京都景点"}]},
+def test_stream_emits_clarification_before_completion() -> None:
+    """测试：真实 LangGraph 对未明确范围的问题先发送澄清，再结束 SSE。"""
+    async def collect() -> str:
+        response = await chat.chat_stream(
+            ChatRequest(
+                messages=[ChatMessage(role="user", content="我以前在哪里打卡过？")],
+                usePersonalContext=True, useRag=False,
+            ),
+            db=None,
+            user_uuid="context-test-user",
         )
+        return "".join([chunk async for chunk in response.body_iterator])
 
-    assert response.status_code == 200
-    assert response.text.index('"agent.started"') < response.text.index('"type": "text"')
+    response_text = asyncio.run(collect())
+    assert response_text.index('"agent.clarification"') < response_text.index('"type": "text"')
+    assert response_text.endswith("data: [DONE]\n\n")

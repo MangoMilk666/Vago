@@ -25,6 +25,11 @@ class ToolRegistry:
     def __init__(self, tools: list[AgentTool]) -> None:
         self._tools = {tool.name: tool for tool in tools}
 
+    @property
+    def names(self) -> frozenset[str]:
+        """列出实际注册的工具名，供 Agent 配置校验白名单。"""
+        return frozenset(self._tools)
+
     def get(self, name: str) -> AgentTool:
         """按稳定工具名读取定义，不存在时显式报错以避免静默跳过。"""
         try:

@@ -5,7 +5,7 @@ AI 对话路由（Chat Router）。
   - POST /api/v1/ai/chat          非流式对话，等待完整回答后返回 JSON
   - POST /api/v1/ai/chat/stream   流式对话，SSE 实时推送 token
 
-两个接口均需 JWT 鉴权（Bearer token 经 get_current_user_uuid 依赖验证）：
+两个接口均需鉴权：
   - 验证 HMAC-HS256 签名及过期时间（与 Java 共享 secret）
   - 检查 Redis 黑名单（退出登录后 Java 侧写入）
   - 从 JWT payload 提取 userUuid，无需客户端在请求体中传递
@@ -20,6 +20,7 @@ SSE 事件类型说明（流式接口）：
 
 import json
 import logging
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -32,6 +33,7 @@ from app.agent_conversations import service as conversation_service
 from collections.abc import AsyncIterator
 
 from app.agent_runtime import AgentRuntime, AgentRuntimePreparation, AgentRuntimeProgress
+from app.agent_runtime.graph import PlanningGraphRuntime
 from app.services.rag_chain import run_agent_chat, stream_agent_chat
 from app.config import settings
 
@@ -178,34 +180,15 @@ async def chat_stream(
         agent_events: list[dict[str, str]] = []
         structured_plan: dict | None = None
         stream_failed = False
+        cancelled = False
         try:
-            preparation: AgentRuntimePreparation | None = None
-            # Runtime 逐步产出公开事件；准备完成后才把真实上下文交给既有 LLM/RAG 链路。
-            async for update in _stream_agent_runtime(
-                db, user_uuid, request.use_personal_context, request.use_rag, request.messages,
+            # LangGraph 负责本轮工具选择、读取、澄清、回答与候选保存；SSE 仍沿用原客户端格式。
+            async for chunk in PlanningGraphRuntime(db, user_uuid).stream(
+                messages=request.messages,
+                use_personal_context=request.use_personal_context,
+                use_rag=request.use_rag,
+                conversation_uuid=request.conversation_uuid,
             ):
-                if isinstance(update, AgentRuntimeProgress):
-                    agent_events.append(update.event)
-                    yield f"data: {json.dumps(update.event, ensure_ascii=False)}\n\n"
-                else:
-                    preparation = update
-
-            if preparation is None:
-                raise RuntimeError("Agent Runtime 未返回上下文准备结果")
-            response_context_labels = preparation.context_labels
-            call_kwargs = {
-                "user_uuid": user_uuid,
-                "messages": request.messages,
-                # 如果客户端开启个人资料检索，保留 RAG 工具供 LLM 按需调用。
-                "use_rag": request.use_rag and preparation.allow_rag_search,
-            }
-            # 分支条件：只有前端明确授权时才把结构化事实注入 Agent 对话。
-            if preparation.personal_context is not None:
-                call_kwargs.update(
-                    personal_context=preparation.personal_context,
-                    context_labels=preparation.context_labels,
-                )
-            async for chunk in stream_agent_chat(**call_kwargs):
                 event = _parse_sse_event(chunk)
                 if event and event.get("type", "").startswith(("agent.", "tool.")):
                     agent_events.append(event)
@@ -223,20 +206,26 @@ async def chat_stream(
                 elif event and event.get("type") == "error":
                     stream_failed = True
                 yield chunk
+        except asyncio.CancelledError:
+            # 如果客户端中途断开，保存明确的终态，避免历史里只剩用户提问。
+            cancelled = True
+            stream_failed = True
+            agent_events.append({"type": "agent.cancelled", "label": "本轮请求已取消"})
+            raise
         except Exception as exc:
             stream_failed = True
             logger.error("[chat] 事件生成器异常 user=%s error=%s", user_uuid, exc)
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         finally:
-            # 分支条件：仅有持久化会话且本轮未报错时，保存完整 Agent 回答供后续回放。
-            if request.conversation_uuid and not stream_failed:
+            # 如果本轮取消，保存可回读终态；成功时保存完整回答，失败不保存不完整文本。
+            if request.conversation_uuid and (cancelled or not stream_failed):
                 try:
                     conversation_service.record_assistant_message(
                         db,
                         user_uuid,
                         request.conversation_uuid,
-                        "".join(answer_parts),
+                        "本轮请求已取消" if cancelled else "".join(answer_parts),
                         sources=sources,
                         context_labels=response_context_labels,
                         agent_events=agent_events,

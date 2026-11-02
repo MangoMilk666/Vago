@@ -61,6 +61,7 @@ class AgentRuntime:
         self,
         registry: ToolRegistry | None = None,
         selection_policy: ToolSelectionPolicy | None = None,
+        max_read_steps: int = MAX_TOTAL_READ_STEPS,
     ) -> None:
         self._registry = registry or ToolRegistry([
             AgentTool("get_current_active_trip", "正在读取最近更新的进行中行程", _get_current_active_trip),
@@ -77,6 +78,20 @@ class AgentRuntime:
             AgentTool("get_travel_memories", "正在读取旅行回忆摘要", _get_memories),
         ])
         self._selection_policy = selection_policy or ToolSelectionPolicy()
+        self._max_read_steps = max_read_steps
+
+    # property装饰器，函数伪装成属性
+    @property
+    def registry(self) -> ToolRegistry:
+        """供 Graph Runtime 校验 Agent 配置与已注册工具是否一致。"""
+        return self._registry
+
+    def select_plan(
+        self, prompt: str, recent_user_messages: tuple[str, ...],
+        use_personal_context: bool, use_rag: bool,
+    ) -> ToolSelectionPlan:
+        """预先选出本轮只读工具，供 Graph 在执行前检查白名单。"""
+        return self._select_plan(prompt, recent_user_messages, use_personal_context, use_rag)
 
     def prepare(
         self,
@@ -87,12 +102,13 @@ class AgentRuntime:
         use_rag: bool,
         prompt: str = "",
         recent_user_messages: tuple[str, ...] = (),
+        selection_plan: ToolSelectionPlan | None = None,
     ) -> AgentRuntimePreparation:
         """执行有界的只读工具链，并组装本轮 Prompt Context。"""
         trace_id = uuid4().hex
         events: list[dict[str, str]] = [_event("agent.started", "开始整理本轮旅行上下文", trace_id=trace_id)]
         state = _new_runtime_state()
-        selection_plan = self._select_plan(prompt, recent_user_messages, use_personal_context, use_rag)
+        selection_plan = selection_plan or self._select_plan(prompt, recent_user_messages, use_personal_context, use_rag)
 
         # 如果未授权或本轮问题无需个人事实，直接进入通用建议，空工具计划是正常结果。
         if not selection_plan.tool_calls:
@@ -111,7 +127,7 @@ class AgentRuntime:
         continuation_announced = False
         pending_calls = list(selection_plan.tool_calls)
 
-        while pending_calls and read_count < MAX_TOTAL_READ_STEPS:
+        while pending_calls and read_count < self._max_read_steps:
             tool_call = pending_calls.pop(0)
             # 如果已经用完初始预算，后续调用必须是确定性计划选中的必要读取，并向客户端公开续读状态。
             if read_count >= INITIAL_READ_BUDGET and not continuation_announced:
@@ -144,11 +160,12 @@ class AgentRuntime:
         use_rag: bool,
         prompt: str = "",
         recent_user_messages: tuple[str, ...] = (),
+        selection_plan: ToolSelectionPlan | None = None,
     ) -> AsyncIterator[AgentRuntimeProgress | AgentRuntimePreparation]:
         """边执行边发送 Runtime 事件，避免工具轨迹在客户端被压缩为同一帧。"""
         trace_id = uuid4().hex
         state = _new_runtime_state()
-        selection_plan = self._select_plan(prompt, recent_user_messages, use_personal_context, use_rag)
+        selection_plan = selection_plan or self._select_plan(prompt, recent_user_messages, use_personal_context, use_rag)
         yield AgentRuntimeProgress(_event("agent.started", "开始整理本轮旅行上下文", trace_id=trace_id))
 
         # 如果未授权或本轮问题无需个人事实，直接进入通用 LLM 对话，不读取领域事实。
@@ -170,7 +187,7 @@ class AgentRuntime:
         continuation_announced = False
         pending_calls = list(selection_plan.tool_calls)
 
-        while pending_calls and read_count < MAX_TOTAL_READ_STEPS:
+        while pending_calls and read_count < self._max_read_steps:
             tool_call = pending_calls.pop(0)
             # 如果已经用完初始预算，先让客户端获知此后的调用是基于前序工具结果的受控续读。
             if read_count >= INITIAL_READ_BUDGET and not continuation_announced:

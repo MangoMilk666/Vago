@@ -109,6 +109,7 @@ def test_follow_up_uses_recent_user_context_only_when_needed() -> None:
         recent_user_messages=("看看我今天的行程安排",),
         use_personal_context=True,
         use_rag=True,
+        today=date(2026, 10, 6),
     )
     standalone_plan = policy.select(
         "推荐东京美食",
