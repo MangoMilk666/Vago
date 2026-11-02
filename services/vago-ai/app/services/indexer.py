@@ -40,7 +40,7 @@ from app.services.vector_store import upsert_document_chunks
 logger = logging.getLogger(__name__)
 
 
-async def index_document(request: IndexDocumentRequest) -> IndexDocumentResponse:
+async def index_document(request: IndexDocumentRequest, collection_name: str | None = None) -> IndexDocumentResponse:
     """
     RAG 文档入库主入口：执行完整的向量化管道并返回结构化结果。
 
@@ -129,6 +129,7 @@ async def index_document(request: IndexDocumentRequest) -> IndexDocumentResponse
             destinations=destinations,
             categories=[c.value for c in categories],
             source_url=request.source_url,
+            collection_name=collection_name,
         )
         logger.debug("[indexer] Qdrant upsert 完成 %.2fs points=%d", time.monotonic() - t, upserted)
 

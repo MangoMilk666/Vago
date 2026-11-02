@@ -25,6 +25,55 @@ from app.models.schemas import SearchResultItem
 # ─── 客户端单例 ───────────────────────────────────────────────────────────────
 
 _qdrant_client: AsyncQdrantClient | None = None
+_active_collection: str | None = None
+_rag_unavailable_reason: str | None = "语义索引尚未完成启动检查"
+
+
+def set_rag_unavailable(reason: str) -> None:
+    """在启动检查或重建期间禁止使用个人知识索引。"""
+    global _active_collection, _rag_unavailable_reason
+    _active_collection = None
+    _rag_unavailable_reason = reason
+
+
+def set_rag_ready(collection_name: str) -> None:
+    """只有索引完成核对后才开放这份 collection 给检索请求。"""
+    global _active_collection, _rag_unavailable_reason
+    _active_collection = collection_name
+    _rag_unavailable_reason = None
+
+
+def active_collection() -> str:
+    """读取目前可用的 collection；启动失败时明确说明原因。"""
+    if _active_collection is None:
+        raise RuntimeError(_rag_unavailable_reason or "个人知识检索暂不可用")
+    return _active_collection
+
+
+class VectorDimensionMismatchError(ValueError):
+    """当前 collection 的维度与所配置的向量模型维度不一致。"""
+
+
+def _vector_size(collection_info: qm.CollectionInfo) -> int:
+    """读取单向量 collection 的维度；不支持的配置直接报告给维护人员。"""
+    vectors = collection_info.config.params.vectors
+    if not isinstance(vectors, qm.VectorParams):
+        raise ValueError("当前 Qdrant collection 不是单向量配置，不能用于个人知识检索")
+    return vectors.size
+
+
+async def verify_collection_dimension(actual_embedding_dim: int | None = None, collection_name: str | None = None) -> int:
+    """检查已有 collection 的维度，并返回其真实值。"""
+    name = collection_name or settings.qdrant_collection
+    info = await _get_client().get_collection(name)
+    collection_dim = _vector_size(info)
+    expected_dim = actual_embedding_dim if actual_embedding_dim is not None else settings.embedding_dim
+    if collection_dim != expected_dim:
+        raise VectorDimensionMismatchError(
+            f"个人知识索引 {name} 为 {collection_dim} 维，"
+            f"当前向量模型需要 {expected_dim} 维。请重建到新 collection 后切换 QDRANT_COLLECTION。"
+        )
+    return collection_dim
 
 
 def _get_client() -> AsyncQdrantClient:
@@ -68,13 +117,13 @@ async def init_collection() -> None:
     Collection 使用 COSINE 距离度量，与 OpenAI text-embedding-3-small 匹配。
     向量维度由配置 embedding_dim 决定（默认 1536）。
 
-    幂等操作：若 Collection 已存在则跳过创建，不会抛出异常。
+    已存在时核对维度；不一致则抛出明确异常。
     """
     client = _get_client()
-    try:
-        await client.get_collection(settings.qdrant_collection)
-    except Exception:
-        # Collection 不存在，创建之
+    # 如果 collection 已存在，必须核对维度；连接错误不能被误当作“不存在”。
+    if await client.collection_exists(settings.qdrant_collection):
+        await verify_collection_dimension()
+    else:
         await client.create_collection(
             collection_name=settings.qdrant_collection,
             vectors_config=qm.VectorParams(
@@ -82,6 +131,7 @@ async def init_collection() -> None:
                 distance=qm.Distance.COSINE,
             ),
         )
+    set_rag_ready(settings.qdrant_collection)
 
 
 # ─── 工具函数 ─────────────────────────────────────────────────────────────────
@@ -146,6 +196,7 @@ async def upsert_document_chunks(
     destinations: list[str],
     categories: list[str],
     source_url: str | None = None,
+    collection_name: str | None = None,
 ) -> int:
     """
     将一份个人知识资料的所有文本块（chunks）批量 upsert 到 Qdrant。
@@ -172,7 +223,8 @@ async def upsert_document_chunks(
     assert len(chunks) == len(embeddings), "chunks 与 embeddings 长度必须一致"
 
     # 先清理新旧 payload 形态的同源向量，再写入完整新版本，避免缩短内容产生残留 chunk。
-    await delete_document_chunks(user_uuid=user_uuid, source_uuid=source_uuid)
+    target = collection_name or active_collection()
+    await delete_document_chunks(user_uuid=user_uuid, source_uuid=source_uuid, collection_name=target)
     client = _get_client()
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -198,7 +250,7 @@ async def upsert_document_chunks(
     ]
 
     await client.upsert(
-        collection_name=settings.qdrant_collection,
+        collection_name=target,
         points=points,
         wait=True,  # 等待写入持久化完成再返回
     )
@@ -251,10 +303,12 @@ async def search_by_user(
         SearchResultItem 列表，按相似度得分降序排列。
         若无符合阈值的结果，返回空列表。
     """
+    target = active_collection()
     client = _get_client()
+    await verify_collection_dimension(len(query_embedding), target)
 
     hits = await client.search(
-        collection_name=settings.qdrant_collection,
+        collection_name=target,
         query_vector=query_embedding,
         query_filter=_build_filter(user_uuid),
         limit=top_k,
@@ -280,11 +334,12 @@ async def search_by_user(
     return results
 
 
-async def _delete_with_filter(filter_value: qm.Filter) -> int:
+async def _delete_with_filter(filter_value: qm.Filter, collection_name: str | None = None) -> int:
     """按已构造的 Qdrant filter 统计并删除 points。"""
+    target = collection_name or active_collection()
     client = _get_client()
     count_result = await client.count(
-        collection_name=settings.qdrant_collection,
+        collection_name=target,
         count_filter=filter_value,
         exact=True,
     )
@@ -292,18 +347,18 @@ async def _delete_with_filter(filter_value: qm.Filter) -> int:
     if count == 0:
         return 0
     await client.delete(
-        collection_name=settings.qdrant_collection,
+        collection_name=target,
         points_selector=qm.FilterSelector(filter=filter_value),
         wait=True,
     )
     return count
 
 
-async def delete_document_chunks(user_uuid: str, source_uuid: str) -> int:
+async def delete_document_chunks(user_uuid: str, source_uuid: str, collection_name: str | None = None) -> int:
     """删除知识来源的新旧两种 payload 形态，支持渐进迁移。"""
     # 先清理新 payload；写入过渡期的 points 同时含 article_id，第二次删除不会重复计数。
-    deleted = await _delete_with_filter(_build_source_filter(user_uuid, source_uuid))
-    return deleted + await _delete_with_filter(_build_filter(user_uuid, source_uuid))
+    deleted = await _delete_with_filter(_build_source_filter(user_uuid, source_uuid), collection_name)
+    return deleted + await _delete_with_filter(_build_filter(user_uuid, source_uuid), collection_name)
 
 
 async def delete_article_chunks(user_uuid: str, article_id: str) -> int:
@@ -337,9 +392,10 @@ async def count_user_articles(user_uuid: str) -> int:
     返回:
         该用户在向量库中的 Point（文本块）总数量。
     """
+    target = active_collection()
     client = _get_client()
     result = await client.count(
-        collection_name=settings.qdrant_collection,
+        collection_name=target,
         count_filter=_build_filter(user_uuid),
         exact=True,
     )

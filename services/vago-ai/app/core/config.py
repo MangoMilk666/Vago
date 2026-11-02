@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     qdrant_collection: str = "vago_articles"
     # 是否启用可选的语义索引能力；关闭后个人知识 CRUD 与文件读取仍可正常工作。
     rag_enabled: bool = True
+    rebuild_rag_index_if_dim_change: bool = True
 
     # 攻略文本分块参数。
     chunk_size_tokens: int = 512

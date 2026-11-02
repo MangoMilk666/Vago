@@ -167,6 +167,18 @@ async def index_source(
     # 分支条件：Qdrant 未配置或不可连接时，立即返回，避免客户端误以为 200 代表索引成功。
     if not await vector_store.is_vector_store_available():
         raise AppException("语义索引服务暂不可用，请检查向量数据库配置", status_code=503, code="VECTOR_STORE_UNAVAILABLE")
+    # 如果启动检查发现维度冲突或后台正在重建，暂时不接受新的索引任务。
+    try:
+        vector_store.active_collection()
+    except RuntimeError as exc:
+        raise AppException(str(exc), status_code=503, code="RAG_UNAVAILABLE") from exc
+    # 如果现有索引维度不匹配，提交前直接告诉用户，不把必然失败的任务放入后台队列。
+    try:
+        await vector_store.verify_collection_dimension(collection_name=vector_store.active_collection())
+    except vector_store.VectorDimensionMismatchError as exc:
+        raise AppException(str(exc), status_code=409, code="EMBEDDING_DIMENSION_MISMATCH") from exc
+    except Exception as exc:
+        raise AppException("语义索引服务暂不可用，请检查向量数据库配置", status_code=503, code="VECTOR_STORE_UNAVAILABLE") from exc
     source = service.mark_source_index_pending(db, user_uuid, source_uuid)
     background_tasks.add_task(indexing.index_source_background, source.uuid, user_uuid)
     return success(source, "知识源已加入语义索引队列")

@@ -102,6 +102,15 @@ async def embed_query(query: str) -> list[float]:
     return _validate_embedding_dimension(response.data[0].embedding)
 
 
+async def probe_embedding_dimension() -> int:
+    """启动时读取模型真实维度，不受旧 EMBEDDING_DIM 配置影响。"""
+    response = await _get_client().embeddings.create(
+        model=settings.embedding_model,
+        input=["Vago 知识索引维度检查"],
+    )
+    return len(response.data[0].embedding)
+
+
 def _validate_embedding_dimension(embedding: list[float]) -> list[float]:
     """校验 Provider 输出与当前 Qdrant collection 配置的向量维度一致。"""
     # 如果 Provider 实际返回维度与 Qdrant collection 配置不同，提前失败而不是发送必然 400 的读写请求。
